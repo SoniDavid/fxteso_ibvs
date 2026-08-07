@@ -1,0 +1,80 @@
+<?xml version='1.0'?>
+<!-- F450 quadrotor, ported from visual_servoing/src/ibvs_nftasmc/models/F450/model.sdf.
+     The inertia is never integrated: uav_dynamics.cpp owns the plant. See documentation.md.
+
+     The sensor <pose> pitch of -pi/2 combines with the pi roll gz_pose_broadcaster applies
+     to the model to point the camera straight down. Do not "fix" either in isolation. -->
+<sdf version='1.9'>
+  <model name='F450'>
+    <link name='link'>
+      <pose>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 3.141592 0 1.57075</pose>
+        <mass>2</mass>
+        <inertia>
+          <ixx>0.0411</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0478</iyy>
+          <iyz>0</iyz>
+          <izz>0.0599</izz>
+        </inertia>
+      </inertial>
+      <self_collide>0</self_collide>
+
+      <visual name='visual'>
+        <pose>0 0 0 3.141592 0 1.57075</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450/meshes/parrot_outdoor.STL</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <cast_shadows>1</cast_shadows>
+        <transparency>0</transparency>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.1 0.1 0.1 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+          <emissive>0.1 0.1 0.1 0</emissive>
+        </material>
+      </visual>
+
+      <collision name='collision'>
+        <pose>0 0 0 3.141592 0 1.57075</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450/meshes/parrot_outdoor.STL</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <sensor name='camera1' type='camera'>
+        <pose>0 0 0 0 -1.570796 3.141592</pose>
+        <topic>quad/camera/image_raw</topic>
+        <camera name="head">
+          <horizontal_fov>1.085595</horizontal_fov>
+          <image>
+            <!-- Twice the ROS 1 resolution; required to decode the markers from the
+                 paper's -4 m start. pixel_size in image_features.cpp is halved to match. -->
+            <width>820</width>
+            <height>616</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.02</near>
+            <far>300</far>
+          </clip>
+        </camera>
+        <always_on>1</always_on>
+        <!-- Sim-time rate, matching image_features' own 50 Hz loop. Do not lower it; to
+             slow the simulation change real_time_factor in worlds/ibvs.sdf instead. -->
+        <update_rate>50</update_rate>
+        <visualize>1</visualize>
+      </sensor>
+    </link>
+    <static>0</static>
+    <allow_auto_disable>0</allow_auto_disable>
+  </model>
+</sdf>

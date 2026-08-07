@@ -1,0 +1,23 @@
+# ros_gz_bridge config. One-way: frames and the sim clock come out, nothing goes in.
+# Poses bypass the bridge entirely (gz_pose_broadcaster talks gz-transport directly).
+
+- ros_topic_name: "/quad/camera/image_raw"
+  gz_topic_name: "/quad/camera/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# gz-sensors derives the info topic by appending /camera_info to the sensor <topic>.
+# Nothing in the IBVS stack consumes it (image_features takes the principal point from
+# frame.size()/2), but rviz/rqt camera displays want it.
+- ros_topic_name: "/quad/camera/camera_info"
+  gz_topic_name: "/quad/camera/image_raw/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS

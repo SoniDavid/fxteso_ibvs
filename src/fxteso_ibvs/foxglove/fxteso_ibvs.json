@@ -1,0 +1,730 @@
+{
+  "configById": {
+    "3D!overview": {
+      "cameraState": {
+        "distance": 42,
+        "perspective": true,
+        "phi": 8,
+        "thetaOffset": 0,
+        "target": [0, 10, 0],
+        "targetOffset": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-none",
+      "followTf": "world",
+      "scene": {
+        "enableStats": false,
+        "transforms": {
+          "showLabel": true,
+          "axisScale": 1.2
+        }
+      },
+      "transforms": {},
+      "topics": {
+        "/quad_path": {
+          "visible": true,
+          "type": "line",
+          "lineWidth": 0.08,
+          "gradient": ["#4e79a7ff", "#4e79a7ff"]
+        },
+        "/tgt_path": {
+          "visible": true,
+          "type": "line",
+          "lineWidth": 0.08,
+          "gradient": ["#e15759ff", "#e15759ff"]
+        },
+        "/ibvs_markers": {
+          "visible": true
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "label": "Grid",
+          "instanceId": "grid",
+          "frameId": "world",
+          "size": 60,
+          "divisions": 60,
+          "color": "#8a8a8a40",
+          "visible": true
+        }
+      },
+      "publish": {},
+      "imageMode": {}
+    },
+
+    "Image!camera": {
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {},
+      "imageMode": {
+        "imageTopic": "/quad/camera/image_raw",
+        "synchronize": false
+      }
+    },
+
+    "Plot!altitude": {
+      "title": "5.10b  Altitude",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/quad_position.z",
+          "enabled": true,
+          "label": "z (m)",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/z_des.data",
+          "enabled": true,
+          "label": "z desired",
+          "color": "#bab0ac"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!thrust": {
+      "title": "5.14b  Thrust",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/quad_thrust.data",
+          "enabled": true,
+          "label": "T (N)",
+          "color": "#59a14f"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!estError": {
+      "title": "5.11a  FxTESO estimation error",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/estimation_error_fxt.x",
+          "enabled": true,
+          "label": "qx err",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/estimation_error_fxt.y",
+          "enabled": true,
+          "label": "qy err",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/estimation_error_fxt.z",
+          "enabled": true,
+          "label": "qz err",
+          "color": "#59a14f"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/estimation_error_fxt.w",
+          "enabled": true,
+          "label": "qpsi err",
+          "color": "#e15759"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!tdError": {
+      "title": "5.11b  Attitude FxTTD estimation error",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/attitude_td_error.x",
+          "enabled": true,
+          "label": "roll",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/attitude_td_error.y",
+          "enabled": true,
+          "label": "pitch",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/attitude_td_error.z",
+          "enabled": true,
+          "label": "yaw",
+          "color": "#59a14f"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/attitude_des_td_error.x",
+          "enabled": true,
+          "label": "roll des",
+          "color": "#a0cbe8"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/attitude_des_td_error.y",
+          "enabled": true,
+          "label": "pitch des",
+          "color": "#ffbe7d"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/attitude_des_td_error.z",
+          "enabled": true,
+          "label": "yaw des",
+          "color": "#8cd17d"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!disturbance": {
+      "title": "5.12  Total disturbance: truth vs FxTESO estimate",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ibvs_dist.x",
+          "enabled": true,
+          "label": "est x",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ibvs_dist.y",
+          "enabled": true,
+          "label": "est y",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ibvs_dist.z",
+          "enabled": true,
+          "label": "est z",
+          "color": "#59a14f"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ibvs_dist.w",
+          "enabled": true,
+          "label": "est psi",
+          "color": "#e15759"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/disturbances.x",
+          "enabled": true,
+          "label": "truth x",
+          "color": "#a0cbe8"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/disturbances.y",
+          "enabled": true,
+          "label": "truth y",
+          "color": "#ffbe7d"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/disturbances.z",
+          "enabled": true,
+          "label": "truth z",
+          "color": "#8cd17d"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 260
+    },
+
+    "Plot!posError": {
+      "title": "5.13a  Position error",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/position_error.x",
+          "enabled": true,
+          "label": "ex (m)",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/position_error.y",
+          "enabled": true,
+          "label": "ey (m)",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/position_error.z",
+          "enabled": true,
+          "label": "ez (m)",
+          "color": "#59a14f"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!vsError": {
+      "title": "5.13b  Visual servoing error",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/error_visual_servoing.x",
+          "enabled": true,
+          "label": "e qx",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/error_visual_servoing.y",
+          "enabled": true,
+          "label": "e qy",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/error_visual_servoing.z",
+          "enabled": true,
+          "label": "e qz",
+          "color": "#59a14f"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/error_visual_servoing.w",
+          "enabled": true,
+          "label": "e qpsi",
+          "color": "#e15759"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!gains": {
+      "title": "5.14a  Adaptive gains",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/adaptive_gain.x",
+          "enabled": true,
+          "label": "k qx",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/adaptive_gain.y",
+          "enabled": true,
+          "label": "k qy",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/adaptive_gain.z",
+          "enabled": true,
+          "label": "k qz",
+          "color": "#59a14f"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/adaptive_gain.w",
+          "enabled": true,
+          "label": "k qpsi",
+          "color": "#e15759"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/k_att.x",
+          "enabled": true,
+          "label": "k roll",
+          "color": "#a0cbe8"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/k_att.y",
+          "enabled": true,
+          "label": "k pitch",
+          "color": "#ffbe7d"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/k_att.z",
+          "enabled": true,
+          "label": "k yaw",
+          "color": "#8cd17d"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!torques": {
+      "title": "5.14b  Torques",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/quad_torques.x",
+          "enabled": true,
+          "label": "tau phi",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/quad_torques.y",
+          "enabled": true,
+          "label": "tau theta",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/quad_torques.z",
+          "enabled": true,
+          "label": "tau psi",
+          "color": "#59a14f"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Image!camera_vision": {
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {},
+      "imageMode": {
+        "imageTopic": "/quad/camera/image_raw",
+        "synchronize": false
+      }
+    },
+
+    "Plot!features": {
+      "title": "Image features: measured vs FxTESO estimate",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_vector.x",
+          "enabled": true,
+          "label": "qx",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_vector.y",
+          "enabled": true,
+          "label": "qy",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_vector.z",
+          "enabled": true,
+          "label": "qz",
+          "color": "#59a14f"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_vector.w",
+          "enabled": true,
+          "label": "qpsi",
+          "color": "#e15759"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_estimates_fxt.x",
+          "enabled": true,
+          "label": "qx est",
+          "color": "#a0cbe8"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_estimates_fxt.y",
+          "enabled": true,
+          "label": "qy est",
+          "color": "#ffbe7d"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_estimates_fxt.z",
+          "enabled": true,
+          "label": "qz est",
+          "color": "#8cd17d"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_estimates_fxt.w",
+          "enabled": true,
+          "label": "qpsi est",
+          "color": "#ff9d9a"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 260
+    },
+
+    "Plot!centroid": {
+      "title": "5.10d  Centroid in the virtual image plane (qx vs qy)",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/ImFeat_vector.y",
+          "enabled": true,
+          "label": "qy",
+          "color": "#4e79a7",
+          "showLine": true
+        }
+      ],
+      "xAxisVal": "custom",
+      "xAxisPath": {
+        "timestampMethod": "receiveTime",
+        "value": "/ImFeat_vector.x",
+        "enabled": true
+      },
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": false,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!poi": {
+      "title": "5.10d  POI coordinates (px, virtual frame)",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/u_coordinates.x",
+          "enabled": true,
+          "label": "u1",
+          "color": "#4e79a7"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/u_coordinates.y",
+          "enabled": true,
+          "label": "u2",
+          "color": "#f28e2b"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/u_coordinates.z",
+          "enabled": true,
+          "label": "u3",
+          "color": "#59a14f"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/u_coordinates.w",
+          "enabled": true,
+          "label": "u4",
+          "color": "#e15759"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/n_coordinates.x",
+          "enabled": true,
+          "label": "n1",
+          "color": "#a0cbe8"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/n_coordinates.y",
+          "enabled": true,
+          "label": "n2",
+          "color": "#ffbe7d"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/n_coordinates.z",
+          "enabled": true,
+          "label": "n3",
+          "color": "#8cd17d"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/n_coordinates.w",
+          "enabled": true,
+          "label": "n4",
+          "color": "#ff9d9a"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 260
+    },
+
+    "Tab!main": {
+      "activeTabIdx": 0,
+      "tabs": [
+        {
+          "title": "Overview",
+          "layout": {
+            "direction": "column",
+            "first": {
+              "direction": "row",
+              "first": "3D!overview",
+              "second": "Image!camera",
+              "splitPercentage": 60
+            },
+            "second": {
+              "direction": "row",
+              "first": "Plot!altitude",
+              "second": "Plot!thrust",
+              "splitPercentage": 50
+            },
+            "splitPercentage": 62
+          }
+        },
+        {
+          "title": "Observer",
+          "layout": {
+            "direction": "column",
+            "first": {
+              "direction": "row",
+              "first": "Plot!estError",
+              "second": "Plot!tdError",
+              "splitPercentage": 50
+            },
+            "second": "Plot!disturbance",
+            "splitPercentage": 50
+          }
+        },
+        {
+          "title": "Control",
+          "layout": {
+            "direction": "column",
+            "first": {
+              "direction": "row",
+              "first": "Plot!posError",
+              "second": "Plot!vsError",
+              "splitPercentage": 50
+            },
+            "second": {
+              "direction": "row",
+              "first": "Plot!gains",
+              "second": "Plot!torques",
+              "splitPercentage": 50
+            },
+            "splitPercentage": 50
+          }
+        },
+        {
+          "title": "Vision",
+          "layout": {
+            "direction": "column",
+            "first": {
+              "direction": "row",
+              "first": "Image!camera_vision",
+              "second": "Plot!features",
+              "splitPercentage": 42
+            },
+            "second": {
+              "direction": "row",
+              "first": "Plot!centroid",
+              "second": "Plot!poi",
+              "splitPercentage": 42
+            },
+            "splitPercentage": 50
+          }
+        }
+      ]
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": "Tab!main"
+}

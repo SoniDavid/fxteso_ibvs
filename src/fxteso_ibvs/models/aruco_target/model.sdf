@@ -1,0 +1,55 @@
+<?xml version='1.0'?>
+<!-- Moving ArUco target: a 0.90 x 0.75 m plate carrying four DICT_7X7_50 markers with
+     IDs 4, 6, 8 and 10. Ported from
+     visual_servoing/src/ibvs_nftasmc/models/Aruco_Target/model.sdf; the only change is
+     the mesh URI, which used to be an absolute /home/armando/... path.
+
+     The model name must stay 'aruco_Target' -- gz_pose_broadcaster addresses the entity
+     by that exact string, and image_features.cpp keys its point assignment off the
+     marker IDs baked into Target2.dae.
+
+     Target2.dae references its four JPEGs by bare filename, so they have to live beside
+     it in meshes/. -->
+<sdf version='1.9'>
+  <model name='aruco_Target'>
+    <link name='link_aruco'>
+      <pose>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 -1.57079633</pose>
+        <mass>0.2</mass>
+        <inertia>
+          <ixx>0.0411</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0478</iyy>
+          <iyz>0</iyz>
+          <izz>0.0599</izz>
+        </inertia>
+      </inertial>
+      <self_collide>0</self_collide>
+
+      <collision name='Collision'>
+        <pose>0 0 0 0 0 -1.57079633</pose>
+        <geometry>
+          <box>
+            <size>0.90 0.75 0.001</size>
+          </box>
+        </geometry>
+      </collision>
+
+      <visual name='visual'>
+        <pose>0 0 0 0 0 -1.57079633</pose>
+        <geometry>
+          <mesh>
+            <uri>model://aruco_target/meshes/Target2.dae</uri>
+            <scale>1 1 1</scale>
+          </mesh>
+        </geometry>
+        <cast_shadows>0</cast_shadows>
+        <transparency>0</transparency>
+      </visual>
+    </link>
+    <static>0</static>
+    <allow_auto_disable>0</allow_auto_disable>
+  </model>
+</sdf>
