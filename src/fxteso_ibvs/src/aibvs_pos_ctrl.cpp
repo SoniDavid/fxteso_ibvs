@@ -66,10 +66,8 @@ Eigen::Vector4f asmc(0,0,0,0);
 Eigen::Vector4f k_dot(0,0,0,0);
 Eigen::Vector4f k(0,0,0,0);
 Eigen::Vector4f alpha(0,0,0,0);
-// Use sites below are written ::beta. With `using namespace std` above and C++17
-// (which rclcpp requires), unqualified `beta` also finds std::beta from <cmath>'s
-// special math functions and the lookup is ambiguous. ROS 1 built as C++14 and never
-// hit this. The qualification names this exact variable; the gain is unchanged.
+// Written ::beta at use sites: under C++17 plain `beta` is ambiguous with std::beta.
+// Qualification only; the gain is unchanged.
 Eigen::Vector4f beta(0,0,0,0);
 ///////////////////////////Control input///////////////////////////
 Eigen::Vector4f ibvs_ctrl_input(0,0,0,0);

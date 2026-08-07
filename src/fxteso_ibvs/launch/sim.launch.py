@@ -1,4 +1,4 @@
-"""FxTESO + adaptive-gain SMC IBVS, ROS 2 Humble + Gazebo Harmonic.
+"""FxTESO + adaptive-gain SMC IBVS, ROS 2 Jazzy + Gazebo Harmonic.
 
   target_position -> tgt_position/tgt_yaw/tgt_velocity/...
   uav_dynamics    -> quad_position/quad_attitude/... (the plant, integrated in ROS at 100 Hz)
@@ -15,6 +15,8 @@ Gazebo is a camera and nothing else: zero gravity, both model poses overwritten 
 from the ROS side. See documentation.md.
 
   ros2 launch fxteso_ibvs sim.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
+                                        [disturbance:=none|step|gust|wind|csv]
+                                        [disturbance_seed:=N]
 """
 import os
 import signal
@@ -24,11 +26,13 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
                             IncludeLaunchDescription, LogInfo, OpaqueFunction,
-                            SetEnvironmentVariable, TimerAction)
+                            RegisterEventHandler, SetEnvironmentVariable)
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import (AnyLaunchDescriptionSource,
                                                PythonLaunchDescriptionSource)
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 PKG = 'fxteso_ibvs'
 
@@ -59,7 +63,7 @@ BAG_TOPICS = [
 # that head start.
 PLANT_NODES = [
     ('uav_dynamics',         False),
-    ('disturbances',         False),
+    ('disturbances',         True),   # logs the resolved profile at startup
     ('target_position',      False),
     ('image_features',       True),   # prints "I see N arucos only" when it loses lock
     ('td_attitude',          False),
@@ -69,13 +73,12 @@ PLANT_NODES = [
     ('tf_broadcaster',       False),  # TF + paths + markers, for Foxglove's 3D panel
 ]
 
-# Held back until the plant is publishing; ROS 2's volatile QoS drops pre-subscription
-# samples that ROS 1's connection-based publishers delivered.
+# Held back until ibvs_gate says the simulation is ready. Do NOT go back to a TimerAction:
+# that delay is wall clock while these nodes run on sim time. See src/ibvs_gate.cpp.
 CTRL_NODES = [
     ('pos_ctrl',             True),
     ('att_ctrl',             False),
 ]
-CTRL_DELAY = 7.0
 
 
 def generate_launch_description():
@@ -91,6 +94,17 @@ def generate_launch_description():
         DeclareLaunchArgument('world', default_value='ibvs'),
         DeclareLaunchArgument('rosbag', default_value='false'),
         DeclareLaunchArgument('foxglove', default_value='false'),
+        # Comma-separated subset of none,step,gust,wind,csv. Magnitudes: config/disturbances.yaml.
+        DeclareLaunchArgument('disturbance', default_value='none'),
+        DeclareLaunchArgument('disturbance_seed', default_value='0'),
+    ]
+
+    # The YAML omits profile/seed so these two never silently lose to it. value_type is
+    # required: a LaunchConfiguration is a string, declare_parameter<int> is not.
+    disturbance_params = [
+        os.path.join(share, 'config', 'disturbances.yaml'),
+        {'profile': ParameterValue(LaunchConfiguration('disturbance'), value_type=str),
+         'seed': ParameterValue(LaunchConfiguration('disturbance_seed'), value_type=int)},
     ]
 
     # Resolves model://F450 and model://aruco_target.
@@ -159,10 +173,11 @@ def generate_launch_description():
     )
 
     # Every node runs on Gazebo's clock; /clock is bridged in config/bridge.yaml.
-    def _node(exe, verbose):
+    def _node(exe, verbose, params=None):
+        # params may mix YAML paths and dicts; later entries win.
         return Node(package=PKG, executable=exe, name=exe,
                     output='screen' if verbose else 'log',
-                    parameters=[{'use_sim_time': True}])
+                    parameters=[{'use_sim_time': True}] + list(params or []))
 
     def _bag(context, *a, **k):
         if LaunchConfiguration('rosbag').perform(context).lower() != 'true':
@@ -176,17 +191,27 @@ def generate_launch_description():
     def _foxglove(context, *a, **k):
         if LaunchConfiguration('foxglove').perform(context).lower() != 'true':
             return []
-        # AnyLaunchDescriptionSource: Humble exports only Any/Frontend/Python.
+        # foxglove_bridge_launch.xml is a frontend launch file, hence Any, not Python.
         return [IncludeLaunchDescription(
             AnyLaunchDescriptionSource(os.path.join(
                 get_package_share_directory('foxglove_bridge'),
                 'launch', 'foxglove_bridge_launch.xml')))]
 
-    plant = [_node(exe, v) for exe, v in PLANT_NODES]
+    plant = [_node(exe, v, disturbance_params if exe == 'disturbances' else None)
+             for exe, v in PLANT_NODES]
+
+    # Exits 0 the moment closed-loop servoing is actually possible, and non-zero (leaving
+    # the controllers unstarted, loudly) if that never happens.
+    gate = _node('ibvs_gate', True)
+
     # The recorder joins the controllers so the bag has no dead air at the front.
-    control = TimerAction(
-        period=CTRL_DELAY,
-        actions=[_node(exe, v) for exe, v in CTRL_NODES] + [OpaqueFunction(function=_bag)])
+    control = RegisterEventHandler(OnProcessExit(
+        target_action=gate,
+        on_exit=lambda event, context: (
+            [_node(exe, v) for exe, v in CTRL_NODES] + [OpaqueFunction(function=_bag)]
+            if event.returncode == 0 else
+            [LogInfo(msg='ibvs_gate failed - controllers not started. See its error above.')]
+        )))
 
     return LaunchDescription(args + egl_vendor + [
         resource_path,
@@ -195,4 +220,4 @@ def generate_launch_description():
         OpaqueFunction(function=_foxglove),
         bridge,
         broadcaster,
-    ] + plant + [control])
+    ] + plant + [control, gate])

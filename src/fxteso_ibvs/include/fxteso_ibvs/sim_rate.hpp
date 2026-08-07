@@ -17,8 +17,6 @@ inline std::chrono::milliseconds pollInterval()
 	return std::chrono::milliseconds(1);
 }
 
-// Spins while waiting rather than blocking: these nodes are single-threaded, so
-// Clock::sleep_until would stop /clock being serviced and sim time would never advance.
 inline void spinUntil(rclcpp::executors::SingleThreadedExecutor &exec,
                       const rclcpp::Node::SharedPtr &node,
                       const rclcpp::Time &target)
@@ -30,8 +28,6 @@ inline void spinUntil(rclcpp::executors::SingleThreadedExecutor &exec,
 	}
 }
 
-// Drop-in replacement for rclcpp::Rate that ticks on the node's clock.
-// SimRate owns the executor, so callers must NOT also call rclcpp::spin_some(node).
 class SimRate
 {
 public:

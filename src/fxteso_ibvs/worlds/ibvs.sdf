@@ -1,14 +1,11 @@
 <?xml version="1.0" ?>
-<!-- Gazebo Harmonic port of visual_servoing/src/test_gazebo/worlds/test_gazebo.world.
-     Gazebo is a CAMERA RENDERER here, nothing else. A physics engine is still loaded (with
-     zero gravity) because the pose-update path runs through it; type="none" makes model
-     teleports never reach the render scene. See documentation.md. -->
+<!-- Gazebo is a CAMERA RENDERER here, nothing else. Physics is still loaded (zero gravity)
+     because the pose-update path runs through it. See documentation.md section 1. -->
 <sdf version="1.9">
   <world name="ibvs">
 
-    <!-- Every node is paced by this clock (include/fxteso_ibvs/sim_rate.hpp), so changing
-         real_time_factor slows the whole stack together and preserves the control loop's
-         relative timing. Lower it here rather than lowering the camera's update_rate. -->
+    <!-- Every node is paced by this clock (sim_rate.hpp). Slow the sim HERE via
+         real_time_factor, not by lowering the camera's update_rate. -->
     <physics name="default_physics" type="ignored">
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1.0</real_time_factor>
@@ -141,9 +138,8 @@
       <pose>-9.9 10.1 4 3.141592 0 0</pose>
     </include>
 
-    <!-- Declaring <gui> makes gz-sim ignore gui.config entirely, so every plugin the
-         window needs must be listed here. Defaults minus the scene-editing tools, plus
-         ImageDisplay for the onboard camera. Unused when headless:=true. -->
+    <!-- Declaring <gui> makes gz-sim ignore gui.config, so every plugin must be listed
+         here. Unused when headless:=true. -->
     <gui fullscreen="0">
 
       <plugin filename="MinimalScene" name="3D View">

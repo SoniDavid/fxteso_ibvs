@@ -69,24 +69,26 @@
     },
 
     "Plot!altitude": {
-      "title": "5.10b  Altitude",
+      "title": "5.10b  Altitude (z is negative up)",
       "paths": [
         {
           "timestampMethod": "receiveTime",
           "value": "/quad_position.z",
           "enabled": true,
-          "label": "z (m)",
+          "label": "z (m, -up)",
           "color": "#4e79a7"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/z_des.data",
           "enabled": true,
-          "label": "z desired",
+          "label": "z desired (m, -up)",
           "color": "#bab0ac"
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -3.5,
+      "maxYValue": -2,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -109,6 +111,8 @@
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": 18,
+      "maxYValue": 22,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -152,6 +156,8 @@
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -0.02,
+      "maxYValue": 0.02,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -169,46 +175,48 @@
           "timestampMethod": "receiveTime",
           "value": "/attitude_td_error.x",
           "enabled": true,
-          "label": "roll",
+          "label": "roll err",
           "color": "#4e79a7"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/attitude_td_error.y",
           "enabled": true,
-          "label": "pitch",
+          "label": "pitch err",
           "color": "#f28e2b"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/attitude_td_error.z",
           "enabled": true,
-          "label": "yaw",
+          "label": "yaw err",
           "color": "#59a14f"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/attitude_des_td_error.x",
           "enabled": true,
-          "label": "roll des",
+          "label": "roll des err",
           "color": "#a0cbe8"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/attitude_des_td_error.y",
           "enabled": true,
-          "label": "pitch des",
+          "label": "pitch des err",
           "color": "#ffbe7d"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/attitude_des_td_error.z",
           "enabled": true,
-          "label": "yaw des",
+          "label": "yaw des err",
           "color": "#8cd17d"
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -0.002,
+      "maxYValue": 0.002,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -220,59 +228,61 @@
     },
 
     "Plot!disturbance": {
-      "title": "5.12  Total disturbance: truth vs FxTESO estimate",
+      "title": "5.12  Total disturbance (N): truth vs FxTESO estimate",
       "paths": [
         {
           "timestampMethod": "receiveTime",
-          "value": "/ibvs_dist.x",
+          "value": "/scaled_ibvs_dist.x",
           "enabled": true,
-          "label": "est x",
+          "label": "est x (N)",
           "color": "#4e79a7"
         },
         {
           "timestampMethod": "receiveTime",
-          "value": "/ibvs_dist.y",
+          "value": "/scaled_ibvs_dist.y",
           "enabled": true,
-          "label": "est y",
+          "label": "est y (N)",
           "color": "#f28e2b"
         },
         {
           "timestampMethod": "receiveTime",
-          "value": "/ibvs_dist.z",
+          "value": "/scaled_ibvs_dist.z",
           "enabled": true,
-          "label": "est z",
+          "label": "est z (N)",
           "color": "#59a14f"
         },
         {
           "timestampMethod": "receiveTime",
-          "value": "/ibvs_dist.w",
+          "value": "/scaled_ibvs_dist.w",
           "enabled": true,
-          "label": "est psi",
+          "label": "est psi (no truth)",
           "color": "#e15759"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/disturbances.x",
           "enabled": true,
-          "label": "truth x",
+          "label": "truth x (N)",
           "color": "#a0cbe8"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/disturbances.y",
           "enabled": true,
-          "label": "truth y",
+          "label": "truth y (N)",
           "color": "#ffbe7d"
         },
         {
           "timestampMethod": "receiveTime",
           "value": "/disturbances.z",
           "enabled": true,
-          "label": "truth z",
+          "label": "truth z (N)",
           "color": "#8cd17d"
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -0.75,
+      "maxYValue": 0.75,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -309,6 +319,8 @@
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -0.5,
+      "maxYValue": 0.5,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -352,6 +364,8 @@
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -0.25,
+      "maxYValue": 0.25,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -363,7 +377,7 @@
     },
 
     "Plot!gains": {
-      "title": "5.14a  Adaptive gains",
+      "title": "5.14a  IBVS adaptive gains",
       "paths": [
         {
           "timestampMethod": "receiveTime",
@@ -392,7 +406,24 @@
           "enabled": true,
           "label": "k qpsi",
           "color": "#e15759"
-        },
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "minYValue": 0,
+      "maxYValue": 0.05,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "followingViewWidth": 60,
+      "sidebarDimension": 240
+    },
+
+    "Plot!gainsAtt": {
+      "title": "Attitude adaptive gains",
+      "paths": [
         {
           "timestampMethod": "receiveTime",
           "value": "/k_att.x",
@@ -416,6 +447,8 @@
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": 0,
+      "maxYValue": 0.4,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -427,7 +460,7 @@
     },
 
     "Plot!torques": {
-      "title": "5.14b  Torques",
+      "title": "Attitude-loop torques",
       "paths": [
         {
           "timestampMethod": "receiveTime",
@@ -452,6 +485,8 @@
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -0.01,
+      "maxYValue": 0.01,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -535,6 +570,8 @@
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -0.25,
+      "maxYValue": 1.25,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -558,6 +595,10 @@
         }
       ],
       "xAxisVal": "custom",
+      "minXValue": -0.25,
+      "maxXValue": 0.25,
+      "minYValue": -0.25,
+      "maxYValue": 0.25,
       "xAxisPath": {
         "timestampMethod": "receiveTime",
         "value": "/ImFeat_vector.x",
@@ -574,7 +615,7 @@
     },
 
     "Plot!poi": {
-      "title": "5.10d  POI coordinates (px, virtual frame)",
+      "title": "POI coordinates (px, virtual frame)",
       "paths": [
         {
           "timestampMethod": "receiveTime",
@@ -634,6 +675,8 @@
         }
       ],
       "xAxisVal": "timestamp",
+      "minYValue": -250,
+      "maxYValue": 250,
       "showLegend": true,
       "legendDisplay": "floating",
       "showPlotValuesInLegend": true,
@@ -692,9 +735,14 @@
             },
             "second": {
               "direction": "row",
-              "first": "Plot!gains",
+              "first": {
+                "direction": "row",
+                "first": "Plot!gains",
+                "second": "Plot!gainsAtt",
+                "splitPercentage": 50
+              },
               "second": "Plot!torques",
-              "splitPercentage": 50
+              "splitPercentage": 66
             },
             "splitPercentage": 50
           }

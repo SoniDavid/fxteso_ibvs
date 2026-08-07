@@ -13,9 +13,8 @@ find_package(sensor_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(Eigen3 REQUIRED)
-# System OpenCV is 4.5.4, which still ships the pre-4.7 cv::aruco API
-# (Ptr<Dictionary>, DetectorParameters::create(), free detectMarkers), so
-# image_features.cpp compiles unchanged from the ROS 1 original.
+# OpenCV 4.6.0 on Noble still ships the pre-4.7 cv::aruco API, so image_features.cpp
+# compiles unchanged from the ROS 1 original.
 find_package(OpenCV REQUIRED)
 
 # include/fxteso_ibvs/sim_rate.hpp - the sim-time loop pacing every node uses. Header
@@ -48,6 +47,12 @@ target_compile_features(pos_ctrl PUBLIC cxx_std_17)
 target_include_directories(pos_ctrl PUBLIC ${EIGEN3_INCLUDE_DIRS})
 ament_target_dependencies(pos_ctrl rclcpp std_msgs geometry_msgs sensor_msgs)
 
+# Gates the controllers on the plant, the target and a real marker lock. See the file
+# header for why a wall-clock launch delay could not do this job.
+add_executable(ibvs_gate src/ibvs_gate.cpp)
+target_compile_features(ibvs_gate PUBLIC cxx_std_17)
+ament_target_dependencies(ibvs_gate rclcpp geometry_msgs)
+
 add_executable(image_features src/image_features.cpp)
 target_compile_features(image_features PUBLIC cxx_std_17)
 target_include_directories(image_features PUBLIC ${EIGEN3_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
@@ -56,14 +61,17 @@ ament_target_dependencies(image_features rclcpp std_msgs geometry_msgs sensor_ms
 
 # --- Gazebo Harmonic pose broadcaster ----------------------------------------
 # Talks gz-transport directly: set_pose_vector has no ROS message equivalent.
-find_package(gz-transport13 REQUIRED)
-find_package(gz-msgs10 REQUIRED)
+# On Jazzy, Harmonic comes from ros_gz's vendor packages, not a system gz install.
+find_package(gz_transport_vendor REQUIRED)
+find_package(gz-transport REQUIRED)
+find_package(gz_msgs_vendor REQUIRED)
+find_package(gz-msgs REQUIRED)
 
 add_executable(gz_pose_broadcaster src/gz_pose_broadcaster.cpp)
 target_compile_features(gz_pose_broadcaster PUBLIC cxx_std_17)
 target_link_libraries(gz_pose_broadcaster
-  gz-transport13::gz-transport13
-  gz-msgs10::gz-msgs10)
+  gz-transport::core
+  gz-msgs::core)
 ament_target_dependencies(gz_pose_broadcaster rclcpp std_msgs geometry_msgs tf2)
 
 # --- Foxglove visualisation ---------------------------------------------------
@@ -76,7 +84,8 @@ target_compile_features(tf_broadcaster PUBLIC cxx_std_17)
 ament_target_dependencies(tf_broadcaster
   rclcpp std_msgs geometry_msgs nav_msgs visualization_msgs tf2 tf2_ros)
 
-install(TARGETS ${IBVS_NODES} pos_ctrl image_features gz_pose_broadcaster tf_broadcaster
+install(TARGETS ${IBVS_NODES} pos_ctrl image_features ibvs_gate gz_pose_broadcaster
+    tf_broadcaster
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch config models worlds foxglove

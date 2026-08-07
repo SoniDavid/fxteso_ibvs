@@ -11,8 +11,8 @@
 #include <std_msgs/msg/float64.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2_ros/transform_broadcaster.h>
+#include <tf2/LinearMath/Quaternion.hpp>
+#include <tf2_ros/transform_broadcaster.hpp>
 
 #include <string>
 

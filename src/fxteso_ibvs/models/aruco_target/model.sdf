@@ -1,15 +1,7 @@
 <?xml version='1.0'?>
-<!-- Moving ArUco target: a 0.90 x 0.75 m plate carrying four DICT_7X7_50 markers with
-     IDs 4, 6, 8 and 10. Ported from
-     visual_servoing/src/ibvs_nftasmc/models/Aruco_Target/model.sdf; the only change is
-     the mesh URI, which used to be an absolute /home/armando/... path.
-
-     The model name must stay 'aruco_Target' -- gz_pose_broadcaster addresses the entity
-     by that exact string, and image_features.cpp keys its point assignment off the
-     marker IDs baked into Target2.dae.
-
-     Target2.dae references its four JPEGs by bare filename, so they have to live beside
-     it in meshes/. -->
+<!-- Moving ArUco target: 0.90 x 0.75 m plate, four DICT_7X7_50 markers, IDs 4/6/8/10.
+     The model name must stay 'aruco_Target' - gz_pose_broadcaster addresses it by that
+     exact string. Target2.dae needs its JPEGs beside it in meshes/. -->
 <sdf version='1.9'>
   <model name='aruco_Target'>
     <link name='link_aruco'>

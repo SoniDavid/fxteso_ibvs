@@ -78,6 +78,32 @@ def main():
         if image and image not in pubs:
             problems.append('%s: no publisher for %s' % (panel, image))
 
+    # Every Plot panel pins its Y range: auto-scale magnifies a converged signal into
+    # noise and makes two runs incomparable.
+    for pid, cfg in layout['configById'].items():
+        if not pid.startswith('Plot!'):
+            continue
+        axes = [('minYValue', 'maxYValue')]
+        if cfg.get('xAxisVal') == 'custom':
+            axes.append(('minXValue', 'maxXValue'))
+        for lo_key, hi_key in axes:
+            lo, hi = cfg.get(lo_key), cfg.get(hi_key)
+            if lo is None or hi is None:
+                problems.append('%s: missing %s/%s (would auto-scale)' % (pid, lo_key, hi_key))
+            elif lo >= hi:
+                problems.append('%s: %s (%g) must be < %s (%g)' % (pid, lo_key, lo, hi_key, hi))
+
+    # A thesis figure number must name exactly one panel. Two panels both titled "5.14b"
+    # is how a plot ends up captioned as something it is not.
+    figures = {}
+    for pid, cfg in layout['configById'].items():
+        m = re.match(r'\s*(\d+\.\d+[a-z]?)\b', cfg.get('title', ''))
+        if m:
+            figures.setdefault(m.group(1), []).append(cfg['title'])
+    for fig, titles in sorted(figures.items()):
+        if len(titles) > 1:
+            problems.append('figure %s used by %d panels: %s' % (fig, len(titles), titles))
+
     # Every panel in the mosaic is configured, and every configured panel is placed.
     refs = set()
 
