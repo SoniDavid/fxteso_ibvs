@@ -1,5 +1,4 @@
-# ros_gz_bridge config. One-way: frames and the sim clock come out, nothing goes in.
-# Poses bypass the bridge entirely (gz_pose_broadcaster talks gz-transport directly).
+# ros_gz_bridge config. Poses bypass the bridge (gz_pose_broadcaster uses gz-transport).
 
 - ros_topic_name: "/quad/camera/image_raw"
   gz_topic_name: "/quad/camera/image_raw"
@@ -9,7 +8,6 @@
 
 # gz-sensors derives the info topic by appending /camera_info to the sensor <topic>.
 # Nothing in the IBVS stack consumes it (image_features takes the principal point from
-# frame.size()/2), but rviz/rqt camera displays want it.
 - ros_topic_name: "/quad/camera/camera_info"
   gz_topic_name: "/quad/camera/image_raw/camera_info"
   ros_type_name: "sensor_msgs/msg/CameraInfo"
@@ -20,4 +18,37 @@
   gz_topic_name: "/clock"
   ros_type_name: "rosgraph_msgs/msg/Clock"
   gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# --- plant:=gazebo: inert under plant:=analytic, where nothing subscribes ------
+- ros_topic_name: "/quad_thrust"
+  gz_topic_name: "/F450/thrust"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/quad_torques"
+  gz_topic_name: "/F450/torques"
+  ros_type_name: "geometry_msgs/msg/Vector3"
+  gz_type_name: "gz.msgs.Vector3d"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/disturbances"
+  gz_topic_name: "/F450/disturbance"
+  ros_type_name: "geometry_msgs/msg/Vector3"
+  gz_type_name: "gz.msgs.Vector3d"
+  direction: ROS_TO_GZ
+
+# True pose and both velocities; gz_state_adapter converts to the five NED topics.
+- ros_topic_name: "/quad_state"
+  gz_topic_name: "/F450/state"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+# Observer ground truth: /disturbances plus whatever WindEffects applied.
+- ros_topic_name: "/external_force"
+  gz_topic_name: "/F450/external_force"
+  ros_type_name: "geometry_msgs/msg/Vector3"
+  gz_type_name: "gz.msgs.Vector3d"
   direction: GZ_TO_ROS

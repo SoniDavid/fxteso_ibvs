@@ -178,9 +178,14 @@ int main(int argc, char *argv[])
 
     while(rclcpp::ok())
     { 
-        //Error 
+        //Error
         error_att = attitudeEstimates - attRef;
         error_attVel= attitudeVelEstimates - attVelRef;
+
+        // Shortest angular route on yaw. Identity while |error| < pi, so the control law is
+        // unchanged in normal flight. See docs/angle-wrapping.md.
+        while (error_att(2) > M_PI)  error_att(2) -= 2.0f * M_PI;
+        while (error_att(2) <= -M_PI) error_att(2) += 2.0f * M_PI;
 
         //error_att = attitude - attRef;
         //error_attVel= attitude_vel - attVelRef;

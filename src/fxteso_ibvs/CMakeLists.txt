@@ -67,6 +67,21 @@ find_package(gz-transport REQUIRED)
 find_package(gz_msgs_vendor REQUIRED)
 find_package(gz-msgs REQUIRED)
 
+# The Gazebo-physics plant. A gz-sim system plugin, not a ROS node: it has to write the
+# wrench component inside the 1 ms physics step, which a 100 Hz ROS node cannot do.
+find_package(gz_sim_vendor REQUIRED)
+find_package(gz-sim REQUIRED)
+find_package(gz_plugin_vendor REQUIRED)
+find_package(gz-plugin REQUIRED)
+
+add_library(BodyWrenchSystem SHARED src/plugins/body_wrench_system.cc)
+target_compile_features(BodyWrenchSystem PUBLIC cxx_std_17)
+target_link_libraries(BodyWrenchSystem
+  gz-sim::core
+  gz-plugin::core
+  gz-transport::core
+  gz-msgs::core)
+
 add_executable(gz_pose_broadcaster src/gz_pose_broadcaster.cpp)
 target_compile_features(gz_pose_broadcaster PUBLIC cxx_std_17)
 target_link_libraries(gz_pose_broadcaster
@@ -77,7 +92,14 @@ ament_target_dependencies(gz_pose_broadcaster rclcpp std_msgs geometry_msgs tf2)
 # --- Foxglove visualisation ---------------------------------------------------
 find_package(tf2_ros REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+
+# The Gazebo-physics counterpart of uav_dynamics: same five output topics, state sourced from
+# the BodyWrench plugin instead of a ROS-side integrator.
+add_executable(gz_state_adapter src/gz_state_adapter.cpp)
+target_compile_features(gz_state_adapter PUBLIC cxx_std_17)
+ament_target_dependencies(gz_state_adapter rclcpp geometry_msgs nav_msgs tf2 tf2_geometry_msgs)
 
 add_executable(tf_broadcaster src/tf_broadcaster.cpp)
 target_compile_features(tf_broadcaster PUBLIC cxx_std_17)
@@ -85,8 +107,12 @@ ament_target_dependencies(tf_broadcaster
   rclcpp std_msgs geometry_msgs nav_msgs visualization_msgs tf2 tf2_ros)
 
 install(TARGETS ${IBVS_NODES} pos_ctrl image_features ibvs_gate gz_pose_broadcaster
-    tf_broadcaster
+    gz_state_adapter tf_broadcaster
   DESTINATION lib/${PROJECT_NAME})
+
+# gz-sim finds system plugins on GZ_SIM_SYSTEM_PLUGIN_PATH, which sim.launch.py points here.
+install(TARGETS BodyWrenchSystem
+  DESTINATION lib)
 
 install(DIRECTORY launch config models worlds foxglove
   DESTINATION share/${PROJECT_NAME})

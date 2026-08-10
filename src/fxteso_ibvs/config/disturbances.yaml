@@ -4,9 +4,6 @@
 #
 #   ros2 launch fxteso_ibvs sim.launch.py disturbance:=wind
 #   ros2 launch fxteso_ibvs sim.launch.py disturbance:=wind,step disturbance_seed:=7
-#
-# 'profile' and 'seed' are NOT set here - they come from the launch arguments. Setting them
-# here would silently win over the command line.
 
 disturbances:
   ros__parameters:
@@ -32,12 +29,6 @@ disturbances:
     # Rule of thumb: 10-20% of mean speed.
     wind_turbulence: [0.15, 0.15, 0.08]  # m/s, std-dev per axis
     wind_turbulence_tau: 2.0          # s, larger = slower, rollier gusts
-
-    # CEILING: field of view, not controller stability. Sustained disturbance above
-    # ~0.1-0.2 N walks the markers out of frame; image_features emits its no-lock sentinel
-    # and the plant diverges to NaN. Measured: wind |v|=1.12 holds, 1.68 fails. A 0.3 N
-    # step for 3 s is fine - duration decides, not peak. Log symptom: "I see N arucos only".
-    # Raising it means widening the FOV or raising z_des, not retuning the controller.
 
     # 'csv': replay a recorded profile, one "x,y,z" row per 10 ms. Unopenable path aborts.
     csv: ""

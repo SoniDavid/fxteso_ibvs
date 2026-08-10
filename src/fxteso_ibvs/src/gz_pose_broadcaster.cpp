@@ -95,6 +95,9 @@ int main(int argc, char **argv)
 	const double idle_rate = node->declare_parameter<double>("rotor_idle_rate", 12.0);
 	const double hover_thrust = node->declare_parameter<double>("rotor_hover_thrust", 19.62);
 
+	// Under plant:=gazebo physics owns the quad's pose; the target is always broadcast.
+	const bool teleport_quad = node->declare_parameter<bool>("teleport_quad", true);
+
 	fxteso::SimRate loop_rate(node, 100);
 
 	auto quad_pos_sub = node->create_subscription<geometry_msgs::msg::Vector3>(
@@ -109,7 +112,9 @@ int main(int argc, char **argv)
 		"quad_thrust", 1, quadThrustCallback);
 
 	gz::transport::Node gz_node;
-	RCLCPP_INFO(node->get_logger(), "Broadcasting F450 + aruco_Target via %s", service.c_str());
+	RCLCPP_INFO(node->get_logger(), "Broadcasting %s via %s",
+		teleport_quad ? "F450 + aruco_Target" : "aruco_Target only (F450 pose owned by physics)",
+		service.c_str());
 
 	// Diagonal pairs turn together, adjacent rotors oppose. The sign is the direction the
 	// JointController plugins in models/F450/model.sdf declare as their initial velocity;
@@ -128,21 +133,17 @@ int main(int argc, char **argv)
 			std::string("/model/F450/joint/") + rotors[i].first + "/cmd_vel");
 	}
 
-	tf2::Quaternion q_rot;
-	q_rot.setRPY(3.141592, 0, 0);
-
 	unsigned tick = 0;
 
 	while (rclcpp::ok())
 	{
 		gz::msgs::Pose_V msg;
 
-		//  F450: pi roll pre-rotation, camera ends up looking down 
-		if (have_quad_pos && have_quad_att)
+		// ROS NED -> gz is a conjugation by Rx(pi): (x,-y,-z) and RPY(r,-p,-y).
+		if (teleport_quad && have_quad_pos && have_quad_att)
 		{
-			tf2::Quaternion q_att;
-			q_att.setRPY(roll, pitch, yaw);
-			tf2::Quaternion q_quad = q_rot * q_att;
+			tf2::Quaternion q_quad;
+			q_quad.setRPY(roll, -pitch, -yaw);
 			q_quad.normalize();
 			fill(msg.add_pose(), "F450", quad_x, -quad_y, -quad_z, q_quad);
 		}

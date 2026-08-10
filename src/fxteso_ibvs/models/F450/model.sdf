@@ -1,34 +1,39 @@
 <?xml version='1.0'?>
-<!-- DJI F450 quadrotor. Visual only: uav_dynamics.cpp owns the plant, and nothing here has
-     collision geometry. The airframe is built inside frame "body" (the model frame rolled
-     by pi, applied by gz_pose_broadcaster), so everything below is FLU. Meshes are in mm.
+<!-- DJI F450 quadrotor. The model frame is the airframe frame: FLU, +x forward, +y left,
+     +z up, camera at the origin looking down. Meshes are in mm.
      Frames, meshes and rotor conventions: documentation.md section 5. -->
 <sdf version='1.9'>
   <model name='F450'>
 
-    <!-- Rolled pi so that the broadcaster's own pi roll cancels and the quad flies upright. -->
-    <frame name='body'>
-      <pose>0 0 0 3.141592 0 0</pose>
-    </frame>
-
     <!-- ================= airframe: plates + arms + motors ====================== -->
     <link name='base_link'>
-      <pose relative_to='body'>0 0 0 0 0 0</pose>
       <self_collide>0</self_collide>
 
-      <!-- Mass/inertia carried over from the placeholder so the model still reads as a
-           2 kg F450; the plant integrates its own copy of these numbers. -->
+      <!-- Smaller than the thesis numbers on purpose: DART integrates the composite, and
+           the rotors add parallel-axis terms. Composite is 2 kg, diag(0.0411,0.0478,0.0599)
+           about the origin. Check with: gz model -m F450. -->
       <inertial>
-        <mass>1.852</mass>
+        <pose>0 0 -0.0063582 0 0 0</pose>
+        <mass>1.852144</mass>
         <inertia>
-          <ixx>0.0411</ixx>
+          <ixx>0.0359836</ixx>
           <ixy>0</ixy>
           <ixz>0</ixz>
-          <iyy>0.0478</iyy>
+          <iyy>0.0426836</iyy>
           <iyz>0</iyz>
-          <izz>0.0599</izz>
+          <izz>0.0516929</izz>
         </inertia>
       </inertial>
+
+      <!-- Coarse stand-in; only matters once the quad reaches the ground. -->
+      <collision name='base_collision'>
+        <geometry>
+          <cylinder><radius>0.25</radius><length>0.06</length></cylinder>
+        </geometry>
+      </collision>
+
+      <!-- Consumed by gz-sim-wind-effects-system; ignored when that plugin is not loaded. -->
+      <enable_wind>true</enable_wind>
 
       <visual name='base_plate'>
         <geometry>
@@ -213,7 +218,7 @@
          assembly coordinates); yaw is the k*90 deg off the front left blade. -->
 
     <link name='rotor_front_left'>
-      <pose relative_to='body'>0.158911 0.158901 0.079647 0 0 0</pose>
+      <pose>0.158911 0.158901 0.079647 0 0 0</pose>
       <inertial>
         <mass>0.036964</mass>
         <inertia>
@@ -239,7 +244,7 @@
     </link>
 
     <link name='rotor_rear_left'>
-      <pose relative_to='body'>-0.158901 0.158911 0.079647 0 0 0</pose>
+      <pose>-0.158901 0.158911 0.079647 0 0 0</pose>
       <inertial>
         <mass>0.036964</mass>
         <inertia>
@@ -265,7 +270,7 @@
     </link>
 
     <link name='rotor_rear_right'>
-      <pose relative_to='body'>-0.158911 -0.158901 0.079647 0 0 0</pose>
+      <pose>-0.158911 -0.158901 0.079647 0 0 0</pose>
       <inertial>
         <mass>0.036964</mass>
         <inertia>
@@ -291,7 +296,7 @@
     </link>
 
     <link name='rotor_front_right'>
-      <pose relative_to='body'>0.158901 -0.158911 0.079647 0 0 0</pose>
+      <pose>0.158901 -0.158911 0.079647 0 0 0</pose>
       <inertial>
         <mass>0.036964</mass>
         <inertia>

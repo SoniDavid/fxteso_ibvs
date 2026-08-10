@@ -11,18 +11,23 @@
         |                                                          |
         +---> fixed_eso ---> pos_ctrl ---> att_ctrl ---------------+--> quad_torques/quad_thrust
 
-Gazebo is a camera and nothing else: zero gravity, both model poses overwritten every 10 ms
-from the ROS side. See documentation.md.
+The plant is switchable; both backends publish the same topics.
+
+  plant:=analytic  uav_dynamics.cpp integrates the aircraft; Gazebo is a camera only.
+  plant:=gazebo    DART integrates the aircraft. See docs/gazebo-plant.md.
 
   ros2 launch fxteso_ibvs sim.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
+                                        [plant:=analytic|gazebo] [controllers:=false]
                                         [disturbance:=none|step|gust|wind|csv]
                                         [disturbance_seed:=N]
 """
 import os
+import re
 import signal
 import time
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import (get_package_prefix,
+                                          get_package_share_directory)
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
                             IncludeLaunchDescription, LogInfo, OpaqueFunction,
@@ -41,7 +46,7 @@ BAG_TOPICS = [
     # plant and target
     '/quad_position', '/quad_attitude', '/quad_velocity', '/quad_velocity_BF',
     '/quad_attitude_velocity', '/quad_thrust', '/quad_torques', '/desired_attitude',
-    '/tgt_position', '/tgt_velocity', '/tgt_yaw', '/disturbances',
+    '/tgt_position', '/tgt_velocity', '/tgt_yaw', '/disturbances', '/disturbances_total',
     # vision and the fixed-time observer (thesis Figs 5.10d, 5.11a, 5.12)
     '/ImFeat_vector', '/ImFeat_estimates_fxt', '/ImFeat_dot_estimates_fxt',
     '/estimation_error_fxt', '/ibvs_dist', '/scaled_ibvs_dist', '/a_value', '/z_des',
@@ -59,10 +64,9 @@ BAG_TOPICS = [
     '/tf', '/quad_path', '/tgt_path', '/ibvs_markers',
 ]
 
-# uav_dynamics holds its initial condition for 5 s before integrating, so these all need
-# that head start.
+# uav_dynamics holds its initial condition for 5 s, so these need that head start. The plant
+# node itself is chosen by the 'plant' argument.
 PLANT_NODES = [
-    ('uav_dynamics',         False),
     ('disturbances',         True),   # logs the resolved profile at startup
     ('target_position',      False),
     ('image_features',       True),   # prints "I see N arucos only" when it loses lock
@@ -92,6 +96,12 @@ def generate_launch_description():
         # Must match <world name=...> in worlds/ibvs.sdf: selects the gz topic
         # /world/<world>/set_pose_vector the broadcaster publishes on.
         DeclareLaunchArgument('world', default_value='ibvs'),
+        # analytic = the paper's ROS-side integrator; gazebo = DART.
+        DeclareLaunchArgument('plant', default_value='analytic'),
+        # false leaves the controllers unstarted, for open-loop testing.
+        DeclareLaunchArgument('controllers', default_value='true'),
+        # Debug only: false feeds a wrapped attitude, as a quaternion source would.
+        DeclareLaunchArgument('unwrap_attitude', default_value='true'),
         DeclareLaunchArgument('rosbag', default_value='false'),
         DeclareLaunchArgument('foxglove', default_value='false'),
         # Comma-separated subset of none,step,gust,wind,csv. Magnitudes: config/disturbances.yaml.
@@ -110,6 +120,11 @@ def generate_launch_description():
     # Resolves model://F450 and model://aruco_target.
     resource_path = SetEnvironmentVariable(
         'GZ_SIM_RESOURCE_PATH', os.path.join(share, 'models'))
+
+    # Where gz-sim looks for libBodyWrenchSystem.so (CMakeLists installs it to lib/).
+    plugin_path = SetEnvironmentVariable(
+        'GZ_SIM_SYSTEM_PLUGIN_PATH',
+        os.path.join(get_package_prefix(PKG), 'lib'))
 
     # Without this, gz-sim's sensor rendering picks the Mesa ICD and falls back to software
     # (llvmpipe) even though the GPU is present.
@@ -151,14 +166,56 @@ def generate_launch_description():
         return [LogInfo(msg='Reaped orphaned gz sim from a previous run: pid ' +
                             ', '.join(killed))]
 
+    def _select(text, plant, what):
+        """Keep each ONLY:<plants> block only if `plant` is in its list. Raises if no marker
+        is found, so an unfiltered file cannot silently run the wrong plant."""
+        seen = [False]
+
+        def keep(m):
+            seen[0] = True
+            return m.group(0) if plant in m.group(1).split(',') else ''
+
+        out = re.sub(r'[ \t]*<!-- ONLY:([a-z,]+) BEGIN -->.*?<!-- ONLY END -->\n',
+                     keep, text, flags=re.DOTALL)
+        if not seen[0]:
+            raise RuntimeError(
+                '%s has no ONLY: markers, so sim.launch.py cannot select the plugins for '
+                'plant:=%s. Fix the file or this launch file before running.' % (what, plant))
+        return out
+
+    def _world_for(plant):
+        """Derive the world for `plant`: filter ONLY blocks, and zero gravity for analytic."""
+        with open(world_file) as fh:
+            sdf = fh.read()
+
+        out = _select(sdf, plant, 'worlds/ibvs.sdf')
+        if plant == 'analytic':
+            gravity_off = out.replace('<gravity>0 0 -9.81</gravity>',
+                                      '<gravity>0 0 0</gravity>')
+            if gravity_off == out:
+                raise RuntimeError(
+                    'worlds/ibvs.sdf no longer has the gravity tag sim.launch.py rewrites '
+                    'for plant:=analytic. Fix one or the other before running.')
+            out = gravity_off
+
+        # Alongside the original so model:// still resolves.
+        derived = os.path.join(os.path.dirname(world_file), '.ibvs_%s.sdf' % plant)
+        with open(derived, 'w') as fh:
+            fh.write(out)
+        return derived
+
     def _gz(context, *a, **k):
         headless = LaunchConfiguration('headless').perform(context).lower() == 'true'
+        plant = LaunchConfiguration('plant').perform(context).lower()
+        if plant not in ('analytic', 'gazebo'):
+            raise RuntimeError('plant:=%s is not one of analytic, gazebo.' % plant)
         # -r starts the world running, so nothing has to unpause physics.
         flags = '-r -v3 -s --headless-rendering ' if headless else '-r -v3 '
         return [IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(ros_gz_sim, 'launch', 'gz_sim.launch.py')),
-            launch_arguments={'gz_args': flags + world_file, 'gz_version': '8'}.items(),
+            launch_arguments={'gz_args': flags + _world_for(plant),
+                              'gz_version': '8'}.items(),
         )]
 
     bridge = Node(
@@ -166,11 +223,24 @@ def generate_launch_description():
         output='screen', parameters=[{'config_file': bridge_cfg}],
     )
 
-    broadcaster = Node(
-        package=PKG, executable='gz_pose_broadcaster', name='gz_pose_broadcaster',
-        output='screen', parameters=[{'world': LaunchConfiguration('world'),
-                                      'use_sim_time': True}],
-    )
+    def _broadcaster(context, *a, **k):
+        # Under plant:=gazebo physics owns the quad's pose; the broadcaster keeps the target
+        # and the cosmetic rotor spin.
+        gazebo = LaunchConfiguration('plant').perform(context).lower() != 'analytic'
+        return [Node(
+            package=PKG, executable='gz_pose_broadcaster', name='gz_pose_broadcaster',
+            output='screen', parameters=[{'world': LaunchConfiguration('world'),
+                                          'teleport_quad': not gazebo,
+                                          'use_sim_time': True}],
+        )]
+
+    def _plant_node(context, *a, **k):
+        plant = LaunchConfiguration('plant').perform(context).lower()
+        if plant == 'analytic':
+            return [_node('uav_dynamics', False)]
+        return [_node('gz_state_adapter', False, [{
+            'unwrap_attitude': ParameterValue(
+                LaunchConfiguration('unwrap_attitude'), value_type=bool)}])]
 
     # Every node runs on Gazebo's clock; /clock is bridged in config/bridge.yaml.
     def _node(exe, verbose, params=None):
@@ -208,16 +278,21 @@ def generate_launch_description():
     control = RegisterEventHandler(OnProcessExit(
         target_action=gate,
         on_exit=lambda event, context: (
-            [_node(exe, v) for exe, v in CTRL_NODES] + [OpaqueFunction(function=_bag)]
+            ([_node(exe, v) for exe, v in CTRL_NODES]
+             if LaunchConfiguration('controllers').perform(context).lower() == 'true'
+             else [LogInfo(msg='controllers:=false - plant left open-loop.')])
+            + [OpaqueFunction(function=_bag)]
             if event.returncode == 0 else
             [LogInfo(msg='ibvs_gate failed - controllers not started. See its error above.')]
         )))
 
     return LaunchDescription(args + egl_vendor + [
         resource_path,
+        plugin_path,
         OpaqueFunction(function=_reap_orphans),   # before Gazebo starts
         OpaqueFunction(function=_gz),
         OpaqueFunction(function=_foxglove),
         bridge,
-        broadcaster,
+        OpaqueFunction(function=_broadcaster),
+        OpaqueFunction(function=_plant_node),
     ] + plant + [control, gate])

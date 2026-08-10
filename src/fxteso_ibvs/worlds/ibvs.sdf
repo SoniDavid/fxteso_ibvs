@@ -1,6 +1,7 @@
 <?xml version="1.0" ?>
-<!-- Gazebo is a CAMERA RENDERER here, nothing else. Physics is still loaded (zero gravity)
-     because the pose-update path runs through it. See documentation.md section 1. -->
+<!-- Written for plant:=gazebo. sim.launch.py derives the analytic variant by keeping only the
+     matching ONLY:<plants> blocks and zeroing gravity. Plugin ORDER below is load-bearing.
+     See docs/gazebo-plant.md. -->
 <sdf version="1.9">
   <world name="ibvs">
 
@@ -11,7 +12,7 @@
       <real_time_factor>1.0</real_time_factor>
       <real_time_update_rate>1000</real_time_update_rate>
     </physics>
-    <gravity>0 0 0</gravity>
+    <gravity>0 0 -9.81</gravity>
 
     <!-- Sensors renders the camera; UserCommands is what makes set_pose_vector work.
          Both are mandatory for this simulation. -->
@@ -22,6 +23,59 @@
       <render_engine>ogre2</render_engine>
     </plugin>
 
+    <!-- ONLY:gazebo BEGIN -->
+    <!-- The plant: thrust/torque -> wrench on base_link, and state back out. A world plugin,
+         because <plugin> inside <include> is silently ignored by gz-sim 8. -->
+    <plugin filename="BodyWrenchSystem" name="fxteso_ibvs::BodyWrench">
+      <model_name>F450</model_name>
+      <link_name>base_link</link_name>
+      <topic_prefix>/F450</topic_prefix>
+      <initial_thrust>19.62</initial_thrust>
+      <state_publish_rate>100</state_publish_rate>
+      <!-- Guard against a diverged controller reaching DART, not actuator saturation. -->
+      <max_force>500</max_force>
+      <max_torque>100</max_torque>
+    </plugin>
+    <!-- ONLY END -->
+
+    <!-- ONLY:gazebo BEGIN -->
+    <!-- Ambient wind, off by default. MUST come after BodyWrench or thrust is discarded.
+         ~0.072 N per m/s; needs enable_wind:true on the topic. See docs/wind.md. -->
+    <wind>
+      <linear_velocity>0 0 0</linear_velocity>
+    </wind>
+    <plugin filename="gz-sim-wind-effects-system" name="gz::sim::systems::WindEffects">
+      <force_approximation_scaling_factor>0.1</force_approximation_scaling_factor>
+      <horizontal>
+        <magnitude>
+          <time_for_rise>4</time_for_rise>
+          <noise type="gaussian"><mean>0</mean><stddev>0.03</stddev></noise>
+        </magnitude>
+        <direction>
+          <time_for_rise>2</time_for_rise>
+          <noise type="gaussian"><mean>0</mean><stddev>0.03</stddev></noise>
+        </direction>
+      </horizontal>
+      <vertical>
+        <noise type="gaussian"><mean>0</mean><stddev>0.01</stddev></noise>
+      </vertical>
+    </plugin>
+    <!-- ONLY END -->
+
+    <!-- Echo instance, LAST on purpose: the wrench component is zeroed every step, so the
+         total is only observable by a system running after everyone who writes it. -->
+    <!-- ONLY:gazebo BEGIN -->
+    <plugin filename="BodyWrenchSystem" name="fxteso_ibvs::BodyWrench">
+      <mode>echo</mode>
+      <model_name>F450</model_name>
+      <link_name>base_link</link_name>
+      <topic_prefix>/F450</topic_prefix>
+      <state_publish_rate>100</state_publish_rate>
+      <!-- MUST match the plant instance: the echo subtracts commanded thrust. -->
+      <initial_thrust>19.62</initial_thrust>
+    </plugin>
+    <!-- ONLY END -->
+
     <!-- The ground plane is deliberately untextured: anything busy under the markers risks
          the ArUco adaptive threshold. The grid is GUI-only and never reaches the sensor. -->
     <scene>
@@ -31,12 +85,15 @@
       <shadows>false</shadows>
     </scene>
 
-    <!-- Visual only, 2 cm down: z=0 would z-fight the 1 mm ArUco plate, and a collision
-         geom aborts gz-sim (ODE AABB assert) if the plant ever diverges to infinity. -->
+    <!-- 2 cm down so z=0 does not z-fight the 1 mm ArUco plate. The collision makes ground
+         contact real; the plugin's NaN guard stops a divergence becoming a DART assert. -->
     <model name="ground_plane">
       <static>true</static>
       <pose>0 0 -0.02 0 0 0</pose>
       <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>400 400</size></plane></geometry>
+        </collision>
         <visual name="visual">
           <geometry><plane><normal>0 0 1</normal><size>400 400</size></plane></geometry>
           <material>
@@ -135,7 +192,7 @@
     <include>
       <uri>model://F450</uri>
       <name>F450</name>
-      <pose>-9.9 10.1 4 3.141592 0 0</pose>
+      <pose>-9.9 10.1 4 0 0 0</pose>
     </include>
 
     <!-- Declaring <gui> makes gz-sim ignore gui.config, so every plugin must be listed
