@@ -1,0 +1,62 @@
+# What rosbag:=true records; sim.launch.py flattens every group into one bag record call.
+# Camera images excluded: 820x616 at 50 Hz is ~75 MB/s and would dwarf every signal here.
+
+plant_and_target:
+  - /quad_position
+  - /quad_attitude
+  - /quad_velocity
+  - /quad_velocity_BF
+  - /quad_attitude_velocity
+  - /quad_thrust
+  - /quad_torques
+  - /desired_attitude
+  - /tgt_position
+  - /tgt_velocity
+  - /tgt_yaw
+  - /disturbances
+  - /disturbances_total
+
+# thesis Figs 5.10d, 5.11a, 5.12
+vision_and_observer:
+  - /ImFeat_vector
+  - /ImFeat_estimates_fxt
+  - /ImFeat_dot_estimates_fxt
+  - /estimation_error_fxt
+  - /ibvs_dist
+  - /scaled_ibvs_dist
+  - /a_value
+  - /z_des
+  - /u_coordinates
+  - /n_coordinates
+
+# Figs 5.13, 5.14a
+position_loop:
+  - /error_visual_servoing
+  - /error_dot_visual_servoing
+  - /ibvs_ss
+  - /ibvs_control_input
+  - /adaptive_gain
+  - /position_error
+
+attitude_loop:
+  - /error_att
+  - /error_attVel
+  - /sigma_att
+  - /k_att
+
+# tracking differentiators and their estimation errors (Fig 5.11b)
+differentiators:
+  - /attitude_estimates
+  - /attitude_desired_estimates
+  - /lin_vel_BF_estimates
+  - /position_estimates
+  - /attitude_td_error
+  - /attitude_des_td_error
+  - /position_td_error
+
+# Foxglove 3D panel
+visualisation:
+  - /tf
+  - /quad_path
+  - /tgt_path
+  - /ibvs_markers

@@ -1,0 +1,334 @@
+<?xml version="1.0" ?>
+<!-- Written for plant:=gazebo. sim.launch.py derives the analytic variant by keeping only the
+     matching ONLY:<plants> blocks and zeroing gravity. Plugin ORDER below is load-bearing.
+     See docs/gazebo-plant.md. -->
+<sdf version="1.9">
+  <world name="ibvs">
+
+    <!-- Every node is paced by this clock (sim_rate.hpp). Slow the sim HERE via
+         real_time_factor, not by lowering the camera's update_rate. -->
+    <physics name="default_physics" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.81</gravity>
+
+    <!-- Sensors renders the camera; UserCommands is what makes set_pose_vector work.
+         Both are mandatory for this simulation. -->
+    <plugin filename="gz-sim-physics-system"           name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"     name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system"           name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <!-- ONLY:gazebo BEGIN -->
+    <!-- The plant: thrust/torque -> wrench on base_link, and state back out. A world plugin,
+         because <plugin> inside <include> is silently ignored by gz-sim 8. -->
+    <plugin filename="BodyWrenchSystem" name="quad_gz_sim::BodyWrench">
+      <model_name>F450</model_name>
+      <link_name>base_link</link_name>
+      <topic_prefix>/F450</topic_prefix>
+      <initial_thrust>19.62</initial_thrust>
+      <state_publish_rate>100</state_publish_rate>
+      <!-- Guard against a diverged controller reaching DART, not actuator saturation. -->
+      <max_force>500</max_force>
+      <max_torque>100</max_torque>
+    </plugin>
+    <!-- ONLY END -->
+
+    <!-- ONLY:gazebo BEGIN -->
+    <!-- Ambient wind, off by default. MUST come after BodyWrench or thrust is discarded.
+         ~0.072 N per m/s; needs enable_wind:true on the topic. See docs/wind.md. -->
+    <wind>
+      <linear_velocity>0 0 0</linear_velocity>
+    </wind>
+    <plugin filename="gz-sim-wind-effects-system" name="gz::sim::systems::WindEffects">
+      <force_approximation_scaling_factor>0.1</force_approximation_scaling_factor>
+      <horizontal>
+        <magnitude>
+          <time_for_rise>4</time_for_rise>
+          <noise type="gaussian"><mean>0</mean><stddev>0.03</stddev></noise>
+        </magnitude>
+        <direction>
+          <time_for_rise>2</time_for_rise>
+          <noise type="gaussian"><mean>0</mean><stddev>0.03</stddev></noise>
+        </direction>
+      </horizontal>
+      <vertical>
+        <noise type="gaussian"><mean>0</mean><stddev>0.01</stddev></noise>
+      </vertical>
+    </plugin>
+    <!-- ONLY END -->
+
+    <!-- Echo instance, LAST on purpose: the wrench component is zeroed every step, so the
+         total is only observable by a system running after everyone who writes it. -->
+    <!-- ONLY:gazebo BEGIN -->
+    <plugin filename="BodyWrenchSystem" name="quad_gz_sim::BodyWrench">
+      <mode>echo</mode>
+      <model_name>F450</model_name>
+      <link_name>base_link</link_name>
+      <topic_prefix>/F450</topic_prefix>
+      <state_publish_rate>100</state_publish_rate>
+      <!-- MUST match the plant instance: the echo subtracts commanded thrust. -->
+      <initial_thrust>19.62</initial_thrust>
+    </plugin>
+    <!-- ONLY END -->
+
+    <!-- The ground plane is deliberately untextured: anything busy under the markers risks
+         the ArUco adaptive threshold. The grid is GUI-only and never reaches the sensor. -->
+    <scene>
+      <grid>true</grid>
+      <ambient>0.8 0.8 0.8 1.0</ambient>
+      <sky/>
+      <shadows>false</shadows>
+    </scene>
+
+    <!-- 2 cm down so z=0 does not z-fight the 1 mm ArUco plate. The collision makes ground
+         contact real; the plugin's NaN guard stops a divergence becoming a DART assert. -->
+    <model name="ground_plane">
+      <static>true</static>
+      <pose>0 0 -0.02 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>400 400</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>400 400</size></plane></geometry>
+          <material>
+            <ambient>0.35 0.36 0.38 1</ambient>
+            <diffuse>0.45 0.46 0.48 1</diffuse>
+          </material>
+          <cast_shadows>0</cast_shadows>
+        </visual>
+      </link>
+    </model>
+
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 40 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- 13-point light grid from the classic world; keeps the markers legible across the
+         whole trajectory footprint, which starts at (-10,-10) in ROS coordinates. -->
+    <light name="point_light_0" type="point">
+      <pose>22 20 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_1" type="point">
+      <pose>20 0 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_2" type="point">
+      <pose>20 -20 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_3" type="point">
+      <pose>0 20 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_4" type="point">
+      <pose>0 0 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_5" type="point">
+      <pose>0 -20 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_6" type="point">
+      <pose>-20 20 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_7" type="point">
+      <pose>-20 0 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_8" type="point">
+      <pose>-20 -20 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_9" type="point">
+      <pose>10 10 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_10" type="point">
+      <pose>10 -10 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_11" type="point">
+      <pose>-10 10 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+    <light name="point_light_12" type="point">
+      <pose>-10 -10 12 0 0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <attenuation><range>20</range><constant>0.2</constant><linear>0</linear><quadratic>0.0</quadratic></attenuation>
+    </light>
+
+    <!-- Initial poses match what gz_pose_broadcaster commands on its first cycle
+         (ROS y and z are negated), so there is no first-frame flash at the origin. -->
+    <include>
+      <uri>model://aruco_target</uri>
+      <name>aruco_Target</name>
+      <pose>-10 10 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <uri>model://F450</uri>
+      <name>F450</name>
+      <pose>-9.9 10.1 4 0 0 0</pose>
+    </include>
+
+    <!-- Declaring <gui> makes gz-sim ignore gui.config, so every plugin must be listed
+         here. Unused when headless:=true. -->
+    <gui fullscreen="0">
+
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.8 0.8 0.8</ambient_light>
+        <background_color>0.55 0.65 0.78</background_color>
+        <!-- Oblique, not top-down, so the horizon stays in shot and motion is readable. -->
+        <camera_pose>-22 10 6 0 0.40 0</camera_pose>
+      </plugin>
+
+      <plugin filename="EntityContextMenuPlugin" name="Entity context menu">
+        <gz-gui>
+          <property key="state" type="string">floating</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="GzSceneManager" name="Scene Manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="InteractiveViewControl" name="Interactive view control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="CameraTracking" name="Camera Tracking">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="MarkerManager" name="Marker manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="SelectEntities" name="Select Entities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="VisualizationCapabilities" name="Visualization Capabilities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+
+      <!-- start_paused false: the GUI's default of true pauses the server on connect. -->
+      <plugin filename="WorldControl" name="World control">
+        <gz-gui>
+          <title>World control</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">72</property>
+          <property type="double" key="z">1</property>
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="left" target="left"/>
+            <line own="bottom" target="bottom"/>
+          </anchors>
+        </gz-gui>
+        <play_pause>true</play_pause>
+        <step>true</step>
+        <start_paused>false</start_paused>
+        <use_event>true</use_event>
+      </plugin>
+
+      <plugin filename="WorldStats" name="World stats">
+        <gz-gui>
+          <title>World stats</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">110</property>
+          <property type="double" key="width">290</property>
+          <property type="double" key="z">1</property>
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="right" target="right"/>
+            <line own="bottom" target="bottom"/>
+          </anchors>
+        </gz-gui>
+        <sim_time>true</sim_time>
+        <real_time>true</real_time>
+        <real_time_factor>true</real_time_factor>
+        <iterations>true</iterations>
+      </plugin>
+
+      <!-- Raw gz-transport image, upstream of ros_gz_bridge. -->
+      <plugin filename="ImageDisplay" name="Onboard camera">
+        <gz-gui>
+          <title>Onboard camera</title>
+          <property type="string" key="state">docked</property>
+          <property type="double" key="width">420</property>
+          <property type="double" key="height">320</property>
+        </gz-gui>
+        <topic>/quad/camera/image_raw</topic>
+        <topic_picker>false</topic_picker>
+      </plugin>
+
+    </gui>
+
+  </world>
+</sdf>
