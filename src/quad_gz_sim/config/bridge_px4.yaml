@@ -1,0 +1,50 @@
+# ros_gz_bridge config for plant:=px4. Same as bridge.yaml minus /quad_thrust and
+# /quad_torques: under this plant PX4's control allocator drives the rotors through its own
+# gz_bridge, so bridging the ANFTIBVS thrust into BodyWrench as well would apply it to
+# base_link on top of the rotor forces. /quad_thrust still exists as a ROS topic - the
+# offboard bridge consumes it - it just must not reach Gazebo.
+#
+# Poses bypass the bridge (gz_pose_broadcaster uses gz-transport).
+
+- ros_topic_name: "/quad/camera/image_raw"
+  gz_topic_name: "/quad/camera/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# gz-sensors derives the info topic by appending /camera_info to the sensor <topic>.
+# Nothing in the IBVS stack consumes it (image_features takes the principal point from
+- ros_topic_name: "/quad/camera/camera_info"
+  gz_topic_name: "/quad/camera/image_raw/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# The disturbance still goes in: it is the experiment, and it is the one wrench BodyWrench
+# applies under this plant.
+- ros_topic_name: "/disturbances"
+  gz_topic_name: "/F450/disturbance"
+  ros_type_name: "geometry_msgs/msg/Vector3"
+  gz_type_name: "gz.msgs.Vector3d"
+  direction: ROS_TO_GZ
+
+# True pose and both velocities. Not the control stack's state source here - that is
+# px4_state_adapter, fed by EKF2 - but kept so ground truth is recordable alongside it.
+- ros_topic_name: "/quad_state"
+  gz_topic_name: "/F450/state"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+# Observer ground truth: /disturbances plus whatever WindEffects applied.
+- ros_topic_name: "/external_force"
+  gz_topic_name: "/F450/external_force"
+  ros_type_name: "geometry_msgs/msg/Vector3"
+  gz_type_name: "gz.msgs.Vector3d"
+  direction: GZ_TO_ROS

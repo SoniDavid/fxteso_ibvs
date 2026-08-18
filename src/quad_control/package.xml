@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>quad_control</name>
+  <version>0.1.0</version>
+  <description>
+    Fixed-time extended state observer, tracking differentiators, ArUco feature
+    extraction and the adaptive-gain sliding-mode position and attitude controllers.
+    Carries no simulation dependency, so it runs unchanged against Gazebo, PX4 SITL
+    or the real aircraft.
+  </description>
+  <maintainer email="losfansdepalomino@proton.me">SoniDavid</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>eigen</depend>
+  <depend>quad_common</depend>
+
+  <!-- image_features only: cv::aruco marker detection -->
+  <depend>cv_bridge</depend>
+  <depend>libopencv-dev</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

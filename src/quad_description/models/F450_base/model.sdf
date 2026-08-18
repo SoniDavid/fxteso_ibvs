@@ -1,0 +1,427 @@
+<?xml version='1.0'?>
+<!-- DJI F450 quadrotor, geometry only. The model frame is the airframe frame: FLU, +x
+     forward, +y left, +z up, camera at the origin looking down. Meshes are in mm.
+
+     Never included directly. Two variants merge-include this and add the actuation:
+       F450      - cosmetic JointController spin, for plant:=analytic and plant:=gazebo.
+       F450_px4  - MulticopterMotorModel, for plant:=px4, where PX4 owns allocation. -->
+<sdf version='1.9'>
+  <model name='F450_base'>
+
+    <!-- ================= airframe: plates + arms + motors ====================== -->
+    <link name='base_link'>
+      <self_collide>0</self_collide>
+
+      <!-- Smaller than the thesis numbers on purpose: DART integrates the composite, and
+           the rotors add parallel-axis terms. Composite is 2 kg, diag(0.0411,0.0478,0.0599)
+           about the origin. Check with: gz model -m F450. -->
+      <inertial>
+        <pose>0 0 -0.0063582 0 0 0</pose>
+        <mass>1.852144</mass>
+        <inertia>
+          <ixx>0.0359836</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0426836</iyy>
+          <iyz>0</iyz>
+          <izz>0.0516929</izz>
+        </inertia>
+      </inertial>
+
+      <!-- Coarse stand-in; only matters once the quad reaches the ground. -->
+      <collision name='base_collision'>
+        <geometry>
+          <cylinder><radius>0.25</radius><length>0.06</length></cylinder>
+        </geometry>
+      </collision>
+
+      <!-- Consumed by gz-sim-wind-effects-system; ignored when that plugin is not loaded. -->
+      <enable_wind>true</enable_wind>
+
+      <visual name='base_plate'>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/base_plate.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.05 0.05 0.05 1</ambient>
+          <diffuse>0.12 0.12 0.12 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+
+      <visual name='top_plate'>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/top_plate.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.6 0.6 0.6 1</ambient>
+          <diffuse>0.9 0.9 0.9 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+
+      <!-- Front arms red, rear white (stock livery): the only heading cue in the 3D view.
+           Mesh is the front right arm; +90 deg of yaw walks it round the other three. -->
+      <visual name='arm_front_right'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/arm.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.35 0.02 0.02 1</ambient>
+          <diffuse>0.75 0.04 0.04 1</diffuse>
+          <specular>0.2 0.1 0.1 1</specular>
+        </material>
+      </visual>
+
+      <visual name='arm_front_left'>
+        <pose>0 0 0 0 0 1.5707963</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/arm.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.35 0.02 0.02 1</ambient>
+          <diffuse>0.75 0.04 0.04 1</diffuse>
+          <specular>0.2 0.1 0.1 1</specular>
+        </material>
+      </visual>
+
+      <visual name='arm_rear_left'>
+        <pose>0 0 0 0 0 3.1415927</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/arm.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.55 0.55 0.55 1</ambient>
+          <diffuse>0.88 0.88 0.88 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+
+      <visual name='arm_rear_right'>
+        <pose>0 0 0 0 0 -1.5707963</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/arm.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.55 0.55 0.55 1</ambient>
+          <diffuse>0.88 0.88 0.88 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+
+      <!-- Motor mesh is authored at the front left boom. -->
+      <visual name='motor_front_left'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/motor.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.2 0.2 0.22 1</ambient>
+          <diffuse>0.42 0.43 0.46 1</diffuse>
+          <specular>0.5 0.5 0.5 1</specular>
+        </material>
+      </visual>
+
+      <visual name='motor_rear_left'>
+        <pose>0 0 0 0 0 1.5707963</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/motor.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.2 0.2 0.22 1</ambient>
+          <diffuse>0.42 0.43 0.46 1</diffuse>
+          <specular>0.5 0.5 0.5 1</specular>
+        </material>
+      </visual>
+
+      <visual name='motor_rear_right'>
+        <pose>0 0 0 0 0 3.1415927</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/motor.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.2 0.2 0.22 1</ambient>
+          <diffuse>0.42 0.43 0.46 1</diffuse>
+          <specular>0.5 0.5 0.5 1</specular>
+        </material>
+      </visual>
+
+      <visual name='motor_front_right'>
+        <pose>0 0 0 0 0 -1.5707963</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/motor.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.2 0.2 0.22 1</ambient>
+          <diffuse>0.42 0.43 0.46 1</diffuse>
+          <specular>0.5 0.5 0.5 1</specular>
+        </material>
+      </visual>
+
+      <!-- Camera at the model origin, looking along body -z. The plant treats quad
+           position as camera position, so this must stay at 0 0 0. Nothing occludes it. -->
+      <sensor name='camera1' type='camera'>
+        <pose>0 0 0 0 1.570796 0</pose>
+        <topic>quad/camera/image_raw</topic>
+        <camera name="head">
+          <horizontal_fov>1.085595</horizontal_fov>
+          <image>
+            <!-- Twice the ROS 1 resolution; required to decode the markers from the
+                 paper's -4 m start. pixel_size in image_features.cpp is halved to match. -->
+            <width>820</width>
+            <height>616</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.02</near>
+            <far>300</far>
+          </clip>
+        </camera>
+        <always_on>1</always_on>
+        <!-- Sim-time rate, matching image_features' own 50 Hz loop. Do not lower it; to
+             slow the simulation change real_time_factor in worlds/ibvs.sdf instead. -->
+        <update_rate>50</update_rate>
+        <visualize>1</visualize>
+      </sensor>
+
+      <!-- ============== PX4 flight sensors ==================================== -->
+      <!-- Only plant:=px4 reads these. PX4's gz_bridge derives its subscriptions from the
+           sensor NAMES below, so none of them may be renamed (GZBridge.cpp:228,240,304,317),
+           and they must stay on a link called base_link. Under plant:=analytic and
+           plant:=gazebo the matching gz-sim systems are not loaded and these go unused.
+           Noise parameters are PX4's own, from Tools/simulation/gz/models/x500_base. -->
+      <sensor name="air_pressure_sensor" type="air_pressure">
+        <always_on>1</always_on>
+        <update_rate>50</update_rate>
+        <air_pressure>
+          <pressure>
+            <noise type="gaussian">
+              <mean>0</mean>
+              <stddev>0.01</stddev>
+            </noise>
+          </pressure>
+        </air_pressure>
+      </sensor>
+
+      <!-- 100 Hz, as in x500_base. At 50 Hz PX4's vehicle_magnetometer intermittently
+           declares "MAG #0 failed: STALE!", which fails the arming health check. -->
+      <sensor name="magnetometer_sensor" type="magnetometer">
+        <always_on>1</always_on>
+        <update_rate>100</update_rate>
+        <magnetometer>
+          <x><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></x>
+          <y><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></y>
+          <z><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></z>
+        </magnetometer>
+      </sensor>
+
+      <sensor name="imu_sensor" type="imu">
+        <always_on>1</always_on>
+        <update_rate>250</update_rate>
+        <imu>
+          <angular_velocity>
+            <x><noise type="gaussian"><mean>0</mean><stddev>0.00018665</stddev><bias_mean>0</bias_mean><bias_stddev>0.038785</bias_stddev><dynamic_bias_stddev>0.00000389</dynamic_bias_stddev><dynamic_bias_correlation_time>318.6</dynamic_bias_correlation_time></noise></x>
+            <y><noise type="gaussian"><mean>0</mean><stddev>0.00018665</stddev><bias_mean>0</bias_mean><bias_stddev>0.038785</bias_stddev><dynamic_bias_stddev>0.00000389</dynamic_bias_stddev><dynamic_bias_correlation_time>318.6</dynamic_bias_correlation_time></noise></y>
+            <z><noise type="gaussian"><mean>0</mean><stddev>0.00018665</stddev><bias_mean>0</bias_mean><bias_stddev>0.038785</bias_stddev><dynamic_bias_stddev>0.00000389</dynamic_bias_stddev><dynamic_bias_correlation_time>318.6</dynamic_bias_correlation_time></noise></z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x><noise type="gaussian"><mean>0</mean><stddev>0.00186</stddev><bias_mean>0</bias_mean><bias_stddev>0.006</bias_stddev><dynamic_bias_stddev>0.000006</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></x>
+            <y><noise type="gaussian"><mean>0</mean><stddev>0.00186</stddev><bias_mean>0</bias_mean><bias_stddev>0.006</bias_stddev><dynamic_bias_stddev>0.000006</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></y>
+            <z><noise type="gaussian"><mean>0</mean><stddev>0.00186</stddev><bias_mean>0</bias_mean><bias_stddev>0.006</bias_stddev><dynamic_bias_stddev>0.000006</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></z>
+          </linear_acceleration>
+        </imu>
+      </sensor>
+
+      <sensor name="navsat_sensor" type="navsat">
+        <always_on>1</always_on>
+        <update_rate>30</update_rate>
+      </sensor>
+    </link>
+
+    <!-- ================= rotors ================================================ -->
+    <!-- One link per propeller. Visual offset is minus the hub position (the STL is in
+         assembly coordinates); yaw is the k*90 deg off the front left blade.
+         Handedness (front_left/rear_right CW, front_right/rear_left CCW) matches PX4's
+         quad_x convention, so F450_px4 wires the motors straight through. -->
+
+    <link name='rotor_front_left'>
+      <pose>0.158911 0.158901 0.079647 0 0 0</pose>
+      <inertial>
+        <mass>0.036964</mass>
+        <inertia>
+          <ixx>0.0000925</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.0000925</iyy><iyz>0</iyz>
+          <izz>0.000185</izz>
+        </inertia>
+      </inertial>
+      <visual name='visual'>
+        <pose>-0.158911 -0.158901 -0.079647 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/propeller_cw.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.08 0.08 0.08 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+    </link>
+
+    <link name='rotor_rear_left'>
+      <pose>-0.158901 0.158911 0.079647 0 0 0</pose>
+      <inertial>
+        <mass>0.036964</mass>
+        <inertia>
+          <ixx>0.0000925</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.0000925</iyy><iyz>0</iyz>
+          <izz>0.000185</izz>
+        </inertia>
+      </inertial>
+      <visual name='visual'>
+        <pose>0.158901 -0.158911 -0.079647 0 0 1.5707963</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/propeller_ccw.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.08 0.08 0.08 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+    </link>
+
+    <link name='rotor_rear_right'>
+      <pose>-0.158911 -0.158901 0.079647 0 0 0</pose>
+      <inertial>
+        <mass>0.036964</mass>
+        <inertia>
+          <ixx>0.0000925</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.0000925</iyy><iyz>0</iyz>
+          <izz>0.000185</izz>
+        </inertia>
+      </inertial>
+      <visual name='visual'>
+        <pose>0.158911 0.158901 -0.079647 0 0 3.1415927</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/propeller_cw.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.08 0.08 0.08 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+    </link>
+
+    <link name='rotor_front_right'>
+      <pose>0.158901 -0.158911 0.079647 0 0 0</pose>
+      <inertial>
+        <mass>0.036964</mass>
+        <inertia>
+          <ixx>0.0000925</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.0000925</iyy><iyz>0</iyz>
+          <izz>0.000185</izz>
+        </inertia>
+      </inertial>
+      <visual name='visual'>
+        <pose>-0.158901 0.158911 -0.079647 0 0 -1.5707963</pose>
+        <geometry>
+          <mesh>
+            <uri>model://F450_base/meshes/propeller_ccw.stl</uri>
+            <scale>0.001 0.001 0.001</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.08 0.08 0.08 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+    </link>
+
+    <!-- The URDF's "continuous" joints; SDF has no such type, so revolute with limits
+         wide enough never to be reached. Axis +z up, positive command = CCW from above. -->
+    <joint name='rotor_front_left_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>rotor_front_left</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-1e16</lower><upper>1e16</upper></limit>
+        <dynamics><damping>0</damping><friction>0</friction></dynamics>
+      </axis>
+    </joint>
+
+    <joint name='rotor_rear_left_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>rotor_rear_left</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-1e16</lower><upper>1e16</upper></limit>
+        <dynamics><damping>0</damping><friction>0</friction></dynamics>
+      </axis>
+    </joint>
+
+    <joint name='rotor_rear_right_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>rotor_rear_right</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-1e16</lower><upper>1e16</upper></limit>
+        <dynamics><damping>0</damping><friction>0</friction></dynamics>
+      </axis>
+    </joint>
+
+    <joint name='rotor_front_right_joint' type='revolute'>
+      <parent>base_link</parent>
+      <child>rotor_front_right</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-1e16</lower><upper>1e16</upper></limit>
+        <dynamics><damping>0</damping><friction>0</friction></dynamics>
+      </axis>
+    </joint>
+
+    <static>0</static>
+    <allow_auto_disable>0</allow_auto_disable>
+  </model>
+</sdf>

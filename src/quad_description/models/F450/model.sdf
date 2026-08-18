@@ -1,0 +1,37 @@
+<?xml version='1.0'?>
+<!-- F450 for plant:=analytic and plant:=gazebo: F450_base geometry plus cosmetic rotor
+     spin. Force generation is elsewhere - uav_dynamics.cpp under analytic, the BodyWrench
+     plugin under gazebo. For the PX4-actuated variant see F450_px4. -->
+<sdf version='1.9'>
+  <model name='F450'>
+
+    <include merge='true'>
+      <uri>model://F450_base</uri>
+    </include>
+
+    <!-- Cosmetic rotor spin; no aerodynamics anywhere. QuadX signs, repeated in
+         gz_pose_broadcaster - change one and you must change the other.
+         Speeds are ~10x slow on purpose, or the blur aliases. -->
+    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+      <joint_name>rotor_front_left_joint</joint_name>
+      <initial_velocity>-60.0</initial_velocity>
+      <topic>/model/F450/joint/rotor_front_left_joint/cmd_vel</topic>
+    </plugin>
+    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+      <joint_name>rotor_rear_right_joint</joint_name>
+      <initial_velocity>-60.0</initial_velocity>
+      <topic>/model/F450/joint/rotor_rear_right_joint/cmd_vel</topic>
+    </plugin>
+    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+      <joint_name>rotor_front_right_joint</joint_name>
+      <initial_velocity>60.0</initial_velocity>
+      <topic>/model/F450/joint/rotor_front_right_joint/cmd_vel</topic>
+    </plugin>
+    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+      <joint_name>rotor_rear_left_joint</joint_name>
+      <initial_velocity>60.0</initial_velocity>
+      <topic>/model/F450/joint/rotor_rear_left_joint/cmd_vel</topic>
+    </plugin>
+
+  </model>
+</sdf>
