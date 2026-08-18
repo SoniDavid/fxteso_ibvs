@@ -7,9 +7,8 @@ bags/
 *.db3
 docs/
 
-# Upstream clone, not ours to version:
-#   git clone https://github.com/PX4/px4_msgs.git src/px4_msgs
-# Use the branch matching the PX4 you fly; main matched v1.18.0-beta1 field-for-field.
-src/px4_msgs/
+# px4_msgs and PX4-Autopilot are submodules now - see .gitmodules. They are pinned rather
+# than ignored because the SITL gains in docs/px4-tuning.md are only valid against a
+# specific PX4.
 # Python bytecode from the analysis scripts
 __pycache__/

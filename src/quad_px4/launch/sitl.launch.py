@@ -30,8 +30,8 @@ Start-up runs through two gates:
                                       [px4_dir:=...] [xrce_agent:=...]
 
 Prerequisites, both one-off:
-  ros2 run quad_px4 link_px4_airframe.sh   # symlink the airframe into the PX4 tree
-  make -C <px4_dir> px4_sitl_default
+  git submodule update --init --recursive external/PX4-Autopilot
+  make -C external/PX4-Autopilot px4_sitl_default
 """
 import math
 import os
@@ -57,8 +57,9 @@ UTILS_PKG = 'quad_utils'
 # include in it: PX4 addresses both by name when it attaches.
 WORLD = 'ibvs'
 MODEL = 'F450'
-# The airframe id of quad_px4/px4/airframes/4100_gz_F450_px4.
-SYS_AUTOSTART = '4100'
+# The airframe id of ROMFS/px4fmu_common/init.d-posix/airframes/22100_gz_F450_px4 in the
+# PX4 fork. 22100 sits in PX4's reserved [22000, 22999] custom-model range.
+SYS_AUTOSTART = '22100'
 
 # Spawn pose from worlds/ibvs.sdf, in NED (the world is ENU, so y and z are negated). EKF2
 # anchors its local frame there; px4_state_adapter adds this to get back to the world frame.
@@ -93,15 +94,17 @@ def generate_launch_description():
         DeclareLaunchArgument('disturbance', default_value='none'),
         DeclareLaunchArgument('disturbance_seed', default_value='0'),
         DeclareLaunchArgument(
-            'px4_dir', default_value=os.path.expanduser('~/Robotics/PX4-Autopilot'),
-            description='PX4-Autopilot checkout holding build/px4_sitl_default.'),
+            'px4_dir',
+            default_value=os.path.expanduser(
+                '~/Robotics/fxteso_ibvs/external/PX4-Autopilot'),
+            description='The PX4 fork submodule, holding build/px4_sitl_default.'),
         DeclareLaunchArgument(
             'xrce_agent',
             default_value=os.path.expanduser(
                 '~/Robotics/Micro-XRCE-DDS-Agent/build/MicroXRCEAgent'),
             description='MicroXRCEAgent binary. It is not normally on PATH.'),
-        # Anchors the newton -> normalized thrust map; keep equal to MPC_THR_HOVER in
-        # quad_px4/px4/airframes/4100_gz_F450_px4, which documents how it was measured.
+        # Anchors the newton -> normalized thrust map; keep equal to MPC_THR_HOVER in the
+        # fork's airframes/22100_gz_F450_px4, which documents how it was measured.
         DeclareLaunchArgument('hover_thrust', default_value='0.716'),
     ]
 

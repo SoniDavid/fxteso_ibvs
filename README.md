@@ -12,10 +12,31 @@ Currently on ROS2 Jazzy - Gazebo Harmonic
 | `quad_control` | The FxTESO, the tracking differentiators, the ArUco feature extractor and both adaptive-gain SMC loops. No simulation dependency of any kind - this is the package that ships to the aircraft. |
 | `quad_description` | ArUco target plus the F450: `F450_base` is the shared geometry, camera and flight sensors; `F450` adds cosmetic rotor spin, `F450_px4` adds the motor model PX4 drives. Assets only. |
 | `quad_gz_sim` | Simulation only: the world, the ros_gz bridge, the analytic and DART plant backends, the scenario generators and the `BodyWrench` gz-sim plugin. |
-| `quad_px4` | PX4 SITL backend: state adapter, OFFBOARD setpoint bridge, takeoff gate and the F450 airframe definition. |
+| `quad_px4` | PX4 SITL backend: state adapter, OFFBOARD setpoint bridge and takeoff gate. The F450 airframe lives in the PX4 fork, since PX4 only reads airframes from its own ROMFS. |
 | `quad_utils` | Bringup and visualisation: the composed launch files, `tf_broadcaster`, the Foxglove layout and the rosbag topic list. |
 
 Dependencies run one way: {`quad_utils`, `quad_px4`} → {`quad_control`, `quad_gz_sim`} → {`quad_description`, `quad_common`}.
+
+## Submodules
+
+Two dependencies are pinned rather than tracked upstream, because the SITL gains are only
+valid against a specific PX4:
+
+| Path | Repo | Why pinned |
+| --- | --- | --- |
+| `src/px4_msgs` | `PX4/px4_msgs` | The uXRCE-DDS topic versions must match the PX4 that is flown. |
+| `external/PX4-Autopilot` | `SoniDavid/PX4-Autopilot` | Fork carrying the `22100_gz_F450_px4` airframe. Forked from upstream `ea63910683` (`v1.18.0-beta1-271`). |
+
+`src/px4_msgs` is small. `external/PX4-Autopilot` is ~1.6 GB with 35 nested submodules and
+is only needed for `plant:=px4`, so it is worth cloning shallowly:
+
+```sh
+git submodule update --init src/px4_msgs                          # always
+git submodule update --init --recursive external/PX4-Autopilot    # only for PX4 SITL
+```
+
+`external/` carries a `COLCON_IGNORE`: PX4 ships a root `package.xml`, so colcon would
+otherwise try to build it.
 
 ## Running
 
@@ -56,9 +77,9 @@ downstream knows which one ran:
 ## PX4 SITL
 
 ```sh
-# one-off: symlink the airframe into the PX4 tree, then rebuild PX4
-ros2 run quad_px4 link_px4_airframe.sh [/path/to/PX4-Autopilot]
-make -C ~/Robotics/PX4-Autopilot px4_sitl_default
+# one-off: fetch the pinned PX4 fork (~1.6 GB, 35 nested submodules) and build it
+git submodule update --init --recursive external/PX4-Autopilot
+make -C external/PX4-Autopilot px4_sitl_default
 
 ros2 launch quad_px4 sitl.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
                                     [controllers:=false] [disturbance:=gust]

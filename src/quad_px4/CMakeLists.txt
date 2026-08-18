@@ -37,12 +37,7 @@ install(TARGETS ${PX4_NODES}
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME})
 
-# The airframe is consumed by PX4 through a symlink, not by ROS; installed so the path is
-# discoverable from an installed workspace as well as the source tree.
-install(DIRECTORY px4
-  DESTINATION share/${PROJECT_NAME})
-
-install(PROGRAMS scripts/link_px4_airframe.sh
-  DESTINATION lib/${PROJECT_NAME})
+# The airframe lives in the PX4 fork at external/PX4-Autopilot, not here - PX4 only reads
+# airframes out of its own ROMFS, so there is nothing for ROS to install.
 
 ament_package()
