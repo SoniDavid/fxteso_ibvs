@@ -1,8 +1,11 @@
 """The plant. Both backends publish the same five state topics, so nothing downstream
-knows which one ran; a PX4 state adapter replaces this file.
+knows which one ran.
 
   plant:=analytic  uav_dynamics integrates the aircraft; Gazebo is a camera only.
   plant:=gazebo    DART integrates it; gz_state_adapter converts the odometry to NED.
+
+plant:=px4 is not served from here: PX4 SITL needs its own process and agent alongside the
+state adapter, so quad_px4/launch/sitl.launch.py replaces this file wholesale.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction

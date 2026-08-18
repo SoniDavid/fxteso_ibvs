@@ -31,10 +31,10 @@ int main(int argc, char **argv)
 	// start and /clock never advanced - exactly the case this needs to report.
 	const double timeout_s = node->declare_parameter<double>("timeout", 120.0);
 
-	// td_linear holds 5.0 s of sim time, fixed_eso 4.7, td_attitude 4.5, and all of them
-	// publish placeholder values before that - so a message is not proof they are live.
-	// Under plant:=analytic the plant's own 5 s hold made this implicit; under plant:=gazebo
-	// physics runs from t=0 and markers lock at ~1.9 s.
+	// The estimators publish placeholder values during their start-up hold (td_linear 5.0 s,
+	// fixed_eso 4.7, td_attitude 4.5), so a message is not proof they are live.
+	// Measured from this node's own start, not sim epoch: identical under analytic and gazebo,
+	// but px4 holds the estimators back until after takeoff.
 	const double estimators_ready =
 		node->declare_parameter<double>("estimators_ready", 5.0);
 
@@ -56,17 +56,24 @@ int main(int argc, char **argv)
 	const auto started = std::chrono::steady_clock::now();
 	auto last_report = started;
 
+	// Latched on the first non-zero sample, not here: with use_sim_time the clock reads 0 until
+	// the first /clock arrives, and latching that would revert this to an absolute check.
+	double sim_start = -1.0;
+
 	while (rclcpp::ok())
 	{
 		rclcpp::spin_some(node);
 
-		const double sim_t = node->now().seconds();
+		const double sim_now = node->now().seconds();
+		if (sim_start < 0.0 && sim_now > 0.0)
+			sim_start = sim_now;
+		const double sim_t = sim_start < 0.0 ? 0.0 : sim_now - sim_start;
 
 		if (have_quad && have_tgt && lock_run >= need && sim_t >= estimators_ready)
 		{
 			RCLCPP_INFO(node->get_logger(),
 			            "Quad and target placed, markers locked for %d frames, estimators up "
-			            "at sim t=%.3f - starting the controllers",
+			            "%.3f s after this gate started - starting the controllers",
 			            lock_run, sim_t);
 			rclcpp::shutdown();
 			return 0;

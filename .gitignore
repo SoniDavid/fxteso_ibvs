@@ -6,3 +6,10 @@ bags/
 *.mcap
 *.db3
 docs/
+
+# Upstream clone, not ours to version:
+#   git clone https://github.com/PX4/px4_msgs.git src/px4_msgs
+# Use the branch matching the PX4 you fly; main matched v1.18.0-beta1 field-for-field.
+src/px4_msgs/
+# Python bytecode from the analysis scripts
+__pycache__/

@@ -1,6 +1,7 @@
 // Feeds the control stack from Gazebo physics instead of uav_dynamics.cpp, publishing the same
 // five topics. Exact inverse of gz_pose_broadcaster.cpp. 
 #include <rclcpp/rclcpp.hpp>
+#include "quad_common/unwrapped.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <tf2/LinearMath/Matrix3x3.hpp>
@@ -16,32 +17,6 @@ static geometry_msgs::msg::Vector3 flip(double x, double y, double z)
 	v.z = -z;
 	return v;
 }
-
-// The control stack needs unbounded angles; getRPY() returns (-pi, pi]. A step above pi at
-// 100 Hz is always a wrap, never motion. See docs/angle-wrapping.md.
-class Unwrapped
-{
-public:
-	double operator()(double raw)
-	{
-		if (this->started)
-		{
-			const double d = raw - this->prev;
-			if (d > M_PI)
-				this->turns -= 2.0 * M_PI;
-			else if (d < -M_PI)
-				this->turns += 2.0 * M_PI;
-		}
-		this->started = true;
-		this->prev = raw;
-		return raw + this->turns;
-	}
-
-private:
-	bool started{false};
-	double prev{0.0};
-	double turns{0.0};
-};
 
 int main(int argc, char **argv)
 {
@@ -64,7 +39,7 @@ int main(int argc, char **argv)
 			distTotalPub->publish(flip(-f->x, -f->y, -f->z));
 		});
 
-	Unwrapped unwrapRoll, unwrapPitch, unwrapYaw;
+	fxteso::Unwrapped unwrapRoll, unwrapPitch, unwrapYaw;
 
 	// Debug only: false feeds a wrapped attitude, as a quaternion source would.
 	const bool unwrap = node->declare_parameter<bool>("unwrap_attitude", true);

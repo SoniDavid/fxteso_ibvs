@@ -17,7 +17,7 @@ namespace quad_gz_sim
 {
 /// \brief Applies thrust, body torque and an inertial disturbance to a link as an external
 /// wrench, so DART integrates the aircraft instead of uav_dynamics.cpp. Commands arrive on
-/// <topic_prefix>/{thrust,torques,disturbance}, bridged from ROS. See docs/gazebo-plant.md.
+/// <topic_prefix>/{thrust,torques,disturbance}, bridged from ROS.
 class BodyWrench : public gz::sim::System,
                    public gz::sim::ISystemConfigure,
                    public gz::sim::ISystemPreUpdate

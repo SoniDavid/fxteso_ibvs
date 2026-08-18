@@ -15,6 +15,9 @@ plant_and_target:
   - /tgt_yaw
   - /disturbances
   - /disturbances_total
+  # Gazebo ground truth, published whenever BodyWrench runs (plant:=gazebo and plant:=px4).
+  # Under px4 it is the only unfiltered reference against which EKF2 can be checked.
+  - /quad_state
 
 # thesis Figs 5.10d, 5.11a, 5.12
 vision_and_observer:

@@ -1,0 +1,98 @@
+#!/bin/sh
+#
+# @name Gazebo F450 (FxTESO IBVS)
+#
+# @type Quadrotor
+# @class Copter
+#
+# DJI F450, modelled in quad_description/models/F450_px4. Symlinked in by
+# quad_px4/scripts/link_px4_airframe.sh.
+
+. ${R}etc/init.d/rc.mc_defaults
+
+PX4_SIMULATOR=${PX4_SIMULATOR:=gz}
+PX4_GZ_WORLD=${PX4_GZ_WORLD:=ibvs}
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=F450_px4}
+
+param set-default SIM_GZ_EN 1
+
+param set-default CA_AIRFRAME 0
+param set-default CA_ROTOR_COUNT 4
+
+# Rotor positions in FRD, from the F450_px4 link poses (FLU, y negated).
+# Must match the motor->link mapping in F450_px4/model.sdf.
+param set-default CA_ROTOR0_PX 0.1589
+param set-default CA_ROTOR0_PY 0.1589
+param set-default CA_ROTOR0_KM 0.05
+
+param set-default CA_ROTOR1_PX -0.1589
+param set-default CA_ROTOR1_PY -0.1589
+param set-default CA_ROTOR1_KM 0.05
+
+param set-default CA_ROTOR2_PX 0.1589
+param set-default CA_ROTOR2_PY -0.1589
+param set-default CA_ROTOR2_KM -0.05
+
+param set-default CA_ROTOR3_PX -0.1589
+param set-default CA_ROTOR3_PY 0.1589
+param set-default CA_ROTOR3_KM -0.05
+
+param set-default SIM_GZ_EC_FUNC1 101
+param set-default SIM_GZ_EC_FUNC2 102
+param set-default SIM_GZ_EC_FUNC3 103
+param set-default SIM_GZ_EC_FUNC4 104
+
+param set-default SIM_GZ_EC_MIN1 150
+param set-default SIM_GZ_EC_MIN2 150
+param set-default SIM_GZ_EC_MIN3 150
+param set-default SIM_GZ_EC_MIN4 150
+
+param set-default SIM_GZ_EC_MAX1 1000
+param set-default SIM_GZ_EC_MAX2 1000
+param set-default SIM_GZ_EC_MAX3 1000
+param set-default SIM_GZ_EC_MAX4 1000
+
+# --- attitude and rate loop ---------------------------------------------------
+# PX4's defaults are the x500's. Rate gains scale with inertia/torque-arm: roll x2.30,
+# pitch x1.61, yaw x1.29 - roll is the soft axis, not pitch, because x500's arms are
+# asymmetric (PY 0.22 roll, PX 0.13 pitch) against the F450's 0.1589 on both. Re-derive if
+# the inertia, the arm positions or the motor constants change.
+param set-default MC_ROLLRATE_P 0.345
+param set-default MC_ROLLRATE_I 0.460
+param set-default MC_ROLLRATE_D 0.0069
+
+param set-default MC_PITCHRATE_P 0.242
+param set-default MC_PITCHRATE_I 0.322
+param set-default MC_PITCHRATE_D 0.0048
+
+param set-default MC_YAWRATE_P 0.259
+param set-default MC_YAWRATE_I 0.129
+
+# MC_ROLL_P / MC_PITCH_P / MC_YAW_P are left at PX4's defaults on purpose. Raising them cut
+# the attitude lag but tripled the image-moment noise and lost lock sooner - the IBVS layer
+# minds moment noise far more than lag. The yaw drift is fixed in fixed_eso.cpp, not here.
+
+# Measured, not inherited: x500's nominal 0.60 left the aircraft 4.7 N short, and nothing
+# downstream of the ANFTIBVS corrects a bad thrust anchor. From the rotor command in steady
+# hover, (758.3-150)/(1000-150). Must equal px4_offboard_bridge's hover_thrust parameter.
+# Re-measure if the motor constants or the mass change.
+param set-default MPC_THR_HOVER 0.716
+
+# zD in aibvs_pos_ctrl.cpp and aD in image_features.cpp are both calibrated for 2.5 m;
+# takeoff has to deliver the aircraft there or the feature vector is mis-scaled.
+param set-default MIS_TAKEOFF_ALT 2.5
+
+# Offboard loss = loss of visual lock; px4_offboard_bridge drops the stream on a stale
+# setpoint. 5 is Hold, so the aircraft loiters rather than landing.
+param set-default COM_OBL_RC_ACT 5
+param set-default COM_OF_LOSS_T 1.0
+
+# Zero declination, matching the world's magnetic_field in ibvs.sdf. Bit 0 clear = ignore the
+# geo_lookup value. Estimated yaw then reads against the world's North, which pos_ctrl assumes.
+param set-default EKF2_DECL_TYPE 0
+param set-default EKF2_MAG_DECL 0
+
+# No RC and no GCS in SITL. Without these, arming is blocked and the loss failsafes fire.
+param set-default COM_RC_IN_MODE 4
+param set-default NAV_DLL_ACT 0
+param set-default NAV_RCL_ACT 0

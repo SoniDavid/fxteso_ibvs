@@ -2,11 +2,14 @@
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include <chrono>
+#include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <std_msgs/msg/float64.hpp>
 
 #include <eigen3/Eigen/Dense>
 
+
+bool control_started = false;
 
 float pos_x;
 float pos_y;
@@ -56,7 +59,18 @@ int main(int argc, char** argv)
 
 	auto quad_pos_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_position", 1, quadPosCallback);
 
-	
+	// The trajectory starts 4.35 s in, which assumes the aircraft is already over the marker.
+	// plant:=px4 spends ~25 s on EKF2, arming and takeoff, by which time the target has driven
+	// out of the camera footprint. This holds it on its start pose until pos_ctrl publishes.
+	// Default false, so analytic and gazebo keep their recorded timing.
+	const bool hold_until_control =
+		node->declare_parameter<bool>("hold_until_control", false);
+
+	auto ctrl_sub = node->create_subscription<geometry_msgs::msg::Quaternion>(
+		"desired_attitude", 1,
+		[](const geometry_msgs::msg::Quaternion::ConstSharedPtr) { control_started = true; });
+
+
 
 	geometry_msgs::msg::Vector3 tgt_position;
 	geometry_msgs::msg::Vector3 positionError;
@@ -110,6 +124,11 @@ int main(int argc, char** argv)
 	tgt_yaw_rate_pub->publish(tgt_psi_rate);
 
 	loop_rate.sleepFor(2.0);
+
+	if (hold_until_control)
+		RCLCPP_INFO(node->get_logger(),
+		            "Holding the target on its start pose until desired_attitude appears.");
+
 	while(rclcpp::ok())
 	{
 		t = i*step;
@@ -319,7 +338,10 @@ int main(int argc, char** argv)
 		error_lin_pub->publish(positionError);
 		
 
-		i = i+1;
+		// Freezing the clock rather than the outputs keeps the trajectory itself untouched:
+		// it simply starts later, from the same t=0 it always did.
+		if (!hold_until_control || control_started)
+			i = i+1;
 
 		std::cout << yawRate << std::endl;
 

@@ -159,7 +159,10 @@ int main(int argc, char *argv[])
     // //GAINS WITH MODEL UNCERTAINTIES
    gamma1 << 18, 18, 16, 5;
    gamma2 << 10, 10, 14, 16;
-   gamma3 << 7, 7, 21, 7;
+   // Yaw is 3, not the thesis' 7; the rest is Table 5.3. ibvs_dist integrates this gain, and
+   // pos_ctrl integrates its yaw output twice more, so under plant:=px4's noisier estimate the
+   // walk ran away.
+   gamma3 << 7, 7, 21, 3;
    gamma4 << 0.001, 0.001, 0.001, 0.001;
   
      /*

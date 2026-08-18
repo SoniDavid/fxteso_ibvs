@@ -1,6 +1,5 @@
 # Disturbance magnitudes for src/disturbances.cpp. Loaded by sim.launch.py.
 # /disturbances is an inertial-frame force in newtons; the quad is 2 kg.
-# Full description: documentation.md section 4.
 #
 #   ros2 launch quad_utils sim.launch.py disturbance:=wind
 #   ros2 launch quad_utils sim.launch.py disturbance:=wind,step disturbance_seed:=7

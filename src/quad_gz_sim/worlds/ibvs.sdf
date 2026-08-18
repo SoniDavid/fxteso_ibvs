@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
-<!-- Written for plant:=gazebo. sim.launch.py derives the analytic variant by keeping only the
-     matching ONLY:<plants> blocks and zeroing gravity. Plugin ORDER below is load-bearing.
-     See docs/gazebo-plant.md. -->
+<!-- Written for plant:=gazebo. gz_sim.launch.py derives the analytic and px4 variants by
+     keeping only the matching ONLY:<plants> blocks, and zeroes gravity for analytic.
+     Plugin ORDER below is load-bearing. -->
 <sdf version="1.9">
   <world name="ibvs">
 
@@ -14,6 +14,24 @@
     </physics>
     <gravity>0 0 -9.81</gravity>
 
+    <!-- The barometer's pressure-vs-altitude model. Without it EKF2's height estimate walks
+         away under plant:=px4; inert for the other plants. -->
+    <atmosphere type="adiabatic"/>
+
+    <!-- NavSat needs a datum or it produces nothing and EKF2 never gets a fix. Only
+         plant:=px4 reads any of this. ENU puts North on Gazebo +y while the workspace calls
+         +x North; gz-sim 8 rejects the NWU that would have matched, so px4_state_adapter's
+         frame_yaw_offset reconciles it - change this tag and that parameter too.
+         The field has zero declination, matching EKF2_DECL_TYPE 0. -->
+    <magnetic_field>0 2.3769e-05 -4.2e-05</magnetic_field>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg>8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
     <!-- Sensors renders the camera; UserCommands is what makes set_pose_vector work.
          Both are mandatory for this simulation. -->
     <plugin filename="gz-sim-physics-system"           name="gz::sim::systems::Physics"/>
@@ -22,6 +40,18 @@
     <plugin filename="gz-sim-sensors-system"           name="gz::sim::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>
+
+    <!-- ONLY:px4 BEGIN -->
+    <!-- PX4's own sensor systems, listed here because gz-sim ignores its server.config
+         entirely once a world declares any <plugin> of its own - and this one does, above.
+         Omit them and gz_bridge subscribes to topics that never appear, silently. -->
+    <plugin filename="gz-sim-imu-system"           name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-air-pressure-system"  name="gz::sim::systems::AirPressure"/>
+    <plugin filename="gz-sim-magnetometer-system"  name="gz::sim::systems::Magnetometer"/>
+    <plugin filename="gz-sim-navsat-system"        name="gz::sim::systems::NavSat"/>
+    <plugin filename="gz-sim-contact-system"       name="gz::sim::systems::Contact"/>
+    <plugin filename="gz-sim-apply-link-wrench-system" name="gz::sim::systems::ApplyLinkWrench"/>
+    <!-- ONLY END -->
 
     <!-- ONLY:gazebo BEGIN -->
     <!-- The plant: thrust/torque -> wrench on base_link, and state back out. A world plugin,
@@ -38,9 +68,24 @@
     </plugin>
     <!-- ONLY END -->
 
-    <!-- ONLY:gazebo BEGIN -->
+    <!-- ONLY:px4 BEGIN -->
+    <!-- Disturbance duty only: PX4 owns thrust and torque, so initial_thrust is 0 and
+         bridge_px4.yaml omits /quad_thrust and /quad_torques. /F450/disturbance still
+         applies, so the disturbance experiment is identical across all three plants. -->
+    <plugin filename="BodyWrenchSystem" name="quad_gz_sim::BodyWrench">
+      <model_name>F450</model_name>
+      <link_name>base_link</link_name>
+      <topic_prefix>/F450</topic_prefix>
+      <initial_thrust>0</initial_thrust>
+      <state_publish_rate>100</state_publish_rate>
+      <max_force>500</max_force>
+      <max_torque>100</max_torque>
+    </plugin>
+    <!-- ONLY END -->
+
+    <!-- ONLY:gazebo,px4 BEGIN -->
     <!-- Ambient wind, off by default. MUST come after BodyWrench or thrust is discarded.
-         ~0.072 N per m/s; needs enable_wind:true on the topic. See docs/wind.md. -->
+         ~0.072 N per m/s; needs enable_wind:true on the topic. -->
     <wind>
       <linear_velocity>0 0 0</linear_velocity>
     </wind>
@@ -73,6 +118,19 @@
       <state_publish_rate>100</state_publish_rate>
       <!-- MUST match the plant instance: the echo subtracts commanded thrust. -->
       <initial_thrust>19.62</initial_thrust>
+    </plugin>
+    <!-- ONLY END -->
+
+    <!-- ONLY:px4 BEGIN -->
+    <!-- Subtracts nothing, so it reports the whole base_link wrench. PX4's thrust goes to the
+         rotor links and never lands here, so this stays the observer's ground truth. -->
+    <plugin filename="BodyWrenchSystem" name="quad_gz_sim::BodyWrench">
+      <mode>echo</mode>
+      <model_name>F450</model_name>
+      <link_name>base_link</link_name>
+      <topic_prefix>/F450</topic_prefix>
+      <state_publish_rate>100</state_publish_rate>
+      <initial_thrust>0</initial_thrust>
     </plugin>
     <!-- ONLY END -->
 
@@ -189,11 +247,24 @@
       <pose>-10 10 0 0 0 0</pose>
     </include>
 
+    <!-- ONLY:analytic,gazebo BEGIN -->
     <include>
       <uri>model://F450</uri>
       <name>F450</name>
       <pose>-9.9 10.1 4 0 0 0</pose>
     </include>
+    <!-- ONLY END -->
+
+    <!-- ONLY:px4 BEGIN -->
+    <!-- On the ground: EKF2 must initialise stationary and the land detector must see a
+         landed vehicle before PX4 will arm. The instance name stays F450 - BodyWrench and
+         PX4_GZ_MODEL_NAME both address it by that. -->
+    <include>
+      <uri>model://F450_px4</uri>
+      <name>F450</name>
+      <pose>-9.9 10.1 0.1 0 0 0</pose>
+    </include>
+    <!-- ONLY END -->
 
     <!-- Declaring <gui> makes gz-sim ignore gui.config, so every plugin must be listed
          here. Unused when headless:=true. -->

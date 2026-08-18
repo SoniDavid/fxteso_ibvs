@@ -183,7 +183,7 @@ int main(int argc, char *argv[])
         error_attVel= attitudeVelEstimates - attVelRef;
 
         // Shortest angular route on yaw. Identity while |error| < pi, so the control law is
-        // unchanged in normal flight. See docs/angle-wrapping.md.
+        // unchanged in normal flight.
         while (error_att(2) > M_PI)  error_att(2) -= 2.0f * M_PI;
         while (error_att(2) <= -M_PI) error_att(2) += 2.0f * M_PI;
 

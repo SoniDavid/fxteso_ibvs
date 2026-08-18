@@ -14,7 +14,7 @@
 The plant is switchable; both backends publish the same five state topics.
 
   plant:=analytic  uav_dynamics.cpp integrates the aircraft; Gazebo is a camera only.
-  plant:=gazebo    DART integrates the aircraft. See docs/gazebo-plant.md.
+  plant:=gazebo    DART integrates the aircraft.
 
   ros2 launch quad_utils sim.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
                                        [plant:=analytic|gazebo] [controllers:=false]

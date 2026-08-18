@@ -24,8 +24,9 @@ install(TARGETS tf_broadcaster
   DESTINATION lib/${PROJECT_NAME})
 
 # foxglove/ carries the Studio layout and its checker; config/bag_topics.yaml is the
-# recording list sim.launch.py reads.
-install(DIRECTORY launch config foxglove
+# recording list sim.launch.py reads. analysis/ are offline bag tools - run them from the
+# source tree, they take bag paths and need no ROS graph.
+install(DIRECTORY launch config foxglove analysis
   DESTINATION share/${PROJECT_NAME})
 
 ament_package()

@@ -19,11 +19,12 @@ from launch_ros.actions import Node
 
 PKG = 'quad_gz_sim'
 
+PLANTS = ('analytic', 'gazebo', 'px4')
+
 
 def generate_launch_description():
     share = get_package_share_directory(PKG)
     world_file = os.path.join(share, 'worlds', 'ibvs.sdf')
-    bridge_cfg = os.path.join(share, 'config', 'bridge.yaml')
     ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
     args = [
@@ -31,7 +32,8 @@ def generate_launch_description():
         # Must match <world name=...> in worlds/ibvs.sdf: selects the gz topic
         # /world/<world>/set_pose_vector the broadcaster publishes on.
         DeclareLaunchArgument('world', default_value='ibvs'),
-        # analytic = the paper's ROS-side integrator; gazebo = DART.
+        # analytic = the paper's ROS-side integrator; gazebo = DART; px4 = DART with PX4
+        # SITL owning allocation and the inner loop.
         DeclareLaunchArgument('plant', default_value='analytic'),
     ]
 
@@ -94,7 +96,8 @@ def generate_launch_description():
             seen[0] = True
             return m.group(0) if plant in m.group(1).split(',') else ''
 
-        out = re.sub(r'[ \t]*<!-- ONLY:([a-z,]+) BEGIN -->.*?<!-- ONLY END -->\n',
+        # [a-z0-9,] rather than [a-z,]: 'px4' has a digit in it.
+        out = re.sub(r'[ \t]*<!-- ONLY:([a-z0-9,]+) BEGIN -->.*?<!-- ONLY END -->\n',
                      keep, text, flags=re.DOTALL)
         if not seen[0]:
             raise RuntimeError(
@@ -127,8 +130,8 @@ def generate_launch_description():
     def _gz(context, *a, **k):
         headless = LaunchConfiguration('headless').perform(context).lower() == 'true'
         plant = LaunchConfiguration('plant').perform(context).lower()
-        if plant not in ('analytic', 'gazebo'):
-            raise RuntimeError('plant:=%s is not one of analytic, gazebo.' % plant)
+        if plant not in PLANTS:
+            raise RuntimeError('plant:=%s is not one of %s.' % (plant, ', '.join(PLANTS)))
         # -r starts the world running, so nothing has to unpause physics.
         flags = '-r -v3 -s --headless-rendering ' if headless else '-r -v3 '
         return [IncludeLaunchDescription(
@@ -138,10 +141,17 @@ def generate_launch_description():
                               'gz_version': '8'}.items(),
         )]
 
-    bridge = Node(
-        package='ros_gz_bridge', executable='parameter_bridge', name='ibvs_bridge',
-        output='screen', parameters=[{'config_file': bridge_cfg}],
-    )
+    def _bridge(context, *a, **k):
+        # plant:=px4 uses a config without the /quad_thrust and /quad_torques ROS_TO_GZ
+        # entries: PX4 drives the rotors, and anything BodyWrench applied to base_link would
+        # be added on top of that rather than instead of it.
+        plant = LaunchConfiguration('plant').perform(context).lower()
+        cfg = 'bridge_px4.yaml' if plant == 'px4' else 'bridge.yaml'
+        return [Node(
+            package='ros_gz_bridge', executable='parameter_bridge', name='ibvs_bridge',
+            output='screen',
+            parameters=[{'config_file': os.path.join(share, 'config', cfg)}],
+        )]
 
     def _broadcaster(context, *a, **k):
         # Under plant:=gazebo physics owns the quad's pose; the broadcaster keeps the target
@@ -159,6 +169,6 @@ def generate_launch_description():
         plugin_path,
         OpaqueFunction(function=_reap_orphans),   # before Gazebo starts
         OpaqueFunction(function=_gz),
-        bridge,
+        OpaqueFunction(function=_bridge),
         OpaqueFunction(function=_broadcaster),
     ])

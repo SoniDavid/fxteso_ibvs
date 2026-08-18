@@ -35,7 +35,8 @@ endforeach()
 # from the BodyWrench plugin instead of a ROS-side integrator.
 add_executable(gz_state_adapter src/gz_state_adapter.cpp)
 target_compile_features(gz_state_adapter PUBLIC cxx_std_17)
-ament_target_dependencies(gz_state_adapter rclcpp geometry_msgs nav_msgs tf2 tf2_geometry_msgs)
+ament_target_dependencies(gz_state_adapter rclcpp geometry_msgs nav_msgs tf2 tf2_geometry_msgs
+  quad_common)
 
 # --- Gazebo Harmonic plumbing -------------------------------------------------
 # Talks gz-transport directly: set_pose_vector has no ROS message equivalent.

@@ -1,5 +1,5 @@
 // Loop pacing on the ROS clock, so the stack runs in simulation time.
-// rclcpp::Rate is wall-clock only. See documentation.md for the rationale.
+// rclcpp::Rate is wall-clock only.
 
 #ifndef QUAD_COMMON__SIM_RATE_HPP_
 #define QUAD_COMMON__SIM_RATE_HPP_

@@ -24,6 +24,9 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument('disturbance', default_value='none'),
         DeclareLaunchArgument('disturbance_seed', default_value='0'),
+        # true holds the target on its start pose until pos_ctrl publishes. plant:=px4 needs
+        # it, because arming and taking off cost sim time the other plants do not spend.
+        DeclareLaunchArgument('hold_target', default_value='false'),
     ]
 
     # The YAML omits profile/seed so these two never silently lose to it. value_type is
@@ -42,6 +45,9 @@ def generate_launch_description():
 
     target_position = Node(
         package=PKG, executable='target_position', name='target_position',
-        output='log', parameters=[{'use_sim_time': True}])
+        output='log',
+        parameters=[{'use_sim_time': True,
+                     'hold_until_control': ParameterValue(
+                         LaunchConfiguration('hold_target'), value_type=bool)}])
 
     return LaunchDescription(args + [disturbances, target_position])
