@@ -9,7 +9,11 @@
        2 rotor_front_left  cw  | 3 rotor_rear_right cw
 
      The link poses must agree with CA_ROTOR*_P{X,Y} in the 22100_gz_F450_px4 airframe.
-     Motor constants are x500's, unchanged - both airframes are 2.0 kg composite. -->
+     motorConstant is C_T fitted to T-Motor's bench table for the Navigator MN2212 V2.0 KV920
+     on a 9545B - 0.2% off the x500 value this was forked from. momentConstant is still x500's:
+     no C_D has been measured for this motor.
+     maxRotVelocity is only a ceiling. The operating limit is SIM_GZ_EC_MAX, which sitl.launch.py
+     derives from battery_cells; this must stay above it or the motor model clamps. -->
 <sdf version='1.9'>
   <model name='F450_px4'>
 
@@ -24,8 +28,8 @@
       <turningDirection>ccw</turningDirection>
       <timeConstantUp>0.0125</timeConstantUp>
       <timeConstantDown>0.025</timeConstantDown>
-      <maxRotVelocity>1000.0</maxRotVelocity>
-      <motorConstant>8.54858e-06</motorConstant>
+      <maxRotVelocity>1200.0</maxRotVelocity>
+      <motorConstant>8.566e-06</motorConstant>
       <momentConstant>0.016</momentConstant>
       <commandSubTopic>command/motor_speed</commandSubTopic>
       <motorNumber>0</motorNumber>
@@ -42,8 +46,8 @@
       <turningDirection>ccw</turningDirection>
       <timeConstantUp>0.0125</timeConstantUp>
       <timeConstantDown>0.025</timeConstantDown>
-      <maxRotVelocity>1000.0</maxRotVelocity>
-      <motorConstant>8.54858e-06</motorConstant>
+      <maxRotVelocity>1200.0</maxRotVelocity>
+      <motorConstant>8.566e-06</motorConstant>
       <momentConstant>0.016</momentConstant>
       <commandSubTopic>command/motor_speed</commandSubTopic>
       <motorNumber>1</motorNumber>
@@ -60,8 +64,8 @@
       <turningDirection>cw</turningDirection>
       <timeConstantUp>0.0125</timeConstantUp>
       <timeConstantDown>0.025</timeConstantDown>
-      <maxRotVelocity>1000.0</maxRotVelocity>
-      <motorConstant>8.54858e-06</motorConstant>
+      <maxRotVelocity>1200.0</maxRotVelocity>
+      <motorConstant>8.566e-06</motorConstant>
       <momentConstant>0.016</momentConstant>
       <commandSubTopic>command/motor_speed</commandSubTopic>
       <motorNumber>2</motorNumber>
@@ -78,8 +82,8 @@
       <turningDirection>cw</turningDirection>
       <timeConstantUp>0.0125</timeConstantUp>
       <timeConstantDown>0.025</timeConstantDown>
-      <maxRotVelocity>1000.0</maxRotVelocity>
-      <motorConstant>8.54858e-06</motorConstant>
+      <maxRotVelocity>1200.0</maxRotVelocity>
+      <motorConstant>8.566e-06</motorConstant>
       <momentConstant>0.016</momentConstant>
       <commandSubTopic>command/motor_speed</commandSubTopic>
       <motorNumber>3</motorNumber>

@@ -122,8 +122,9 @@ int main(int argc, char **argv)
 		 0, 0, 0.0599;
 	
 	// x,y start 0.14 m from the target, which target_position.cpp initialises at (-10,-10).
-	// z = -4 is the paper's initial condition; the 820x616 camera decodes the markers there.
-	linear_position << -9.9,-10.1,-4;
+	// z = -4 is the paper's initial condition.
+	const double start_alt = node->declare_parameter<double>("start_altitude", 4.0);
+	linear_position << -9.9, -10.1, -start_alt;
 	
 	attitude_position << 0,0,0;
 
@@ -156,6 +157,8 @@ int main(int argc, char **argv)
 	quad_vel_BF_pub->publish(BFvelocityVector);
 	loop_rate.sleepFor(5.0);
 	
+	// Explicit forward Euler at 100 Hz: it diverges to 1e10 m within seconds of losing
+	// closed-loop visual feedback, so this plant is only valid while lock holds.
 	while(rclcpp::ok())
 	{
 		//Angular dynamics

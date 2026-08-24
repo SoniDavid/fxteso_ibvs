@@ -1,9 +1,5 @@
-// Exits 0 once PX4 has the aircraft settled at the servoing altitude, so the estimators start
-// against a hovering aircraft rather than a climbing one.
-//
-// The FxTESO has no control input to attribute motion to until pos_ctrl runs, so a climb it
-// observes is booked as disturbance and pos_ctrl then flies that error. The other plants never
-// hit this - their aircraft is already at the servoing pose.
+// Exits 0 once PX4 has the aircraft settled at the servoing altitude: started during the climb,
+// the observer books it as disturbance and pos_ctrl then flies that error.
 #include <rclcpp/rclcpp.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 

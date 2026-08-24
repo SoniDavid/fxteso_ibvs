@@ -8,12 +8,14 @@
 #include <geometry_msgs/msg/pose2_d.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
+#include <std_msgs/msg/bool.hpp>
 //Including C++ nominal libraries
 #include <iostream>
 #include <math.h>
 #include <vector>
 //Including Eigen library
 #include <eigen3/Eigen/Dense>
+#include <stdexcept>
 
 float step = 0.02;
 
@@ -71,7 +73,10 @@ Eigen::Matrix3f Ryaw(float yaw)
 
 float sign(float var)
 {
-    float result;
+    // Initialised, not left to fall through: NaN compares false against >0, <0 and ==0, so
+    // an uninitialised `result` was returned for it - undefined behaviour that surfaced as
+    // an arbitrary finite kick into the integrators rather than a detectable NaN.
+    float result = 0;
     if(var>0)
     {
         result = 1;
@@ -99,6 +104,15 @@ void quadAttCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr quadAtt)
 	quad_att(0) = quadAtt->x;
     quad_att(1) = quadAtt->y;
     quad_att(2) = quadAtt->z;
+}
+
+// The no-lock output is a sentinel, not a measurement: integrating against it winds ibvs_dist on
+// a fabricated error. Assumption 8 puts this outside the design, so hold rather than estimate.
+bool imgFeat_valid = false;
+
+void imFeatValidCallback(const std_msgs::msg::Bool::ConstSharedPtr v)
+{
+	imgFeat_valid = v->data;
 }
 
 void imFeatCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr img_features)
@@ -129,8 +143,44 @@ int main(int argc, char *argv[])
 
 	fxteso::SimRate loop_rate(node, 50);	
 
+    // The one gain that has to differ per plant: plant:=px4's inner loop lags 244 ms against
+    // analytic's ~80 ms, so it needs a lower value here to get a truer error_dot out of x2_hat.
+    const float gamma1_xy = node->declare_parameter<double>("gamma1_xy", 18.0);
+
+    // Above zero, replaces the x/y triple with a triple pole at -observer_omega, i.e. thesis
+    // Eq. 4.72's Hurwitz polynomial placed rather than hand-picked. Zero keeps gamma1_xy.
+    const double observer_omega = node->declare_parameter<double>("observer_omega", 0.0);
+
+    // The remaining departures from Table 5.3, exposed so the thesis set can be flown as-is:
+    // thesis has gamma2_xy 10, gamma3_xy 7, gamma3_yaw 7.
+    const float gamma2_xy = node->declare_parameter<double>("gamma2_xy", 20.0);
+    const float gamma3_xy = node->declare_parameter<double>("gamma3_xy", 4.0);
+    const float gamma3_yaw = node->declare_parameter<double>("gamma3_yaw", 3.0);
+    // Yaw's position injection, 5 against x/y's 18. Low gamma1 measured worse on x/y, and the
+    // yaw channel feeds a second integrator in pos_ctrl, so it is exposed to be swept.
+    const float gamma1_yaw = node->declare_parameter<double>("gamma1_yaw", 5.0);
+    const float gamma2_yaw = node->declare_parameter<double>("gamma2_yaw", 16.0);
+    // Remark 5 tunes alpha and beta FIRST and calls alpha the noise-sensitivity knob; Eq. 4.72
+    // wants alpha just under 1 and gamma4 > L1, measured ~0.05 on yaw against the flown 0.001.
+    const float alpha_yaw = node->declare_parameter<double>("alpha_yaw", 0.75);
+    const float beta_yaw = node->declare_parameter<double>("beta_yaw", 1.2);
+    const float gamma4_yaw = node->declare_parameter<double>("gamma4_yaw", 0.001);
+    // Yaw's g(xi)*u sign. Thesis Eq. 5.81 gives -1 and pos_ctrl's Omega carries -1, but this
+    // channel has always been flown at +1. Default is as-flown so nothing changes silently.
+    const float eso_yaw_sign = node->declare_parameter<double>("eso_yaw_sign", 1.0);
+
+    // Added to the observer's initial state estimate, so this vector IS the seeded initial
+    // estimation error. Zeros reproduce the thesis start; sweeping it is how the fixed-time
+    // convergence claim - settling time independent of initial error - gets tested.
+    const std::vector<double> x0_offset =
+        node->declare_parameter<std::vector<double>>("initial_estimate_offset",
+                                                     {0.0, 0.0, 0.0, 0.0});
+    if (x0_offset.size() != 4)
+        throw std::runtime_error("initial_estimate_offset needs exactly 4 values (qx,qy,qz,qpsi).");
+
     //ROS publishers and subscribers
-    auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);  
+    auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);
+    auto im_feat_valid_sub = node->create_subscription<std_msgs::msg::Bool>("ImFeat_valid", 1, imFeatValidCallback);
     auto ctrl_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ibvs_control_input", 1, ibvsCtrlCallback);  
     auto yawRate_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("desired_attitude", 1, yawRateCallback);
     auto quad_att_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_attitude", 1, quadAttCallback);
@@ -147,7 +197,8 @@ int main(int argc, char *argv[])
     geometry_msgs::msg::Quaternion ibvs_dist_var;
     geometry_msgs::msg::Quaternion scaled_ibvs_dist_var;
 
-    imFeat_estimate << imFeat(0), imFeat(1), 1.7, 0;
+    imFeat_estimate << imFeat(0) + x0_offset[0], imFeat(1) + x0_offset[1],
+                      1.7 + x0_offset[2], 0 + x0_offset[3];
     imFeat_estimate_dot << 0,0,0,0;
     ibvs_dist << 0, 0, 0, 0;
 
@@ -157,13 +208,21 @@ int main(int argc, char *argv[])
     x3_hat_dot << 0, 0, 0, 0;
 
     // //GAINS WITH MODEL UNCERTAINTIES
-   gamma1 << 18, 18, 16, 5;
-   gamma2 << 10, 10, 14, 16;
-   // Yaw is 3, not the thesis' 7; the rest is Table 5.3. ibvs_dist integrates this gain, and
-   // pos_ctrl integrates its yaw output twice more, so under plant:=px4's noisier estimate the
-   // walk ran away.
-   gamma3 << 7, 7, 21, 3;
-   gamma4 << 0.001, 0.001, 0.001, 0.001;
+   // gamma2/gamma1 on x/y sets how much of x1_hat_dot reaches x2_hat - which pos_ctrl uses
+   // as error_dot, its only damping term; at the thesis' 18/10 the injection took 75% of it.
+   gamma1 << gamma1_xy, gamma1_xy, 16, gamma1_yaw;
+   gamma2 << gamma2_xy, gamma2_xy, 14, gamma2_yaw;
+   // Yaw is 3, not the thesis' 7; x/y are 4 for a related reason - ibvs_dist integrates this
+   // gain and pos_ctrl feeds it back in phase, which was 0.5 of the command at the 0.3 Hz mode.
+   gamma3 << gamma3_xy, gamma3_xy, 21, gamma3_yaw;
+   gamma4 << 0.001, 0.001, 0.001, gamma4_yaw;
+
+   if (observer_omega > 0.0) {
+       const double w = observer_omega;
+       gamma1(0) = gamma1(1) = 3 * w;
+       gamma2(0) = gamma2(1) = 3 * w * w;
+       gamma3(0) = gamma3(1) = w * w * w;
+   }
   
      /*
      
@@ -214,7 +273,16 @@ int main(int argc, char *argv[])
     loop_rate.sleepFor(4.7);
 
     while(rclcpp::ok())
-    {        
+    {
+        // No measurement -> do not step the observer. Every state is held, nothing is reset:
+        // the equations are untouched, they simply are not run on a value that is not a
+        // measurement. See imFeatValidCallback above.
+        if (!imgFeat_valid)
+        {
+            loop_rate.sleep();   // SimRate spins the executor, so callbacks still run
+            continue;
+        }
+
         for(int i = 0; i<=3; i++)
         {
             estimation_error(i) = imFeat(i) - imFeat_estimate(i);
@@ -263,8 +331,8 @@ int main(int argc, char *argv[])
             }
             else if (i == 3)
             {
-                alpha = 0.75;
-                beta = 1.2;
+                alpha = alpha_yaw;
+                beta = beta_yaw;
 
                 alpha2 = (alpha + 1)/2;
                 beta2 = (beta + 1)/2;
@@ -272,7 +340,7 @@ int main(int argc, char *argv[])
                 alpha3 = (alpha + 2)/3;
                 beta3 = (beta + 2)/3;
                 fx = 0;
-                gx_u = ctrl_input(3);
+                gx_u = eso_yaw_sign * ctrl_input(3);
             }
 
             x3_hat_dot(i) = gamma3(i) * sig(estimation_error(i),alpha) + mu3(i) * sig(estimation_error(i),beta) + gamma4(i) * sign(estimation_error(i));

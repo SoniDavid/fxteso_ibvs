@@ -1,11 +1,5 @@
-// PX4 uXRCE-DDS topic naming.
-//
-// Since v1.16 the client appends _v<N> when a message's MESSAGE_VERSION is non-zero
-// (uxrce_dds_client/utilities.hpp:35), so VehicleStatus is /fmu/out/vehicle_status_v4 while
-// VehicleOdometry is plain. Subscribing to the unversioned name of a versioned message is
-// silent: the subscription is created and never receives anything.
-//
-// Reading the version off the type means a px4_msgs bump moves our topic with it.
+// PX4 uXRCE-DDS topic naming: since v1.16 the client appends _v<N> for a non-zero
+// MESSAGE_VERSION. Subscribing to the unversioned name of a versioned message fails silently.
 
 #ifndef QUAD_PX4__PX4_TOPIC_HPP_
 #define QUAD_PX4__PX4_TOPIC_HPP_

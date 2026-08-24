@@ -6,9 +6,4 @@ bags/
 *.mcap
 *.db3
 docs/
-
-# px4_msgs and PX4-Autopilot are submodules now - see .gitmodules. They are pinned rather
-# than ignored because the SITL gains in docs/px4-tuning.md are only valid against a
-# specific PX4.
-# Python bytecode from the analysis scripts
 __pycache__/

@@ -1,8 +1,5 @@
-// Feeds the control stack from PX4's EKF2, publishing the same five topics as uav_dynamics
-// and gz_state_adapter so nothing downstream knows which plant ran.
-//
-// PX4 is already NED/FRD, so no handedness flip - but its North is geographic while this
-// workspace calls Gazebo +x North, hence frame_yaw_offset.
+// Feeds the control stack from PX4's EKF2, publishing the same five topics as the other plant
+// adapters. Already NED/FRD, but its North is geographic - hence frame_yaw_offset.
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/unwrapped.hpp"
 #include "quad_px4/px4_topic.hpp"

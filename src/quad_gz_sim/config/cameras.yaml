@@ -1,0 +1,93 @@
+# Camera presets: one entry per Raspberry Pi module AND sensor mode. hfov_deg is the effective
+# FOV after the mode's crop; fps is the real mode's rate against the 50 Hz image_features loop.
+# render is deliberately HALF the native linear resolution, so a marker is half as many pixels
+# here as on hardware. Offline geometry tools assume that rule - do not change it in isolation.
+
+cameras:
+
+  # --- Raspberry Pi Camera Module 2 (IMX219, 3.04 mm lens, 62.2 deg) --------------------
+  # What the thesis specifies (L7136, L8154, ref [78]) and what the sim has always modelled.
+
+  # The default: the flown geometry. 41.85 fps is IMX219's fastest FULL-FOV mode, below the
+  # 50 Hz loop, so on hardware the loop would repeat ~17% of its frames.
+  module2_1640:
+    hfov_deg: 62.2
+    native: [1640, 1232]
+    fps: 41.85
+    crop: 1.0
+    render: [820, 616]
+    distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Identical optics, mode, FOV and frame rate to module2_1640, rendered at the sensor's NATIVE
+  # resolution instead of half of it - the one preset that deliberately breaks the half rule.
+  module2_1640_native:
+    hfov_deg: 62.2
+    native: [1640, 1232]
+    fps: 41.85
+    crop: 1.0
+    render: [1640, 1232]
+    distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Same optics and same mode, read out 8-bit instead of 10-bit. The only way IMX219 clears
+  # 50 Hz without giving up field of view.
+  module2_1640_8bit:
+    hfov_deg: 62.2
+    native: [1640, 1232]
+    fps: 83.70
+    crop: 1.0
+    render: [820, 616]
+    distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # 47.57 fps, still under 50, and the crop to 1920 of 3280 native columns costs more than half
+  # the field of view. Kept to make that cost measurable, not because it is usable.
+  module2_1920:
+    hfov_deg: 38.9
+    native: [1920, 1080]
+    fps: 47.57
+    crop: 0.5854
+    render: [960, 540]
+    distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # --- Raspberry Pi Camera Module 3 (IMX708, 66 deg) ------------------------------------
+  # 16:9 native. Wider horizontally than Module 2 and NARROWER vertically, and the short axis
+  # is the one that binds, so this is a downgrade for this task. Included to show that.
+  module3_2304:
+    hfov_deg: 66.0
+    native: [2304, 1296]
+    fps: 56.03
+    crop: 1.0
+    render: [1152, 648]
+    distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # --- Raspberry Pi Camera Module 3 Wide (IMX708, 102 deg h / 120 deg diagonal) ---------
+  # The recommendation: full sensor crop at 56.03 fps, so it clears the 50 Hz loop at full
+  # field of view, which Module 2 cannot.
+  module3wide_2304:
+    hfov_deg: 102.0
+    native: [2304, 1296]
+    fps: 56.03
+    crop: 1.0
+    render: [1152, 648]
+    # ASSUMPTION, not a measurement: a plausible barrel profile for a 102 deg lens. Phase C
+    # is the only thing that depends on these; replace them if the real module is calibrated.
+    distortion: [-0.30, 0.10, 0.0, 0.0, -0.02]
+
+  # module3wide_2304 with distortion off. Not a real camera - the control arm that separates
+  # what the field of view buys from what the assumed barrel profile costs.
+  module3wide_2304_ideal:
+    hfov_deg: 102.0
+    native: [2304, 1296]
+    fps: 56.03
+    crop: 1.0
+    render: [1152, 648]
+    distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # 120 fps, cropped to 3072 of 4608 native columns so 102 -> 78.9 deg. The high-rate fallback;
+  # the coefficients are the uncropped lens' and overstate edge distortion here.
+  module3wide_1536:
+    hfov_deg: 78.9
+    native: [1536, 864]
+    fps: 120.13
+    crop: 0.6667
+    render: [768, 432]
+    distortion: [-0.30, 0.10, 0.0, 0.0, -0.02]

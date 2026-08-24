@@ -8,6 +8,7 @@
 #include <chrono>
 #include <std_msgs/msg/float64.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
+#include <geometry_msgs/msg/quaternion.hpp>
 //Including C++ nominal libraries
 #include <iostream>
 #include <math.h>
@@ -64,6 +65,9 @@ static Eigen::Vector3d toVec3(const vector<double> &v, const char *what,
     return Eigen::Vector3d(v[0], v[1], v[2]);
 }
 
+// Set by the first desired_attitude, the same handover signal target_position waits on.
+bool control_started = false;
+
 int main(int argc, char *argv[])
 {
     rclcpp::init(argc, argv);
@@ -73,6 +77,13 @@ int main(int argc, char *argv[])
     fxteso::SimRate loop_rate(node, kRate);
 
     auto disturbances_pub = node->create_publisher<geometry_msgs::msg::Vector3>("disturbances", 100);
+    // Under px4 the aircraft is still on the ground 8 s in; wait for the controller handover
+    // instead. Default false so the analytic and gazebo plants keep their old timing exactly.
+    const bool hold_until_control = node->declare_parameter<bool>("hold_until_control", false);
+    const double settle = node->declare_parameter<double>("settle", 8.0);
+    auto ctrl_sub = node->create_subscription<geometry_msgs::msg::Quaternion>(
+        "desired_attitude", 1,
+        [](const geometry_msgs::msg::Quaternion::ConstSharedPtr) { control_started = true; });
     auto quad_vel_sub = node->create_subscription<geometry_msgs::msg::Vector3>(
         "quad_velocity", 1, quadVelCallback);
     geometry_msgs::msg::Vector3 disturbances_var;
@@ -91,24 +102,31 @@ int main(int argc, char *argv[])
     const double step_start = node->declare_parameter<double>("step_start", 22.0);
     const double step_end = node->declare_parameter<double>("step_end", 25.0);
 
-    // Random force, Ornstein-Uhlenbeck: stationary, band-limited, zero-mean.
-    // sigma in N, tau in s. State-independent, so its truth signal is clean.
-    const Eigen::Vector3d gust_sigma = toVec3(
+    // Random force, Ornstein-Uhlenbeck: stationary, band-limited, zero-mean. sigma in N, tau
+    // in s. State-independent, so its truth signal is clean.
+    const double gust_scale = node->declare_parameter<double>("gust_scale", 1.0);
+    const Eigen::Vector3d gust_sigma = gust_scale * toVec3(
         node->declare_parameter<vector<double>>("gust_sigma", {0.4, 0.4, 0.2}),
         "gust_sigma", log);
+    // Correlation time of the OU gust. Sweepable because the FxTESO's estimate was measured
+    // trailing the disturbance by ~1.5 s - exactly this value - and whether the lag follows
+    // tau or stays put is what separates an observer-bandwidth limit from a coincidence.
     const double gust_tau = node->declare_parameter<double>("gust_tau", 1.5);
     const int seed = node->declare_parameter<int>("seed", 0);
 
-    // Aerodynamic drag: F = 0.5*rho*Cd*A*|v_rel|*v_rel, v_rel = v_wind - v_quad.
-    // State-dependent, unlike the others.
-    const Eigen::Vector3d wind_velocity = toVec3(
+    // Aerodynamic drag, thesis Eq. 2.25, PER AXIS: -0.5*rho*drag_cd_a*v_rel^2*sign(v_rel) with
+    // v_rel = v_wind - v_quad. Isotropic |v_rel|*v_rel differs by up to sqrt(2) on a diagonal.
+    const double wind_scale = node->declare_parameter<double>("wind_scale", 1.0);
+    const Eigen::Vector3d wind_velocity = wind_scale * toVec3(
         node->declare_parameter<vector<double>>("wind_velocity", {0.0, 0.0, 0.0}),
         "wind_velocity", log);
-    const double drag_cd_a = node->declare_parameter<double>("drag_cd_a", 0.15);
+    const Eigen::Vector3d drag_cd_a = toVec3(
+        node->declare_parameter<vector<double>>("drag_cd_a", {0.03, 0.03, 0.10}),
+        "drag_cd_a", log);
 
     // OU turbulence on the wind velocity (m/s), applied before the drag law - this is what
     // makes 'wind' gust rather than blow steadily. Zero means steady.
-    const Eigen::Vector3d wind_turbulence = toVec3(
+    const Eigen::Vector3d wind_turbulence = wind_scale * toVec3(
         node->declare_parameter<vector<double>>("wind_turbulence", {0.0, 0.0, 0.0}),
         "wind_turbulence", log);
     const double wind_turbulence_tau = node->declare_parameter<double>("wind_turbulence_tau", 2.0);
@@ -161,12 +179,14 @@ int main(int argc, char *argv[])
                     step_amplitude(0), step_amplitude(1), step_amplitude(2),
                     step_start, step_end);
     if (use_gust)
-        RCLCPP_INFO(log, "  gust: sigma=[%.3f %.3f %.3f] N, tau=%.2f s, seed=%d",
-                    gust_sigma(0), gust_sigma(1), gust_sigma(2), gust_tau, seed);
+        RCLCPP_INFO(log, "  gust: sigma=[%.4f %.4f %.4f] N (scale %.3f), tau=%.2f s, seed=%d",
+                    gust_sigma(0), gust_sigma(1), gust_sigma(2), gust_scale, gust_tau, seed);
     if (use_wind)
     {
-        RCLCPP_INFO(log, "  wind: v=[%.3f %.3f %.3f] m/s, Cd*A=%.3f m^2",
-                    wind_velocity(0), wind_velocity(1), wind_velocity(2), drag_cd_a);
+        RCLCPP_INFO(log, "  wind: v=[%.3f %.3f %.3f] m/s, Cd*A=[%.3f %.3f %.3f] m^2 "
+                         "(thesis Eq. 2.25, per axis)",
+                    wind_velocity(0), wind_velocity(1), wind_velocity(2),
+                    drag_cd_a(0), drag_cd_a(1), drag_cd_a(2));
         if (wind_turbulence.norm() > 0.0)
             RCLCPP_INFO(log, "  wind turbulence: sigma=[%.3f %.3f %.3f] m/s, tau=%.2f s, "
                              "seed=%d", wind_turbulence(0), wind_turbulence(1),
@@ -181,12 +201,24 @@ int main(int argc, char *argv[])
     Eigen::Vector3d gust(0, 0, 0);
     Eigen::Vector3d wind_turb(0, 0, 0);
 
-    // 8 s hold: the plant must be flying before it is pushed. t is measured from here.
+    // The plant must be FLYING before it is pushed, and t is measured from here. Under px4 a
+    // fixed hold lands the disturbance on an aircraft still climbing, so wait for handover.
     disturbances_var.x = 0;
     disturbances_var.y = 0;
     disturbances_var.z = 0;
     disturbances_pub->publish(disturbances_var);
-    loop_rate.sleepFor(8.0);
+
+    if (hold_until_control)
+    {
+        RCLCPP_INFO(log, "Holding the disturbance at zero until desired_attitude appears.");
+        while (rclcpp::ok() && !control_started)
+        {
+            disturbances_pub->publish(disturbances_var);
+            loop_rate.sleep();
+        }
+        RCLCPP_INFO(log, "Handover seen - disturbance starts in %.1f s.", settle);
+    }
+    loop_rate.sleepFor(settle);
 
     long i = 0;
     while (rclcpp::ok())
@@ -224,7 +256,8 @@ int main(int argc, char *argv[])
                 (wind_velocity + wind_turb) - quad_vel_IF.cast<double>();
             // MINUS: uav_dynamics applies "- dist", so +F_drag would turn the -v_quad term
             // into negative damping and diverge at any wind speed.
-            dist -= 0.5 * kAirDensity * drag_cd_a * v_rel.norm() * v_rel;
+            for (int k = 0; k < 3; k++)
+                dist(k) -= 0.5 * kAirDensity * drag_cd_a(k) * v_rel(k) * fabs(v_rel(k));
         }
 
         if (use_csv)

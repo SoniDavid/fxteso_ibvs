@@ -197,8 +197,12 @@
         <camera name="head">
           <horizontal_fov>1.085595</horizontal_fov>
           <image>
-            <!-- Twice the ROS 1 resolution; required to decode the markers from the
-                 paper's -4 m start. pixel_size in image_features.cpp is halved to match. -->
+            <!-- 820x616 is Camera Module 2's 1640x1232 binned mode at half linear resolution,
+                 so a marker is exactly half as many pixels here as on the hardware. This whole
+                 <camera> block is rewritten by gz_sim.launch.py's camera:= argument, from
+                 quad_gz_sim/config/cameras.yaml; these values are the default preset and what
+                 a bare `gz sim` on this model gets. image_features derives its fx from the
+                 same table, never from these literals. -->
             <width>820</width>
             <height>616</height>
             <format>R8G8B8</format>
@@ -209,8 +213,11 @@
           </clip>
         </camera>
         <always_on>1</always_on>
-        <!-- Sim-time rate, matching image_features' own 50 Hz loop. Do not lower it; to
-             slow the simulation change real_time_factor in worlds/ibvs.sdf instead. -->
+        <!-- Sim-time rate, matching image_features' own 50 Hz loop. Do not lower it to slow
+             the simulation - change real_time_factor in worlds/ibvs.sdf instead. Lower it via
+             camera_rate:= only to fly a real sensor mode's frame rate, which is a hardware
+             constraint this free 50 fps otherwise hides: Module 2's one full-FOV mode runs at
+             41.85 fps, so the loop would repeat about 17% of its frames. -->
         <update_rate>50</update_rate>
         <visualize>1</visualize>
       </sensor>

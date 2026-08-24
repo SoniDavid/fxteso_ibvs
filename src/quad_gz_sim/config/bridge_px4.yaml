@@ -1,10 +1,5 @@
-# ros_gz_bridge config for plant:=px4. Same as bridge.yaml minus /quad_thrust and
-# /quad_torques: under this plant PX4's control allocator drives the rotors through its own
-# gz_bridge, so bridging the ANFTIBVS thrust into BodyWrench as well would apply it to
-# base_link on top of the rotor forces. /quad_thrust still exists as a ROS topic - the
-# offboard bridge consumes it - it just must not reach Gazebo.
-#
-# Poses bypass the bridge (gz_pose_broadcaster uses gz-transport).
+# ros_gz_bridge for plant:=px4. Deliberately omits /quad_thrust and /quad_torques: PX4's
+# allocator already drives the rotors, so bridging them would double up on base_link.
 
 - ros_topic_name: "/quad/camera/image_raw"
   gz_topic_name: "/quad/camera/image_raw"

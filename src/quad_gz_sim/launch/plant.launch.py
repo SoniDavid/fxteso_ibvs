@@ -21,6 +21,9 @@ def generate_launch_description():
         DeclareLaunchArgument('plant', default_value='analytic'),
         # Debug only: false feeds a wrapped attitude, as a quaternion source would.
         DeclareLaunchArgument('unwrap_attitude', default_value='true'),
+        # analytic only. 4.0 is the thesis' start; 2.5 matches zD, and so matches the small
+        # initial estimation error that px4's takeoff gate produces.
+        DeclareLaunchArgument('start_altitude', default_value='4.0'),
     ]
 
     def _plant_node(context, *a, **k):
@@ -29,7 +32,11 @@ def generate_launch_description():
             raise RuntimeError('plant:=%s is not one of analytic, gazebo.' % plant)
         if plant == 'analytic':
             return [Node(package=PKG, executable='uav_dynamics', name='uav_dynamics',
-                         output='log', parameters=[{'use_sim_time': True}])]
+                         output='log',
+                         parameters=[{'use_sim_time': True,
+                                      'start_altitude': ParameterValue(
+                                          LaunchConfiguration('start_altitude'),
+                                          value_type=float)}])]
         return [Node(
             package=PKG, executable='gz_state_adapter', name='gz_state_adapter',
             output='log',

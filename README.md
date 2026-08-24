@@ -46,7 +46,10 @@ colcon build --symlink-install && source install/setup.bash
 # the full closed loop
 ros2 launch quad_utils sim.launch.py [headless:=true] [rosbag:=true] [foxglove:=true] \
                                      [plant:=analytic|gazebo] [controllers:=false] \
-                                     [disturbance:=none|step|gust|wind|csv] [disturbance_seed:=N]
+                                     [disturbance:=none|step|gust|wind|csv] [disturbance_seed:=N] \
+                                     [gust_scale:=1.0] [wind_scale:=1.0] \
+                                     [camera:=module2_1640] [camera_rate:=0.0] \
+                                     [target_scale:=1.0] [marker_dict:=7x7|4x4] [zD:=2.5]
 
 # open loop: estimation chain only, controllers never start
 ros2 launch quad_utils observer_only.launch.py [plant:=gazebo] [disturbance:=gust]
@@ -83,6 +86,7 @@ make -C external/PX4-Autopilot px4_sitl_default
 
 ros2 launch quad_px4 sitl.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
                                     [controllers:=false] [disturbance:=gust]
+                                    [camera:=module3wide_2304] [target_scale:=0.5] [zD:=2.0]
                                     [px4_dir:=...] [xrce_agent:=...]
 ```
 
@@ -98,7 +102,12 @@ disturbance injection are the same ones the other plants use.
 
 Five things are specific to this plant, each commented where it lives:
 
-- `MPC_THR_HOVER` is the *measured* hover throttle (0.716), not x500's nominal 0.60.
+- `MPC_THR_HOVER` is the *measured* hover throttle (0.716), not x500's nominal 0.60. PX4's
+  `CT*u^2` thrust model is exact only at full throttle, because `SIM_GZ_EC_MIN` idles the
+  rotors at 150 rad/s and the map to rotor velocity is affine; the hover anchor absorbs it.
+- `CA_ROTOR*_KM` and `_CT` now match the SDF rather than x500's inherited 0.05, but both are
+  inert: `ActuatorEffectivenessRotors` sets `normalize_rpy`, so each column of the mix is
+  divided by its own maximum and any common scale on it cancels.
 - `frame_yaw_offset` appears twice, same value, opposite directions: the world is ENU while
   this workspace calls Gazebo +x North.
 - The estimators wait for `px4_takeoff_gate`; started earlier they book the climb as
@@ -107,40 +116,30 @@ Five things are specific to this plant, each commented where it lives:
   `server.config` once a world declares any `<plugin>` of its own.
 - The attitude and rate gains are inertia-and-arm scaled off x500's; roll is the soft axis.
 
-### Deviation from the thesis: `gamma3(3)`
+### Deviations from the thesis
 
-`fixed_eso.cpp` uses **3** on the yaw channel of `gamma3`, where thesis Table 5.3 has 7.
-Every other observer and controller gain is unchanged. The yaw channel is a triple integrator
-with no absolute reference, and PX4's noisier estimate made it random-walk away.
+The observer gains differ from Table 5.3 on the x/y and yaw channels; the depth channel and the
+ANFTIBVS controller gains are unchanged. Defaults are in `quad_control/launch/estimation.launch.py`
+and every one is overridable at launch.
 
+Two PX4 gain changes were tried and backed out: raising `MC_ROLL_P`/`MC_PITCH_P` cut the attitude
+lag but tripled the image-moment noise, and raising `MC_YAW_P` made a stiffer loop follow an
+oscillating command more eagerly. Both are commented at the gains themselves.
 
-A run that holds tracks the full 245 s to ~0.1 m. The remaining two failures are a different
-mechanism - pos_ctrl's yaw command going marginally stable at the entry to the circular
-phase - and are not yet fixed. The other plants are unaffected, re-measured at 100%
-(analytic) and 99.9% (gazebo).
+### The camera
 
-Two PX4 gain changes were tried and backed out: raising `MC_ROLL_P`/`MC_PITCH_P` cut the
-attitude lag but tripled the image-moment noise, and raising `MC_YAW_P` made a stiffer loop
-follow an oscillating command more eagerly. Both are commented at the gains themselves.
+A `camera:=` preset is a Raspberry Pi module **and a sensor mode**, from
+`quad_gz_sim/config/cameras.yaml`, because not every module reaches the 50 Hz `image_features`
+loop at full field of view. One preset rewrites the `<camera>` block of a derived `F450_base`
+**and** feeds `image_features` the same intrinsics, so the rendered camera and the feature model
+cannot drift apart. `zD:=` likewise drives `aD` and PX4's `MIS_TAKEOFF_ALT` together:
 
-## Analysis tools
+    aD = 0.5625 * target_scale^2 * (0.00304 / zD)^2
 
-`quad_utils/analysis/` reads a `rosbag:=true` bag and needs no ROS graph, so it works on any
-recorded run. `summary.py` is the one to reach for first; the others explain its columns.
-
-```sh
-cd src/quad_utils/analysis
-python3 summary.py           ../../../bags/px4_* ../../../bags/ibvs_*
-python3 attitude_tracking.py <bag>   # inner-loop error and lag - the PX4 tuning objective
-python3 derotation_error.py  <bag>   # estimator error the virtual camera actually sees
-python3 image_moments.py     <bag>   # qpsi moment noise and conditioning
-python3 yaw_channel.py       <bag>   # noise and bias down the whole yaw chain
-```
+It is `aD`, not `zD`, that decides where the aircraft settles.
 
 ## TO DO:
 - Write setup.sh
-- PX4 SITL: 2 runs in 6 lose lock at the circular-phase entry; the ANFTIBVS yaw gains are
-  the lever. The outcome is stochastic, so any attempt needs >=3 runs per configuration.
 - Rewrite low level controllers to use ASMC
 - Test High-level observer on real stack (after SITL)
 - Test low and high level controllers simultaneously

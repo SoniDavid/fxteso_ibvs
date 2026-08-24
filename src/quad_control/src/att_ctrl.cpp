@@ -49,7 +49,9 @@ float Jzz = 0.0599;
 
 float sign(float var)
 {   
-    float x;
+    // Initialised: NaN compares false against every branch below, and returning an
+    // uninitialised float for it is undefined behaviour.
+    float x = 0;
     if (var > 0)
     {
         x = 1;
