@@ -121,10 +121,10 @@ int main(int argc, char **argv)
 		 0, 0.0478, 0,
 		 0, 0, 0.0599;
 	
-	// x,y start 0.14 m from the target, which target_position.cpp initialises at (-10,-10).
+	// x,y start over the target, which target_position.cpp initialises at (-10,-10).
 	// z = -4 is the paper's initial condition.
 	const double start_alt = node->declare_parameter<double>("start_altitude", 4.0);
-	linear_position << -9.9, -10.1, -start_alt;
+	linear_position << -10.0, -10.0, -start_alt;
 	
 	attitude_position << 0,0,0;
 

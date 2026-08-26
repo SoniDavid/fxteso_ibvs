@@ -89,7 +89,14 @@ def rotor_setup(prop, cells):
 
 # Spawn pose from worlds/ibvs.sdf, in NED (the world is ENU, so y and z are negated). EKF2
 # anchors its local frame there; px4_state_adapter adds this to get back to the world frame.
-SPAWN_NED = (-9.9, -10.1, -0.1)
+# Directly over the target: PX4 loiter holds the takeoff point, and qx ~ dx/zD, so the old
+# 0.14 m offset read 0.06 at zD 2.5 but 0.17 at zD 1.2 - outside ibvs_gate's 0.15 limit.
+SPAWN_NED = (-10.0, -10.0, -0.1)
+
+# PX4's takeoff settles below its own setpoint by a repeatable amount - 1.10/1.11/1.11 m
+# measured against a 1.20 m command. Added to MIS_TAKEOFF_ALT only, so `takeoff_alt` means the
+# altitude actually reached and px4_takeoff_gate can hold a tight tolerance around it.
+TAKEOFF_UNDERSHOOT = 0.095
 
 # EKF2's North is Gazebo +y (the world is ENU) while the workspace calls +x North.
 FRAME_YAW_OFFSET = -math.pi / 2.0
@@ -166,6 +173,15 @@ def generate_launch_description():
         # first 10 s and decays through zero by ~25 s; commanding 0 against that bias is
         # 0.18 m/s^2 of uncommanded forward acceleration, straight into the tight FOV axis.
         DeclareLaunchArgument('estimators_ready', default_value='5.0'),
+        # ibvs_gate's own default. Raise it when the aircraft needs longer to align: PX4
+        # latches its yaw setpoint against an EKF2 heading that has not finished aligning, so
+        # the true yaw swings tens of degrees during takeoff and unwinds over ~100 s. The
+        # target is held until handover, so waiting costs wall clock and nothing else.
+        DeclareLaunchArgument('gate_timeout', default_value='120.0'),
+        # EKF2 only fuses mag heading while horizontal acceleration exceeds this and GNSS is
+        # aiding. 0.0 keeps heading aided through station-keeping; PX4's default is 0.5.
+        # Exposed so the two can be A/B'd without a rebuild.
+        DeclareLaunchArgument('mag_acclim', default_value='0.0'),
         DeclareLaunchArgument(
             'px4_dir',
             default_value=os.path.expanduser(
@@ -268,7 +284,10 @@ def generate_launch_description():
         # Takeoff has to deliver the aircraft to the depth image_features' aD was computed
         # for, or the feature vector is mis-scaled from the first frame. Same derivation, one
         # argument: the airframe's own default is only for a bare px4_sitl_default run.
-        env['PX4_PARAM_MIS_TAKEOFF_ALT'] = '%.3f' % takeoff_alt_of(context)
+        env['PX4_PARAM_MIS_TAKEOFF_ALT'] = '%.3f' % (takeoff_alt_of(context) + TAKEOFF_UNDERSHOOT)
+
+        env['PX4_PARAM_EKF2_MAG_ACCLIM'] = '%.3f' % float(
+            LaunchConfiguration('mag_acclim').perform(context))
 
         # px4_offboard_bridge maps newtons to normalised thrust with its own hover_thrust, so a
         # drift between the two silently mis-scales every command. Fail loudly instead.
@@ -345,7 +364,9 @@ def generate_launch_description():
                              'max_feature_error': ParameterValue(
                                  LaunchConfiguration('max_feature_error'), value_type=float),
                              'estimators_ready': ParameterValue(
-                                 LaunchConfiguration('estimators_ready'), value_type=float)}])
+                                 LaunchConfiguration('estimators_ready'), value_type=float),
+                             'timeout': ParameterValue(
+                                 LaunchConfiguration('gate_timeout'), value_type=float)}])
 
     # pos_ctrl publishing desired_attitude is what tips px4_offboard_bridge into OFFBOARD,
     # so starting it here is the handover. att_ctrl stays off: PX4 owns the inner loop.

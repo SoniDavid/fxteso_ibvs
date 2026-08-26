@@ -251,7 +251,7 @@
     <include>
       <uri>model://F450</uri>
       <name>F450</name>
-      <pose>-9.9 10.1 4 0 0 0</pose>
+      <pose>-10 10 4 0 0 0</pose>
     </include>
     <!-- ONLY END -->
 
@@ -262,7 +262,7 @@
     <include>
       <uri>model://F450_px4</uri>
       <name>F450</name>
-      <pose>-9.9 10.1 0.1 0 0 0</pose>
+      <pose>-10 10 0.1 0 0 0</pose>
     </include>
     <!-- ONLY END -->
 

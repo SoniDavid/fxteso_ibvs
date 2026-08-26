@@ -1,12 +1,14 @@
 // Exits 0 once PX4 has the aircraft settled at the servoing altitude: started during the climb,
 // the observer books it as disturbance and pos_ctrl then flies that error.
 #include <rclcpp/rclcpp.hpp>
+#include <px4_msgs/msg/estimator_status_flags.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 
 #include <chrono>
 #include <cmath>
 #include <thread>
 
+using px4_msgs::msg::EstimatorStatusFlags;
 using px4_msgs::msg::VehicleLocalPosition;
 
 int main(int argc, char **argv)
@@ -23,11 +25,18 @@ int main(int argc, char **argv)
 	// Wall clock, deliberately: a sim-time timeout would never fire if Gazebo failed to
 	// start and /clock never advanced - exactly the case this needs to report.
 	const double timeout_s = node->declare_parameter<double>("timeout", 180.0);
+	// EKF2 sometimes never starts mag/GNSS aiding, and then it never will - one run sat 82 s
+	// with healthy sensors and a stationary aircraft. Arming is blocked on "no heading
+	// reference", so waiting out the full timeout only wastes the slot. Zero disables.
+	const double aiding_deadline =
+		node->declare_parameter<double>("aiding_deadline", 40.0);
 
 	double alt = 0.0;
 	double climb = 0.0;
 	bool valid = false;
 	int run = 0;
+	bool yaw_align = false;
+	bool gnss_pos = false;
 
 	const rclcpp::QoS px4Qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile();
 	auto sub = node->create_subscription<VehicleLocalPosition>(
@@ -37,6 +46,14 @@ int main(int argc, char **argv)
 			valid = p->z_valid && p->v_z_valid;
 			alt = -p->z;               // NED: down is positive
 			climb = std::abs(p->vz);
+		});
+
+	auto ekf_sub = node->create_subscription<EstimatorStatusFlags>(
+		"/fmu/out/estimator_status_flags", px4Qos,
+		[&](const EstimatorStatusFlags::ConstSharedPtr f)
+		{
+			yaw_align = f->cs_yaw_align;
+			gnss_pos = f->cs_gnss_pos;
 		});
 
 	RCLCPP_INFO(node->get_logger(),
@@ -65,6 +82,17 @@ int main(int argc, char **argv)
 		const auto now = std::chrono::steady_clock::now();
 		const double waited = std::chrono::duration<double>(now - started).count();
 
+		if (aiding_deadline > 0.0 && waited > aiding_deadline && !yaw_align)
+		{
+			RCLCPP_ERROR(node->get_logger(),
+			             "EKF2 never aligned after %.0f s: yaw_align=no gnss_pos=%s. It will "
+			             "not recover, and arming stays blocked on 'no heading reference', so "
+			             "this run is abandoned rather than waiting out the %.0f s timeout.",
+			             waited, gnss_pos ? "yes" : "no", timeout_s);
+			rclcpp::shutdown();
+			return 1;
+		}
+
 		if (waited > timeout_s)
 		{
 			RCLCPP_ERROR(node->get_logger(),
@@ -80,8 +108,10 @@ int main(int argc, char **argv)
 		{
 			last_report = now;
 			RCLCPP_WARN(node->get_logger(),
-			            "Still waiting (%.0f s): z_valid=%s altitude=%.2f/%.2f climb=%.2f run=%d/%d",
-			            waited, valid ? "yes" : "no", alt, altitude, climb, run, need);
+			            "Still waiting (%.0f s): z_valid=%s altitude=%.2f/%.2f climb=%.2f "
+			            "run=%d/%d yaw_align=%s gnss=%s",
+			            waited, valid ? "yes" : "no", alt, altitude, climb, run, need,
+			            yaw_align ? "yes" : "no", gnss_pos ? "yes" : "no");
 		}
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
