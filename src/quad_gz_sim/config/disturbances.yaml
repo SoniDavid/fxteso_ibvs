@@ -29,5 +29,16 @@ disturbances:
     wind_turbulence: [0.15, 0.15, 0.08]  # m/s, std-dev per axis
     wind_turbulence_tau: 2.0          # s, larger = slower, rollier gusts
 
+    # 'table52': Armando's thesis own wind. The mean schedule and the Von Karman intensities are
+    # in disturbances.cpp; they are a specification to reproduce, and a run with
+    # edited intervals is not Table 5.2. These are the knobs that are legitimately variable.
+    # turbulence_scale and table52_altitude are NOT here: scenario.launch.py passes the
+    # first from its launch argument and the second from zD, so the sigmas follow the
+    # depth actually being flown.
+    table52_start: 10.0       # s, thesis clock (t = 0 at handover)
+    table52_end: 190.0        # s, wind removed after this to show convergence
+    table52_sigma_g: 0.1      # m/s, the table's own white Gaussian on each mean
+    table52_mean_rate: 10.0   # Hz, the rate that Gaussian is drawn and held at
+
     # 'csv': replay a recorded profile, one "x,y,z" row per 10 ms. Unopenable path aborts.
     csv: ""

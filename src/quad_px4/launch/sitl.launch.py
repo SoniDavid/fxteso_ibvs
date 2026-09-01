@@ -142,6 +142,8 @@ def generate_launch_description():
         DeclareLaunchArgument('gust_scale', default_value='1.0'),
         DeclareLaunchArgument('wind_scale', default_value='1.0'),
         DeclareLaunchArgument('gust_tau', default_value='1.5'),
+        # table52 only: scales the Von Karman sigmas, leaving the mean schedule alone.
+        DeclareLaunchArgument('turbulence_scale', default_value='1.0'),
         # Target trajectory; see quad_gz_sim/scenario.launch.py.
         DeclareLaunchArgument('target_profile', default_value='thesis'),
         DeclareLaunchArgument('target_speed', default_value='1.0'),
@@ -233,6 +235,7 @@ def generate_launch_description():
                  'gust_scale': LaunchConfiguration('gust_scale'),
                  'wind_scale': LaunchConfiguration('wind_scale'),
                  'gust_tau': LaunchConfiguration('gust_tau'),
+                 'turbulence_scale': LaunchConfiguration('turbulence_scale'),
                  # Arming and takeoff cost sim time the other plants do not spend; without
                  # this the target leaves the camera footprint before ibvs_gate can lock.
                  'hold_target': 'true',

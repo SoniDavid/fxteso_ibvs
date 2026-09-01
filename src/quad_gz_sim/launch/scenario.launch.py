@@ -1,6 +1,6 @@
 """The moving target and the disturbance force.
 
-  ros2 launch quad_gz_sim scenario.launch.py [disturbance:=none|step|gust|wind|csv]
+  ros2 launch quad_gz_sim scenario.launch.py [disturbance:=none|step|gust|wind|table52|csv]
                                              [disturbance_seed:=N]
                                              [gust_scale:=1.0] [wind_scale:=1.0]
 
@@ -29,6 +29,9 @@ def generate_launch_description():
         # while the YAML keeps owning the shape of the disturbance.
         DeclareLaunchArgument('gust_scale', default_value='1.0'),
         DeclareLaunchArgument('wind_scale', default_value='1.0'),
+        # table52 only: multiplies the Von Karman sigmas, leaving the mean schedule alone. 0
+        # flies the thesis' wind STRUCTURE - the reversals and the downdraft - without gusting.
+        DeclareLaunchArgument('turbulence_scale', default_value='1.0'),
         # The gust's own correlation time. Sweep it against the estimator lag; see
         # the gust-bandwidth sweep.
         DeclareLaunchArgument('gust_tau', default_value='1.5'),
@@ -64,7 +67,12 @@ def generate_launch_description():
          'seed': ParameterValue(LaunchConfiguration('disturbance_seed'), value_type=int),
          'gust_scale': ParameterValue(LaunchConfiguration('gust_scale'), value_type=float),
          'wind_scale': ParameterValue(LaunchConfiguration('wind_scale'), value_type=float),
-         'gust_tau': ParameterValue(LaunchConfiguration('gust_tau'), value_type=float)},
+         'gust_tau': ParameterValue(LaunchConfiguration('gust_tau'), value_type=float),
+         'turbulence_scale': ParameterValue(
+             LaunchConfiguration('turbulence_scale'), value_type=float),
+         # Eqs. 2.30-2.33 are altitude-dependent, so the thesis' own wind must be evaluated at
+         # the depth actually being flown. Same zD the target and the controller use.
+         'table52_altitude': ParameterValue(LaunchConfiguration('zD'), value_type=float)},
     ]
 
     disturbances = Node(

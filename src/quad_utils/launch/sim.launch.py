@@ -18,8 +18,8 @@ The plant is switchable; both backends publish the same five state topics.
 
   ros2 launch quad_utils sim.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
                                        [plant:=analytic|gazebo] [controllers:=false]
-                                       [disturbance:=none|step|gust|wind|csv]
-                                       [disturbance_seed:=N]
+                                       [disturbance:=none|step|gust|wind|table52|csv]
+                                       [disturbance_seed:=N] [turbulence_scale:=1.0]
 """
 import importlib.util
 import os
@@ -90,6 +90,8 @@ def generate_launch_description():
         DeclareLaunchArgument('gust_scale', default_value='1.0'),
         DeclareLaunchArgument('wind_scale', default_value='1.0'),
         DeclareLaunchArgument('gust_tau', default_value='1.5'),
+        # table52 only: scales the Von Karman sigmas, leaving the mean schedule alone.
+        DeclareLaunchArgument('turbulence_scale', default_value='1.0'),
         # Target trajectory; see quad_gz_sim/scenario.launch.py.
         DeclareLaunchArgument('target_profile', default_value='thesis'),
         DeclareLaunchArgument('target_speed', default_value='1.0'),
@@ -142,6 +144,11 @@ def generate_launch_description():
                  'gust_scale': LaunchConfiguration('gust_scale'),
                  'wind_scale': LaunchConfiguration('wind_scale'),
                  'gust_tau': LaunchConfiguration('gust_tau'),
+                 'turbulence_scale': LaunchConfiguration('turbulence_scale'),
+                 # scenario measures /position_error against this and evaluates table52's
+                 # altitude-dependent sigmas at it. Its own default is 2.5, so without this
+                 # every non-2.5 depth carries a constant bias in that error.
+                 'zD': LaunchConfiguration('zD'),
                  'target_profile': LaunchConfiguration('target_profile'),
                  'target_speed': LaunchConfiguration('target_speed'),
                  'target_yaw_rate': LaunchConfiguration('target_yaw_rate'),
