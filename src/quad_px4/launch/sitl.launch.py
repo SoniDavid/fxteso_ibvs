@@ -43,7 +43,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
                             IncludeLaunchDescription, LogInfo, OpaqueFunction,
-                            RegisterEventHandler, TimerAction)
+                            RegisterEventHandler, Shutdown, TimerAction)
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -421,12 +421,16 @@ def generate_launch_description():
         on_exit=lambda event, context: (
             _estimation_include(context) + [gate, control]
             if event.returncode == 0 else
+            # Tear the run down instead of idling to the harness timeout. EKF2 never recovers
+            # from a failed initialisation - one run sat 82 s - so the remaining minutes buy
+            # nothing, and at the ~40% start-up race of experiments/e29.md they are the single
+            # largest cost in a sweep: one failed point cost 26 minutes of the E31 batch.
             [LogInfo(msg='px4_takeoff_gate failed - estimators not started. See its error '
-                         'above.')]
+                         'above.'), Shutdown(reason='takeoff gate failed')]
         )))
 
     return LaunchDescription(
-        args + simulation
+        args + [OpaqueFunction(function=_bag_at_launch)] + simulation
         + [OpaqueFunction(function=_px4), state_adapter,
            OpaqueFunction(function=_offboard_bridge), viz,
            estimation, takeoff_gate])

@@ -241,15 +241,17 @@
         </air_pressure>
       </sensor>
 
-      <!-- 100 Hz, as in x500_base. At 50 Hz PX4's vehicle_magnetometer intermittently
-           declares "MAG #0 failed: STALE!", which fails the arming health check. -->
+      <!-- 100 Hz and stddev both as in x500_base. <stddev> is load-bearing: with no random
+           noise the field is byte-identical while the aircraft is still, PX4's DataValidator
+           counts 1000 equal values and stops publishing vehicle_magnetometer altogether
+           (VehicleMagnetometer.cpp:56,573) - EKF2 then never aligns yaw and it never arms. -->
       <sensor name="magnetometer_sensor" type="magnetometer">
         <always_on>1</always_on>
         <update_rate>100</update_rate>
         <magnetometer>
-          <x><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></x>
-          <y><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></y>
-          <z><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></z>
+          <x><noise type="gaussian"><stddev>0.0001</stddev></noise></x>
+          <y><noise type="gaussian"><stddev>0.0001</stddev></noise></y>
+          <z><noise type="gaussian"><stddev>0.0001</stddev></noise></z>
         </magnetometer>
       </sensor>
 

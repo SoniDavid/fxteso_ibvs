@@ -25,11 +25,28 @@ int main(int argc, char **argv)
 	// Wall clock, deliberately: a sim-time timeout would never fire if Gazebo failed to
 	// start and /clock never advanced - exactly the case this needs to report.
 	const double timeout_s = node->declare_parameter<double>("timeout", 180.0);
-	// EKF2 sometimes never starts mag/GNSS aiding, and then it never will - one run sat 82 s
-	// with healthy sensors and a stationary aircraft. Arming is blocked on "no heading
-	// reference", so waiting out the full timeout only wastes the slot. Zero disables.
+	// EKF2 can fail to start mag or GNSS aiding, and then it never will - arming stays blocked,
+	// so waiting out the full timeout only wastes the slot. Zero disables. Measured from the
+	// FIRST estimator_status_flags message, not from this node's start: the gate comes up
+	// before PX4 boots, so a deadline counted from here also counts 9-10 s of boot and varies
+	// with machine speed.
+	//
+	// BOTH flags are tested. They are separate failures with one cost: a start that aligned yaw
+	// at 1 s but never started GNSS aiding sat the full 180 s, because px4_offboard_bridge arms
+	// on xy_valid && z_valid and xy_valid needs horizontal aiding. On a healthy start both are
+	// up within ~1 s of EKF2's first message.
+	//
+	// 25 s covers the slowest legitimate alignment: cs_tilt_align has been seen at 7.2 s, and
+	// checkMagField() then refuses for a further mandatory second (_min_mag_health_time_us).
+	// This used to be 12 s, sized against the zero-noise-magnetometer deadlock that cost ~55%
+	// of starts; that is fixed in F450_base/model.sdf and the tight deadline is no longer worth
+	// its risk of aborting a slow but healthy start.
 	const double aiding_deadline =
-		node->declare_parameter<double>("aiding_deadline", 40.0);
+		node->declare_parameter<double>("aiding_deadline", 25.0);
+	// Backstop for the other failure: PX4 never comes up at all, so no EKF2 message ever
+	// arrives and the deadline above never starts counting.
+	const double ekf_silence_deadline =
+		node->declare_parameter<double>("ekf_silence_deadline", 60.0);
 
 	double alt = 0.0;
 	double climb = 0.0;
@@ -37,6 +54,8 @@ int main(int argc, char **argv)
 	int run = 0;
 	bool yaw_align = false;
 	bool gnss_pos = false;
+	bool ekf_seen = false;
+	std::chrono::steady_clock::time_point ekf_first{};
 
 	const rclcpp::QoS px4Qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile();
 	auto sub = node->create_subscription<VehicleLocalPosition>(
@@ -52,6 +71,11 @@ int main(int argc, char **argv)
 		"/fmu/out/estimator_status_flags", px4Qos,
 		[&](const EstimatorStatusFlags::ConstSharedPtr f)
 		{
+			if (!ekf_seen)
+			{
+				ekf_seen = true;
+				ekf_first = std::chrono::steady_clock::now();
+			}
 			yaw_align = f->cs_yaw_align;
 			gnss_pos = f->cs_gnss_pos;
 		});
@@ -82,13 +106,31 @@ int main(int argc, char **argv)
 		const auto now = std::chrono::steady_clock::now();
 		const double waited = std::chrono::duration<double>(now - started).count();
 
-		if (aiding_deadline > 0.0 && waited > aiding_deadline && !yaw_align)
+		const double since_ekf =
+			ekf_seen ? std::chrono::duration<double>(now - ekf_first).count() : 0.0;
+
+		if (aiding_deadline > 0.0 && ekf_seen && since_ekf > aiding_deadline
+		    && (!yaw_align || !gnss_pos))
 		{
 			RCLCPP_ERROR(node->get_logger(),
-			             "EKF2 never aligned after %.0f s: yaw_align=no gnss_pos=%s. It will "
-			             "not recover, and arming stays blocked on 'no heading reference', so "
-			             "this run is abandoned rather than waiting out the %.0f s timeout.",
-			             waited, gnss_pos ? "yes" : "no", timeout_s);
+			             "EKF2 never started aiding %.1f s after it began publishing: "
+			             "yaw_align=%s gnss_pos=%s. It will not recover, and arming stays "
+			             "blocked, so this run is abandoned rather than waiting out the %.0f s "
+			             "timeout. Relaunch. Check the ulog: a sensor that stops publishing "
+			             "mid-run has lost its noise and PX4's DataValidator has flagged it "
+			             "STALE - that is what a missing <stddev> in the model looks like.",
+			             since_ekf, yaw_align ? "yes" : "no", gnss_pos ? "yes" : "no",
+			             timeout_s);
+			rclcpp::shutdown();
+			return 1;
+		}
+
+		if (ekf_silence_deadline > 0.0 && !ekf_seen && waited > ekf_silence_deadline)
+		{
+			RCLCPP_ERROR(node->get_logger(),
+			             "No estimator_status_flags after %.0f s - PX4 never came up. Check "
+			             "that px4_sitl started and that the uXRCE-DDS agent is running.",
+			             waited);
 			rclcpp::shutdown();
 			return 1;
 		}
@@ -108,10 +150,10 @@ int main(int argc, char **argv)
 		{
 			last_report = now;
 			RCLCPP_WARN(node->get_logger(),
-			            "Still waiting (%.0f s): z_valid=%s altitude=%.2f/%.2f climb=%.2f "
-			            "run=%d/%d yaw_align=%s gnss=%s",
-			            waited, valid ? "yes" : "no", alt, altitude, climb, run, need,
-			            yaw_align ? "yes" : "no", gnss_pos ? "yes" : "no");
+			            "Still waiting (%.0f s, ekf %.0f s): z_valid=%s altitude=%.2f/%.2f "
+			            "climb=%.2f run=%d/%d yaw_align=%s gnss=%s",
+			            waited, since_ekf, valid ? "yes" : "no", alt, altitude, climb, run,
+			            need, yaw_align ? "yes" : "no", gnss_pos ? "yes" : "no");
 		}
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
