@@ -18,9 +18,9 @@ from ament_index_python.packages import get_package_share_directory
 
 PKG = 'quad_gz_sim'
 
-# The preset every recorded bag was flown on: Raspberry Pi Camera Module 2, which is what the
-# thesis specifies. Keep it the default so an unadorned launch reproduces the archive.
-DEFAULT_CAMERA = 'module2_1640'
+# Camera Module 3 Wide at 2304x1296. The widest preset that still clears the 50 Hz loop, which
+# is what gives the acquisition transient the field of view it needs.
+DEFAULT_CAMERA = 'module3wide_2304'
 
 # image_features.cpp's nominal focal length. Only pixel_size/fx enters the feature model, so
 # this cancels everywhere except aD - which is exactly why aD is computable.

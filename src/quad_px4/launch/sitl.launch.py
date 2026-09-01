@@ -144,8 +144,9 @@ def generate_launch_description():
         DeclareLaunchArgument('gust_tau', default_value='1.5'),
         # table52 only: scales the Von Karman sigmas, leaving the mean schedule alone.
         DeclareLaunchArgument('turbulence_scale', default_value='1.0'),
-        # Target trajectory; see quad_gz_sim/scenario.launch.py.
-        DeclareLaunchArgument('target_profile', default_value='thesis'),
+        # Target trajectory; see quad_gz_sim/scenario.launch.py. 'hover' pairs with the default
+        # depth below; the 'thesis' course wants the 2.5 m geometry - see RUNS.md.
+        DeclareLaunchArgument('target_profile', default_value='hover'),
         DeclareLaunchArgument('target_speed', default_value='1.0'),
         DeclareLaunchArgument('target_yaw_rate', default_value='0.1'),
         DeclareLaunchArgument('target_accel', default_value='0.5'),
@@ -200,16 +201,19 @@ def generate_launch_description():
         # Camera module and sensor mode; see quad_gz_sim/config/cameras.yaml. Feeds both the
         # rendered <camera> block and image_features' intrinsics, from one table.
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
-        DeclareLaunchArgument('target_scale', default_value='1.0'),
+        # 0.5 is the printed target, 450 x 375 mm - the sheet that exists, not a tuned value.
+        DeclareLaunchArgument('target_scale', default_value='0.5'),
         DeclareLaunchArgument('marker_dict', default_value='7x7'),
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
         # Servoing depth. aD follows from it and target_scale, and MIS_TAKEOFF_ALT is pushed
         # into PX4 to match - otherwise takeoff delivers the aircraft to the wrong depth and
         # the feature vector is mis-scaled from the first frame.
-        DeclareLaunchArgument('zD', default_value='2.5'),
-        # Depth at handover. Empty means "use zD", the consistent default; setting it away from
-        # zD makes the initial depth error a swept variable rather than an accident.
-        DeclareLaunchArgument('takeoff_alt', default_value=''),
+        # Servoing depth, and the tighter of the two geometries flown: the field-of-view budget
+        # and the station-keeping margin both shrink with it.
+        DeclareLaunchArgument('zD', default_value='1.2'),
+        # Depth at handover. Empty means "use zD". 1.5 against zD 1.2 is deliberate: take off
+        # high and descend onto the target rather than climb to it. Empty gives no depth error.
+        DeclareLaunchArgument('takeoff_alt', default_value='1.5'),
         # How close to takeoff_alt the gate insists on. The node's own 0.5 m default is wide
         # enough to straddle the depth stability threshold, making the IC an accident.
         DeclareLaunchArgument('takeoff_tolerance', default_value='0.10'),
