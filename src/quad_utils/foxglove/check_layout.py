@@ -14,6 +14,8 @@ import os
 import re
 import sys
 
+import variants
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAYOUT = os.path.join(HERE, 'fxteso_ibvs.json')
 # Publishers are spread across quad_control, quad_gz_sim and quad_utils, so glob every
@@ -28,6 +30,7 @@ FIELDS = {
     'geometry_msgs::msg::Twist': {'linear', 'angular'},
     'nav_msgs::msg::Path': {'header', 'poses'},
     'visualization_msgs::msg::MarkerArray': {'markers'},
+    'std_msgs::msg::Bool': {'data'},
 }
 
 
@@ -39,8 +42,14 @@ def publishers():
         src = re.sub(r'//[^\n]*', '', open(path).read())
         for m in re.finditer(r'create_publisher<([^>]+)>\(\s*"([^"]+)"', src):
             found['/' + m.group(2).lstrip('/')] = m.group(1)
-    # Bridged in from Gazebo rather than published by us; see config/bridge.yaml.
+    # Not matched by the regex above: image_raw and camera_info are bridged in from Gazebo
+    # (config/bridge.yaml), and camera_distort publishes to a topic held in a parameter rather
+    # than a string literal. image_distorted exists only for presets with non-zero distortion
+    # (gz_sim.launch.py _distort), which is what image_features is remapped onto - the Vision
+    # tab follows it, so on an undistorted preset that one panel is deliberately blank.
     found['/quad/camera/image_raw'] = 'sensor_msgs::msg::Image'
+    found['/quad/camera/image_distorted'] = 'sensor_msgs::msg::Image'
+    found['/quad/camera/camera_info'] = 'sensor_msgs::msg::CameraInfo'
     return found
 
 
@@ -58,9 +67,8 @@ def collect_paths(node, out):
             collect_paths(val, out)
 
 
-def main():
-    layout = json.load(open(LAYOUT))
-    pubs = publishers()
+def check(path, pubs):
+    layout = json.load(open(path))
     problems = []
 
     paths = []
@@ -78,9 +86,10 @@ def main():
         for topic in cfg.get('topics', {}):
             if topic not in pubs:
                 problems.append('%s: no publisher for %s' % (panel, topic))
-        image = cfg.get('imageMode', {}).get('imageTopic')
-        if image and image not in pubs:
-            problems.append('%s: no publisher for %s' % (panel, image))
+        for key in ('imageTopic', 'calibrationTopic'):
+            topic = cfg.get('imageMode', {}).get(key)
+            if topic and topic not in pubs:
+                problems.append('%s: no publisher for %s (%s)' % (panel, topic, key))
 
     # Every Plot panel pins its Y range: auto-scale magnifies a converged signal into
     # noise and makes two runs incomparable.
@@ -111,25 +120,56 @@ def main():
     # Every panel in the mosaic is configured, and every configured panel is placed.
     refs = set()
 
-    def mosaic(n):
-        if isinstance(n, str):
-            refs.add(n)
-        elif isinstance(n, dict):
-            mosaic(n.get('first'))
-            mosaic(n.get('second'))
+    # The root is a mosaic, not necessarily a single Tab panel: anything that must keep
+    # streaming while you are looking elsewhere has to sit OUTSIDE the tab group, because
+    # Foxglove unmounts inactive tabs and drops their subscriptions.
+    tab_ids = set()
 
-    root = layout['layout']
-    for tab in layout['configById'][root]['tabs']:
-        mosaic(tab['layout'])
-    declared = set(layout['configById']) - {root}
+    def walk(node):
+        if isinstance(node, str):
+            refs.add(node)
+            cfg = layout['configById'].get(node, {})
+            if node.startswith('Tab!'):
+                tab_ids.add(node)
+                for tab in cfg.get('tabs', []):
+                    walk(tab['layout'])
+        elif isinstance(node, dict):
+            walk(node.get('first'))
+            walk(node.get('second'))
+
+    walk(layout['layout'])
+    # Tab panels are containers, not content: they are placed and configured, but comparing
+    # them either way just adds noise.
+    refs -= tab_ids
+    declared = set(layout['configById']) - tab_ids
     if refs - declared:
         problems.append('placed but not configured: %s' % sorted(refs - declared))
     if declared - refs:
         problems.append('configured but never placed: %s' % sorted(declared - refs))
 
-    print('%d message paths, %d panels checked' % (len(set(paths)), len(declared)))
-    if problems:
-        print('\n'.join(problems))
+    return len(set(paths)), len(declared), problems
+
+
+def main():
+    pubs = publishers()
+    failed = False
+    # Every variant is checked, not just the canonical: a derived file with a bad image topic
+    # draws nothing and looks exactly like a camera that is not publishing.
+    for name in [os.path.basename(LAYOUT)] + list(variants.DERIVED):
+        n_paths, n_panels, problems = check(os.path.join(HERE, name), pubs)
+        print('%-22s %d message paths, %d panels' % (name, n_paths, n_panels))
+        for line in problems:
+            print('  ' + line)
+        failed = failed or bool(problems)
+
+    # The derived files are a copy of the canonical with one field replaced. If they have
+    # drifted, every panel you fixed in the canonical is still broken in the other variant.
+    drift = variants.stale()
+    for line in drift:
+        print('  ' + line)
+    failed = failed or bool(drift)
+
+    if failed:
         return 1
     print('OK')
     return 0

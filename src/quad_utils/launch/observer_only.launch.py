@@ -149,6 +149,7 @@ def generate_launch_description():
                  'target_yaw_rate': LaunchConfiguration('target_yaw_rate'),
                  'target_accel': LaunchConfiguration('target_accel')}),
         OpaqueFunction(function=_estimation),
-        include(PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove')}),
+        include(PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove'),
+                                       'camera': LaunchConfiguration('camera')}),
         OpaqueFunction(function=_bag),
     ])

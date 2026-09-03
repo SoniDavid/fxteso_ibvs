@@ -336,7 +336,8 @@ def generate_launch_description():
                          # the other rotates back out of it.
                          'frame_yaw_offset': FRAME_YAW_OFFSET}])]
 
-    viz = include(UTILS_PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove')})
+    viz = include(UTILS_PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove'),
+                                               'camera': LaunchConfiguration('camera')})
 
     def _bag(context, *a, **k):
         if LaunchConfiguration('rosbag').perform(context).lower() != 'true':

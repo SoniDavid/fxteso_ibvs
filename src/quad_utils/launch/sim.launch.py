@@ -190,7 +190,8 @@ def generate_launch_description():
 
     estimation = [
         OpaqueFunction(function=_estimation),
-        include(PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove')}),
+        include(PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove'),
+                                       'camera': LaunchConfiguration('camera')}),
     ]
 
     def _bag(context, *a, **k):
