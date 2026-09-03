@@ -24,7 +24,7 @@ Start-up runs through two gates:
   ibvs_gate          plant, target and a held marker lock      -> start pos_ctrl
 
   ros2 launch quad_px4 sitl.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
-                                      [controllers:=false]
+                                      [controllers:=false] [record_from:=handover|launch]
                                       [disturbance:=none|step|gust|wind|csv]
                                       [disturbance_seed:=N]
                                       [px4_dir:=...] [xrce_agent:=...]
@@ -169,6 +169,11 @@ def generate_launch_description():
         DeclareLaunchArgument('gamma4_yaw', default_value='0.001'),
         # 1.0 is the as-flown observer yaw sign; -1.0 is thesis Eq. 5.81's -1.
         DeclareLaunchArgument('eso_yaw_sign', default_value='1.0'),
+        # Seeded initial estimation error (qx,qy,qz,qpsi) added to fixed_eso's initial state.
+        # Sweeping it is how the fixed-time claim gets measured: settling time must stay
+        # bounded as this grows. Available on estimation.launch.py; exposed here so it can be
+        # flown against the px4 plant rather than only the analytic one.
+        DeclareLaunchArgument('initial_estimate_offset', default_value='[0.0, 0.0, 0.0, 0.0]'),
         # How aligned the markers must be before pos_ctrl takes over. |qpsi| at
         # handover separates held from collapsed runs at ~0.17; 0 disables the test.
         DeclareLaunchArgument('max_feature_error', default_value='0.15'),
@@ -217,6 +222,12 @@ def generate_launch_description():
         # How close to takeoff_alt the gate insists on. The node's own 0.5 m default is wide
         # enough to straddle the depth stability threshold, making the IC an accident.
         DeclareLaunchArgument('takeoff_tolerance', default_value='0.10'),
+        # Where the recorder starts. 'handover' records the servoing run and nothing before it,
+        # which is what every flight wants. 'launch' is for measuring the OBSERVER: fixed_eso
+        # starts at the takeoff gate and converges in ~1 s, so a recorder started at handover -
+        # or even at the gate, since it needs ~1 s to come up - misses the transient entirely.
+        DeclareLaunchArgument('record_from', default_value='handover',
+                              description='handover | launch'),
     ]
 
     def takeoff_alt_of(context):
@@ -339,6 +350,12 @@ def generate_launch_description():
     viz = include(UTILS_PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove'),
                                                'camera': LaunchConfiguration('camera')})
 
+    def _bag_at_launch(context, *a, **k):
+        """record_from:=launch. Only the observer experiments need this; see the argument."""
+        if LaunchConfiguration('record_from').perform(context).lower() != 'launch':
+            return []
+        return _bag(context)
+
     def _bag(context, *a, **k):
         if LaunchConfiguration('rosbag').perform(context).lower() != 'true':
             return []
@@ -385,7 +402,9 @@ def generate_launch_description():
                       {'attitude_controller': 'false', 'zD': LaunchConfiguration('zD')})]
              if LaunchConfiguration('controllers').perform(context).lower() == 'true'
              else [LogInfo(msg='controllers:=false - the aircraft will loiter after takeoff.')])
-            + [OpaqueFunction(function=_bag)]
+            + ([OpaqueFunction(function=_bag)]
+               if LaunchConfiguration('record_from').perform(context).lower() != 'launch'
+               else [])
             if event.returncode == 0 else
             [LogInfo(msg='ibvs_gate failed - controllers not started. See its error above.')]
         )))
@@ -402,7 +421,8 @@ def generate_launch_description():
                 cam, float(LaunchConfiguration('zD').perform(context)),
                 float(LaunchConfiguration('camera_rate').perform(context)))),
             include(CTRL_PKG, 'estimation.launch.py',
-                    {'gamma1_xy': LaunchConfiguration('gamma1_xy'),
+                    {'initial_estimate_offset': LaunchConfiguration('initial_estimate_offset'),
+                     'gamma1_xy': LaunchConfiguration('gamma1_xy'),
                      'gamma2_xy': LaunchConfiguration('gamma2_xy'),
                      'gamma3_xy': LaunchConfiguration('gamma3_xy'),
                      'gamma3_yaw': LaunchConfiguration('gamma3_yaw'),
