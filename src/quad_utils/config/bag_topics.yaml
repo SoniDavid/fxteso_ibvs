@@ -22,6 +22,10 @@ plant_and_target:
 # thesis Figs 5.10d, 5.11a, 5.12
 vision_and_observer:
   - /ImFeat_vector
+  # false while fewer than four markers decode. ImFeat_vector's no-lock sentinel is
+  # numerically identical to the servo setpoint, so this is the only way to tell a genuine
+  # divergence from an open-loop coast.
+  - /ImFeat_valid
   - /ImFeat_estimates_fxt
   - /ImFeat_dot_estimates_fxt
   - /estimation_error_fxt

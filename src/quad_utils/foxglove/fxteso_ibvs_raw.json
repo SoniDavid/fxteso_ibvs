@@ -438,7 +438,7 @@
       "layers": {},
       "publish": {},
       "imageMode": {
-        "imageTopic": "/quad/camera/image_distorted",
+        "imageTopic": "/quad/camera/image_raw",
         "synchronize": false,
         "calibrationTopic": "/quad/camera/camera_info"
       }

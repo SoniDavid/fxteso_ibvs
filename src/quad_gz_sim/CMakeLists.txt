@@ -15,6 +15,8 @@ find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(quad_common REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # --- Plant and scenario nodes -------------------------------------------------
 # uav_dynamics is the analytic plant (plant:=analytic); the scenario nodes drive it.
@@ -30,6 +32,11 @@ foreach(node ${SIM_NODES})
   target_include_directories(${node} PUBLIC ${EIGEN3_INCLUDE_DIRS})
   ament_target_dependencies(${node} rclcpp std_msgs geometry_msgs sensor_msgs quad_common)
 endforeach()
+
+# Applies lens distortion gz-sim's ogre2 renderer will not; see the file header.
+add_executable(camera_distort src/camera_distort.cpp)
+target_compile_features(camera_distort PUBLIC cxx_std_17)
+ament_target_dependencies(camera_distort rclcpp sensor_msgs cv_bridge OpenCV)
 
 # The Gazebo-physics counterpart of uav_dynamics: same five output topics, state sourced
 # from the BodyWrench plugin instead of a ROS-side integrator.
@@ -68,7 +75,7 @@ target_link_libraries(gz_pose_broadcaster
   gz-msgs::core)
 ament_target_dependencies(gz_pose_broadcaster rclcpp std_msgs geometry_msgs tf2 quad_common)
 
-install(TARGETS ${SIM_NODES} gz_state_adapter gz_pose_broadcaster
+install(TARGETS ${SIM_NODES} gz_state_adapter gz_pose_broadcaster camera_distort
   DESTINATION lib/${PROJECT_NAME})
 
 # Plain lib/, not lib/${PROJECT_NAME}: gz_sim.launch.py points

@@ -23,10 +23,11 @@ ament_target_dependencies(tf_broadcaster
 install(TARGETS tf_broadcaster
   DESTINATION lib/${PROJECT_NAME})
 
-# foxglove/ carries the Studio layout and its checker; config/bag_topics.yaml is the
-# recording list sim.launch.py reads. analysis/ are offline bag tools - run them from the
-# source tree, they take bag paths and need no ROS graph.
-install(DIRECTORY launch config foxglove analysis
+# foxglove/ carries the Studio layouts, their generator (variants.py, which viz.launch.py loads
+# by path to name the right one) and the checker; config/bag_topics.yaml is the
+# recording list sim.launch.py reads. The offline bag tools and the experiment matrices used to
+# be installed here too; they live in their own repository now and never needed a ROS graph.
+install(DIRECTORY launch config foxglove
   DESTINATION share/${PROJECT_NAME})
 
 ament_package()

@@ -197,8 +197,12 @@
         <camera name="head">
           <horizontal_fov>1.085595</horizontal_fov>
           <image>
-            <!-- Twice the ROS 1 resolution; required to decode the markers from the
-                 paper's -4 m start. pixel_size in image_features.cpp is halved to match. -->
+            <!-- 820x616 is Camera Module 2's 1640x1232 binned mode at half linear resolution,
+                 so a marker is exactly half as many pixels here as on the hardware. This whole
+                 <camera> block is rewritten by gz_sim.launch.py's camera:= argument, from
+                 quad_gz_sim/config/cameras.yaml; these values are the default preset and what
+                 a bare `gz sim` on this model gets. image_features derives its fx from the
+                 same table, never from these literals. -->
             <width>820</width>
             <height>616</height>
             <format>R8G8B8</format>
@@ -209,8 +213,11 @@
           </clip>
         </camera>
         <always_on>1</always_on>
-        <!-- Sim-time rate, matching image_features' own 50 Hz loop. Do not lower it; to
-             slow the simulation change real_time_factor in worlds/ibvs.sdf instead. -->
+        <!-- Sim-time rate, matching image_features' own 50 Hz loop. Do not lower it to slow
+             the simulation - change real_time_factor in worlds/ibvs.sdf instead. Lower it via
+             camera_rate:= only to fly a real sensor mode's frame rate, which is a hardware
+             constraint this free 50 fps otherwise hides: Module 2's one full-FOV mode runs at
+             41.85 fps, so the loop would repeat about 17% of its frames. -->
         <update_rate>50</update_rate>
         <visualize>1</visualize>
       </sensor>
@@ -234,15 +241,17 @@
         </air_pressure>
       </sensor>
 
-      <!-- 100 Hz, as in x500_base. At 50 Hz PX4's vehicle_magnetometer intermittently
-           declares "MAG #0 failed: STALE!", which fails the arming health check. -->
+      <!-- 100 Hz and stddev both as in x500_base. <stddev> is load-bearing: with no random
+           noise the field is byte-identical while the aircraft is still, PX4's DataValidator
+           counts 1000 equal values and stops publishing vehicle_magnetometer altogether
+           (VehicleMagnetometer.cpp:56,573) - EKF2 then never aligns yaw and it never arms. -->
       <sensor name="magnetometer_sensor" type="magnetometer">
         <always_on>1</always_on>
         <update_rate>100</update_rate>
         <magnetometer>
-          <x><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></x>
-          <y><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></y>
-          <z><noise type="gaussian"><mean>0.000000080</mean><bias_mean>0.000000400</bias_mean></noise></z>
+          <x><noise type="gaussian"><stddev>0.0001</stddev></noise></x>
+          <y><noise type="gaussian"><stddev>0.0001</stddev></noise></y>
+          <z><noise type="gaussian"><stddev>0.0001</stddev></noise></z>
         </magnetometer>
       </sensor>
 

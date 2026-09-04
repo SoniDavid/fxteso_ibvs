@@ -13,22 +13,37 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 PKG = 'quad_control'
 
 
 def generate_launch_description():
-    args = [DeclareLaunchArgument('attitude_controller', default_value='true')]
+    args = [
+        DeclareLaunchArgument('attitude_controller', default_value='true'),
+        # Servoing depth. 2.5 is the value pos_ctrl carried hardcoded and every recorded bag
+        # was flown at; a smaller one is what a low lab ceiling needs. It has to move together
+        # with image_features' aD and with the plant's takeoff altitude - the caller owns that.
+        DeclareLaunchArgument('zD', default_value='2.5'),
+    ]
 
     def _nodes(context, *a, **k):
         # (executable, verbose)
         nodes = [('pos_ctrl', True)]
         if LaunchConfiguration('attitude_controller').perform(context).lower() == 'true':
             nodes.append(('att_ctrl', False))
+
+        def params(exe):
+            # Only pos_ctrl declares zD; handing it to att_ctrl would fail its launch.
+            p = {'use_sim_time': True}
+            if exe == 'pos_ctrl':
+                p['zD'] = ParameterValue(LaunchConfiguration('zD'), value_type=float)
+            return [p]
+
         return [
             Node(package=PKG, executable=exe, name=exe,
                  output='screen' if verbose else 'log',
-                 parameters=[{'use_sim_time': True}])
+                 parameters=params(exe))
             for exe, verbose in nodes
         ]
 

@@ -1,8 +1,5 @@
-# Disturbance magnitudes for src/disturbances.cpp. Loaded by sim.launch.py.
-# /disturbances is an inertial-frame force in newtons; the quad is 2 kg.
-#
-#   ros2 launch quad_utils sim.launch.py disturbance:=wind
-#   ros2 launch quad_utils sim.launch.py disturbance:=wind,step disturbance_seed:=7
+# Disturbance magnitudes for src/disturbances.cpp. /disturbances is an inertial-frame force in
+# newtons; the quad is 2 kg. Profiles compose: disturbance:=wind,step
 
 disturbances:
   ros__parameters:
@@ -15,19 +12,33 @@ disturbances:
     step_start: 22.0                  # s
     step_end: 25.0                    # s
 
-    # 'gust': random force, state-independent. Use this to validate the observer.
-    # Measured: 0.10 N holds visual lock, 0.20 N loses it and diverges.
+    # 'gust': random force, state-independent, so its truth signal is clean where 'wind' is not.
+    # gust_scale:= multiplies the whole vector; the shape stays here. Same for wind_scale:=.
     gust_sigma: [0.10, 0.10, 0.05]    # N, std-dev per axis
     gust_tau: 1.5                     # s, correlation time
 
-    # 'wind': airspeed through drag, F ~ 0.092*|v|^2 N. State-dependent.
-    wind_velocity: [0.8, 0.4, 0.0]    # m/s, |v|=0.89 -> ~0.07 N
-    drag_cd_a: 0.15                   # m^2, Cd * frontal area
+    # 'wind': airspeed through drag, thesis Eq. 2.25 per axis. State-dependent.
+    # F_* = 0.5 * rho * (Cd*A)_* * v_rel,*^2 * sign(v_rel,*), rho = 1.225.
+    wind_velocity: [0.8, 0.4, 0.0]    # m/s
+    # beta_D,* * alpha_T,* from the thesis: 0.3*0.1 on x and y, 0.5*0.2 on z. Must stay these or
+    # a quoted wind speed is not comparable to the thesis' own.
+    drag_cd_a: [0.03, 0.03, 0.10]     # m^2 per axis, Cd * transversal area
 
     # Turbulence on the wind velocity - this is what makes it gust. Zero = steady wind.
     # Rule of thumb: 10-20% of mean speed.
     wind_turbulence: [0.15, 0.15, 0.08]  # m/s, std-dev per axis
     wind_turbulence_tau: 2.0          # s, larger = slower, rollier gusts
+
+    # 'table52': Armando's thesis own wind. The mean schedule and the Von Karman intensities are
+    # in disturbances.cpp; they are a specification to reproduce, and a run with
+    # edited intervals is not Table 5.2. These are the knobs that are legitimately variable.
+    # turbulence_scale and table52_altitude are NOT here: scenario.launch.py passes the
+    # first from its launch argument and the second from zD, so the sigmas follow the
+    # depth actually being flown.
+    table52_start: 10.0       # s, thesis clock (t = 0 at handover)
+    table52_end: 190.0        # s, wind removed after this to show convergence
+    table52_sigma_g: 0.1      # m/s, the table's own white Gaussian on each mean
+    table52_mean_rate: 10.0   # Hz, the rate that Gaussian is drawn and held at
 
     # 'csv': replay a recorded profile, one "x,y,z" row per 10 ms. Unopenable path aborts.
     csv: ""

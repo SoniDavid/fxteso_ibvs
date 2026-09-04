@@ -22,6 +22,8 @@
   <depend>tf2_geometry_msgs</depend>
   <depend>eigen</depend>
   <depend>quad_common</depend>
+  <depend>cv_bridge</depend>
+  <depend>libopencv-dev</depend>
 
   <!-- gz_pose_broadcaster links gz-transport/gz-msgs directly; BodyWrenchSystem also
        needs gz-sim/gz-plugin. On Jazzy these come from ros_gz's vendor packages,

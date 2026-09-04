@@ -31,7 +31,10 @@ float alpha_1, alpha_2, beta_1, beta_2;
 
 float sign(float var)
 {
-    float result;
+    // Initialised, not left to fall through: NaN compares false against >0, <0 and ==0, so
+    // an uninitialised `result` was returned for it - undefined behaviour that surfaced as
+    // an arbitrary finite kick into the integrators rather than a detectable NaN.
+    float result = 0;
     if(var>0)
     {
         result = 1;

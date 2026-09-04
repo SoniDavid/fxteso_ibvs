@@ -5,6 +5,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/image_encodings.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <geometry_msgs/msg/pose2_d.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
@@ -85,7 +86,7 @@ float pitch_des_arg = 0;
 /////////////////////////Other variables//////////////////////
 Eigen::Vector4f imgFeat_des(0,0,0,0);
 float a = 0;
-float zD = 2.5;
+float zD = 2.5;   // overridden by the zD parameter; see main()
 float tgt_YR = 0;
 float tgt_YAccel = 0;
 float step_size = 0.02;
@@ -131,7 +132,10 @@ Eigen::Matrix3f Rtp(float roll, float pitch)
 
 float sign(float var)
 {
-    float result;
+    // Initialised, not left to fall through: NaN compares false against >0, <0 and ==0, so
+    // an uninitialised `result` was returned for it - undefined behaviour that surfaced as
+    // an arbitrary finite kick into the integrators rather than a detectable NaN.
+    float result = 0;
     if(var>0)
     {
         result = 1;
@@ -153,6 +157,16 @@ void ibvsDistCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr dist)
 	ibvs_dist(1) = dist->y;
 	ibvs_dist(2) = dist->z;
     ibvs_dist(3) = dist->w;
+}
+
+// image_features publishes the (0,0,1,0) no-lock sentinel, which is byte-identical to
+// imgFeat_des - so on loss of lock the servo error is exactly zero and the controller reads
+// "converged" while the aircraft coasts. This flag is the only way to tell the two apart.
+bool imgFeat_valid = false;
+
+void imFeatValidCallback(const std_msgs::msg::Bool::ConstSharedPtr v)
+{
+	imgFeat_valid = v->data;
 }
 
 void imFeatCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr img_features)
@@ -241,7 +255,12 @@ int main(int argc, char *argv[])
 	rclcpp::init(argc, argv);
 	auto node = rclcpp::Node::make_shared("aibvs_pos_ctrl");
 
-	fxteso::SimRate loop_rate(node, 50);	
+	fxteso::SimRate loop_rate(node, 50);
+
+	// Servoing depth. Must agree with image_features' aD, which is what actually sets where
+	// the aircraft settles, and with the takeoff altitude the plant is delivered to.
+	zD = node->declare_parameter<double>("zD", zD);
+	RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m", zD);
     
 ////////////////////////ROS publishers///////////////////////////////////////////////////////
 	auto error_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_visual_servoing",100);
@@ -265,6 +284,7 @@ int main(int argc, char *argv[])
 
 ////////////////////////ROS subscribers////////////////////////////////////////////////
 	auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);
+	auto im_feat_valid_sub = node->create_subscription<std_msgs::msg::Bool>("ImFeat_valid", 1, imFeatValidCallback);
     auto imFeat_est_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_estimates_fxt", 1, ImFeatEstCallback);
     auto imFeatDot_est_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_dot_estimates_fxt", 1, ImFeatEstDotCallback); 
     auto dist_est_pub = node->create_subscription<geometry_msgs::msg::Quaternion>("ibvs_dist", 1, ibvsDistCallback);    
@@ -382,8 +402,31 @@ imgFeat_des << 0,0,1,0;
 
     loop_rate.sleepFor(1.0);
     
+    bool was_valid = true;
+
     while(rclcpp::ok())
-    {   
+    {
+        // No measurement -> no control. The no-lock sentinel equals imgFeat_des, so servoing on
+        // it reads as converged and the aircraft coasts. Hold every integrator and drop the
+        // stream instead. The control law itself is untouched; this only gates whether it runs.
+        if (!imgFeat_valid)
+        {
+            if (was_valid)
+            {
+                RCLCPP_WARN(node->get_logger(),
+                            "marker lock lost - holding the control state and dropping the "
+                            "setpoint stream; PX4 holds position until re-acquisition");
+                was_valid = false;
+            }
+            loop_rate.sleep();   // SimRate spins the executor, so callbacks still run
+            continue;
+        }
+        if (!was_valid)
+        {
+            RCLCPP_INFO(node->get_logger(), "marker lock re-acquired - resuming control");
+            was_valid = true;
+        }
+
 ////////////////////// FOR COMPARISON ONLY//////////////////////////////////////////////////
         imgFeatLinear << imgFeat(0),imgFeat(1),imgFeat(2); 
         tgt_vel_VF = (Ryaw(attitudeEstimates(2)).transpose()) * tgt_vel;

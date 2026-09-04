@@ -7,6 +7,8 @@
 #include <std_msgs/msg/float64.hpp>
 
 #include <eigen3/Eigen/Dense>
+#include <stdexcept>
+#include <string>
 
 
 bool control_started = false;
@@ -40,6 +42,207 @@ void quadPosCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr quadPos)
 }
 
 
+// ---------------------------------------------------------------------------------------
+// Target velocity profiles. Each writes the globals xp, yp, yawRate (and pos_z, where it
+// moves); the caller integrates them into the pose. Selected by the "profile" parameter.
+
+// The thesis trajectory, unchanged and the default: a 0.1 -> 0.9 m/s ramp, a 94 s circle at
+// 1 m/s with 0.1 rad/s of yaw and a vertical bump, then a decelerating return.
+static void thesisProfile()
+{
+	if(t>=0 && t<2)
+	{
+		xp = 0;
+		xp = 0;
+		yawRate = 0;
+	}
+
+	else if (t >= 2 && t < 5)
+	{
+		xp = 0.1;
+		yp = 0;
+		yawRate = 0;
+	}	
+	else if (t >= 5 && t < 8)
+	{
+		xp = 0.2;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t >= 8 && t < 11)
+	{
+		xp = 0.3;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t >= 11 && t < 14)
+	{
+		xp = 0.4;
+		yp = 0;
+		yawRate = 0;
+	}	
+	else if (t >= 14 && t < 17)
+	{
+		xp = 0.5;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t >= 17 && t < 20)
+	{
+		xp = 0.6;
+		yp = 0;
+		yawRate = 0;
+	}		
+	else if (t >= 20 && t < 23)
+	{
+		xp = 0.7;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t >= 23 && t < 26)
+	{
+		xp = 0.8;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t >= 26 && t < 30)
+	{
+		xp = 0.9;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=30 && t<124.2478)
+	{	
+		xp = 1 * cos(0.1*(t-30));
+		yp = 1 * sin(0.1*(t-30));	
+		yawRate = 0.1;
+
+		if (t>=70 && t<100)
+		{
+			pos_z = sin(0.05*3.141592*(t-30));
+		}
+		else
+		{
+			pos_z = 0;
+		}
+
+		if (pos_z < 0)
+		{
+			pos_z = 0;
+		}
+
+		if (pos_z>0.5)
+		{
+			pos_z = 0.5;
+		}
+
+	}
+	else if (t>=124.2478 && t<140)
+	{
+		xp = -1;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=140 && t<143)
+	{
+		xp = -0.8;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=143 && t<146)
+	{
+		xp = -0.7;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=146 && t<149)
+	{
+		xp = -0.6;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=149 && t<152)
+	{
+		xp = -0.5;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=152 && t<155)
+	{
+		xp = -0.4;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=155 && t<158)
+	{
+		xp = -0.3;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=158 && t<162)
+	{
+		xp = -0.2;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=158 && t<165)
+	{
+		xp = -0.1;
+		yp = 0;
+		yawRate = 0;
+	}
+	else if (t>=165)
+	{
+		xp = 0;
+		yp = 0;
+		yawRate = 0;
+	}
+	
+}
+
+// Stationary. Isolates disturbance rejection from target motion.
+static void hoverProfile()
+{
+	xp = 0;
+	yp = 0;
+	yawRate = 0;
+}
+
+// Straight line along +x, ramped at `accel` to `speed` and then held. Sweeping `speed` to
+// the point of lock loss measures the b1 of Assumption 7.
+static void lineProfile(float speed, float accel)
+{
+	const float t_ramp = (accel > 0) ? speed / accel : 0;
+	xp = (t < t_ramp) ? accel * t : speed;
+	yp = 0;
+	yawRate = 0;
+}
+
+// Circle at constant speed with the target yawing to match, as the thesis' own circular
+// phase does; the radius is speed/yaw_rate. Sweeping `yaw_rate` measures b3.
+static void circleProfile(float speed, float yaw_rate)
+{
+	xp = speed * cos(yaw_rate * t);
+	yp = speed * sin(yaw_rate * t);
+	yawRate = yaw_rate;
+}
+
+// Triangular velocity wave: accelerate at `accel` up to `speed`, decelerate back, repeat.
+// Sweeping `accel` at fixed `speed` measures b2, the bound on target acceleration.
+static void stepsProfile(float speed, float accel)
+{
+	const float t_ramp = (accel > 0) ? speed / accel : 0;
+	if (t_ramp <= 0)
+	{
+		hoverProfile();
+		return;
+	}
+	const float phase = fmodf(t, 2.0f * t_ramp);
+	xp = (phase < t_ramp) ? accel * phase : speed - accel * (phase - t_ramp);
+	yp = 0;
+	yawRate = 0;
+}
+
 int main(int argc, char** argv)
 {
 	rclcpp::init(argc, argv);
@@ -59,12 +262,29 @@ int main(int argc, char** argv)
 
 	auto quad_pos_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_position", 1, quadPosCallback);
 
-	// The trajectory starts 4.35 s in, which assumes the aircraft is already over the marker.
-	// plant:=px4 spends ~25 s on EKF2, arming and takeoff, by which time the target has driven
-	// out of the camera footprint. This holds it on its start pose until pos_ctrl publishes.
-	// Default false, so analytic and gazebo keep their recorded timing.
+	// The trajectory assumes the aircraft is already over the marker; under px4 takeoff costs
+	// ~25 s, by which time the target has driven out of frame. Default false keeps old timing.
 	const bool hold_until_control =
 		node->declare_parameter<bool>("hold_until_control", false);
+
+	// Trajectory selection. "thesis" is the default and is the trajectory every recorded bag
+	// was flown on; the others exist to sweep the Assumption 7 bounds and are inert until asked
+	// for. speed/yaw_rate/accel are ignored by "thesis" and "hover".
+	const std::string profile = node->declare_parameter<std::string>("profile", "thesis");
+	const float speed = node->declare_parameter<double>("speed", 1.0);
+	const float yaw_rate = node->declare_parameter<double>("yaw_rate", 0.1);
+	const float accel = node->declare_parameter<double>("accel", 0.5);
+	// The servoing depth /position_error is measured against. Hardcoded at 2.5 it put a
+	// constant (zD - 2.5) bias on the z error of every run flown at another depth.
+	const float zD = node->declare_parameter<double>("zD", 2.5);
+
+	if (profile != "thesis" && profile != "hover" && profile != "line" &&
+	    profile != "circle" && profile != "steps")
+		throw std::runtime_error(
+			"profile:=" + profile + " is not one of thesis, hover, line, circle, steps.");
+
+	RCLCPP_INFO(node->get_logger(), "target profile: %s (speed %.2f m/s, yaw_rate %.2f rad/s, "
+	            "accel %.2f m/s^2)", profile.c_str(), speed, yaw_rate, accel);
 
 	auto ctrl_sub = node->create_subscription<geometry_msgs::msg::Quaternion>(
 		"desired_attitude", 1,
@@ -149,153 +369,16 @@ int main(int argc, char** argv)
 		yawRate = 0;
 		*/
 			
-		if(t>=0 && t<2)
-		{
-			xp = 0;
-			xp = 0;
-			yawRate = 0;
-		}
-
-		else if (t >= 2 && t < 5)
-		{
-			xp = 0.1;
-			yp = 0;
-			yawRate = 0;
-		}	
-		else if (t >= 5 && t < 8)
-		{
-			xp = 0.2;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t >= 8 && t < 11)
-		{
-			xp = 0.3;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t >= 11 && t < 14)
-		{
-			xp = 0.4;
-			yp = 0;
-			yawRate = 0;
-		}	
-		else if (t >= 14 && t < 17)
-		{
-			xp = 0.5;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t >= 17 && t < 20)
-		{
-			xp = 0.6;
-			yp = 0;
-			yawRate = 0;
-		}		
-		else if (t >= 20 && t < 23)
-		{
-			xp = 0.7;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t >= 23 && t < 26)
-		{
-			xp = 0.8;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t >= 26 && t < 30)
-		{
-			xp = 0.9;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=30 && t<124.2478)
-		{	
-			xp = 1 * cos(0.1*(t-30));
-			yp = 1 * sin(0.1*(t-30));	
-			yawRate = 0.1;
-
-			if (t>=70 && t<100)
-			{
-				pos_z = sin(0.05*3.141592*(t-30));
-			}
-			else
-			{
-				pos_z = 0;
-			}
-
-			if (pos_z < 0)
-			{
-				pos_z = 0;
-			}
-
-			if (pos_z>0.5)
-			{
-				pos_z = 0.5;
-			}
-
-		}
-		else if (t>=124.2478 && t<140)
-		{
-			xp = -1;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=140 && t<143)
-		{
-			xp = -0.8;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=143 && t<146)
-		{
-			xp = -0.7;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=146 && t<149)
-		{
-			xp = -0.6;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=149 && t<152)
-		{
-			xp = -0.5;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=152 && t<155)
-		{
-			xp = -0.4;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=155 && t<158)
-		{
-			xp = -0.3;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=158 && t<162)
-		{
-			xp = -0.2;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=158 && t<165)
-		{
-			xp = -0.1;
-			yp = 0;
-			yawRate = 0;
-		}
-		else if (t>=165)
-		{
-			xp = 0;
-			yp = 0;
-			yawRate = 0;
-		}
+		if (profile == "thesis")
+			thesisProfile();
+		else if (profile == "hover")
+			hoverProfile();
+		else if (profile == "line")
+			lineProfile(speed, accel);
+		else if (profile == "circle")
+			circleProfile(speed, yaw_rate);
+		else
+			stepsProfile(speed, accel);
 		
 		pos_x = pos_x + xp * step;
 		pos_y = pos_y + yp * step;
@@ -304,7 +387,7 @@ int main(int argc, char** argv)
 
 		error(0) = quad_pos(0) - pos_x;
 		error(1) = quad_pos(1) - pos_y;
-		error(2) = quad_pos(2) + 2.5 + pos_z;
+		error(2) = quad_pos(2) + zD + pos_z;
 
 		tgt_position.x = pos_x;
 		tgt_position.y = pos_y;
@@ -343,8 +426,7 @@ int main(int argc, char** argv)
 		if (!hold_until_control || control_started)
 			i = i+1;
 
-		std::cout << yawRate << std::endl;
-
+	
 		loop_rate.sleep();
 		
 		

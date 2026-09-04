@@ -1,11 +1,5 @@
-// The setpoint sink for plant:=px4: pos_ctrl's desired attitude and collective thrust out as
-// OFFBOARD setpoints, plus the arm/takeoff/handover sequence. Only units and frames change
-// here - PX4's mc_att_control and mc_rate_control replace att_ctrl.
-//
-//   WAIT_EKF -> ARM -> TAKEOFF -> (loiter) -> STREAMING -> OFFBOARD
-//
-// The first desired_attitude triggers the OFFBOARD switch, which is sufficient on its own:
-// ibvs_gate has already gated pos_ctrl on a marker lock.
+// The setpoint sink for plant:=px4: pos_ctrl's desired attitude and thrust out as OFFBOARD
+// setpoints. WAIT_EKF -> ARM -> TAKEOFF -> (loiter) -> STREAMING -> OFFBOARD.
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include "quad_px4/px4_topic.hpp"
@@ -63,7 +57,7 @@ int main(int argc, char **argv)
 	// Newton -> normalized, mirroring PX4's own linearization about hover. Exact only at hover,
 	// deliberately: that is the map that survives to hardware. Nothing downstream corrects a bad
 	// anchor, so hover_thrust must equal MPC_THR_HOVER in the airframe.
-	const double hover_thrust = node->declare_parameter<double>("hover_thrust", 0.716);
+	const double hover_thrust = node->declare_parameter<double>("hover_thrust", 0.6461);
 	const double mass = node->declare_parameter<double>("mass", 2.0);
 	const double gravity = node->declare_parameter<double>("gravity", 9.81);
 

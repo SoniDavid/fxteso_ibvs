@@ -1,8 +1,5 @@
-// TF, trajectory trails and two markers for Foxglove's 3D panel. Pure consumer: nothing in
-// the control loop subscribes to its output.
-//
-// The ROS(NED-ish) -> ENU mapping is copied from gz_pose_broadcaster.cpp, not re-derived,
-// so the Foxglove and Gazebo views agree. Plot panels show the raw ROS signals unconverted.
+// TF, trajectory trails and markers for Foxglove. Pure consumer; nothing in the control loop
+// reads it. The ROS -> ENU mapping is copied from gz_pose_broadcaster.cpp, not re-derived.
 
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
