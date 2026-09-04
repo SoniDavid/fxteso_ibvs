@@ -1,8 +1,8 @@
 # FXTESO_IBVS
 
-Fixed-Time Extended State Observer - Image Based Visual Servoing for quadrotor
+Fixed-Time Extended State Observer - SMC Image Based Visual Servoing for quadrotor
 
-Currently on ROS2 Jazzy - Gazebo Harmonic
+ROS2 Jazzy - Gazebo Harmonic
 
 ## Packages
 
@@ -46,8 +46,8 @@ colcon build --symlink-install && source install/setup.bash
 # the full closed loop
 ros2 launch quad_utils sim.launch.py [headless:=true] [rosbag:=true] [foxglove:=true] \
                                      [plant:=analytic|gazebo] [controllers:=false] \
-                                     [disturbance:=none|step|gust|wind|csv] [disturbance_seed:=N] \
-                                     [gust_scale:=1.0] [wind_scale:=1.0] \
+                                     [disturbance:=none|step|gust|wind|table52|csv] [disturbance_seed:=N] \
+                                     [gust_scale:=1.0] [wind_scale:=1.0] [turbulence_scale:=1.0] \
                                      [camera:=module2_1640] [camera_rate:=0.0] \
                                      [target_scale:=1.0] [marker_dict:=7x7|4x4] [zD:=2.5]
 
@@ -85,10 +85,15 @@ git submodule update --init --recursive external/PX4-Autopilot
 make -C external/PX4-Autopilot px4_sitl_default
 
 ros2 launch quad_px4 sitl.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
-                                    [controllers:=false] [disturbance:=gust]
-                                    [camera:=module3wide_2304] [target_scale:=0.5] [zD:=2.0]
+                                    [controllers:=false] [record_from:=handover|launch]
+                                    [disturbance:=none|step|gust|wind|table52|csv]
+                                    [turbulence_scale:=1.0]
+                                    [camera:=module3wide_2304] [target_scale:=0.5] [zD:=1.2]
                                     [px4_dir:=...] [xrce_agent:=...]
 ```
+
+`RUNS.md` at the repository root lists the standing configurations. `cleanup.sh` kills a
+previous run's processes, which has to happen before starting another one.
 
 The high-level stack is unchanged: `image_features` → `fixed_eso` → `pos_ctrl` is the same
 code the other plants run, with the same gains. `att_ctrl` does not start - PX4's
@@ -116,16 +121,6 @@ Five things are specific to this plant, each commented where it lives:
   `server.config` once a world declares any `<plugin>` of its own.
 - The attitude and rate gains are inertia-and-arm scaled off x500's; roll is the soft axis.
 
-### Deviations from the thesis
-
-The observer gains differ from Table 5.3 on the x/y and yaw channels; the depth channel and the
-ANFTIBVS controller gains are unchanged. Defaults are in `quad_control/launch/estimation.launch.py`
-and every one is overridable at launch.
-
-Two PX4 gain changes were tried and backed out: raising `MC_ROLL_P`/`MC_PITCH_P` cut the attitude
-lag but tripled the image-moment noise, and raising `MC_YAW_P` made a stiffer loop follow an
-oscillating command more eagerly. Both are commented at the gains themselves.
-
 ### The camera
 
 A `camera:=` preset is a Raspberry Pi module **and a sensor mode**, from
@@ -138,8 +133,36 @@ cannot drift apart. `zD:=` likewise drives `aD` and PX4's `MIS_TAKEOFF_ALT` toge
 
 It is `aD`, not `zD`, that decides where the aircraft settles.
 
-## TO DO:
-- Write setup.sh
-- Rewrite low level controllers to use ASMC
-- Test High-level observer on real stack (after SITL)
-- Test low and high level controllers simultaneously
+### Defaults
+
+`sitl.launch.py` defaults to `module3wide_2304`, takeoff at 1.5 m, `zD` 1.2, `target_scale` 0.5
+and `target_profile` hover, so a bare launch takes off, descends onto a stationary target and
+holds. Every one of them is overridable; `RUNS.md` lists the configurations that get used.
+
+`sim.launch.py` and `observer_only.launch.py` keep `zD` 2.5 and `target_scale` 1.0 — `takeoff_alt`
+is a PX4 concept and neither of those plants takes off. The camera preset is shared by all three.
+
+### Disturbances
+
+`disturbance:=` selects one or more profiles, and they compose (`disturbance:=wind,step`):
+
+| profile | what it injects |
+| --- | --- |
+| `none` | nothing |
+| `step` | a rectangular force pulse over a fixed interval |
+| `gust` | an Ornstein-Uhlenbeck force with its own correlation time (`gust_tau`) |
+| `wind` | a wind velocity through the quadratic drag law, optionally with turbulence on it |
+| `table52` | a scheduled mean wind with Von Karman turbulence on top (below) |
+| `csv` | a recorded profile replayed, one `x,y,z` row per 10 ms |
+
+Magnitudes live in `quad_gz_sim/config/disturbances.yaml`; `gust_scale` and `wind_scale`
+multiply them so a sweep is one number on the launch line. The force is held at zero until
+after controller handover, so it lands on a servoing aircraft rather than on a takeoff.
+
+`table52` is a four-interval mean schedule whose direction reverses and which includes a
+downdraft, switched off after `table52_end` so the state can be seen converging afterwards. Von
+Karman turbulence is layered on it through shaping filters whose coefficients follow airspeed
+and altitude. The schedule and the turbulence intensities are in `disturbances.cpp` rather than
+in the YAML, because they define the profile; the on/off times, the altitude and
+`turbulence_scale` are parameters. `turbulence_scale:=0.0` flies the mean schedule alone.
+

@@ -30,11 +30,14 @@ in another terminal.
 
 ## Quick start
 
-    # watch it fly, calm air, default (Module 2) camera
+    # watch it fly: calm air, stationary target
     ros2 launch quad_px4 sitl.launch.py
 
-    # the recommended camera, no disturbance, recorded
-    ros2 launch quad_px4 sitl.launch.py camera:=module3wide_2304 headless:=true rosbag:=true
+    # the same, recorded and without the Gazebo window
+    ros2 launch quad_px4 sitl.launch.py headless:=true rosbag:=true
+
+`RUNS.md` at the repository root lists the standing configurations. Run `./cleanup.sh` before
+each one - it kills a previous run's processes and waits for the ports to be released.
 
 ## Arguments
 
@@ -45,7 +48,8 @@ in another terminal.
 | `headless` | `false` | `true` drops the Gazebo GUI. Sensor rendering still runs, and RTF is no longer pinned to 1.0. |
 | `controllers` | `true` | `false` skips `control.launch.py` after the gates — the aircraft takes off and loiters. Use it to check takeoff, camera framing and lock without handover. |
 | `rosbag` | `false` | `true` records the topic set in `quad_utils/config/bag_topics.yaml` to `bags/px4_<timestamp>`, mcap, with `--use-sim-time`. Recording starts at handover, not at launch. |
-| `foxglove` | `false` | `true` starts the Foxglove bridge alongside the TF/marker visualisation. |
+| `record_from` | `handover` | Where the recorder starts. `handover` is what every flight wants. `launch` is for measuring the **observer**: `fixed_eso` starts at the takeoff gate and converges in ~1 s, so a recorder started at handover — or even at the gate, which needs ~1 s to come up — misses the transient entirely. |
+| `foxglove` | `false` | `true` starts the Foxglove bridge alongside the TF/marker visualisation, and logs the path of the Studio layout to import. There are two variants: the Vision tab follows whichever image topic `image_features` consumes, which depends on the camera preset. Import the one the launch names. |
 | `px4_dir` | `~/Robotics/fxteso_ibvs/external/PX4-Autopilot` | The PX4 fork holding `build/px4_sitl_default`. Launch fails loudly if the binary is missing. |
 | `xrce_agent` | `~/Robotics/Micro-XRCE-DDS-Agent/build/MicroXRCEAgent` | The uXRCE-DDS agent binary. It is not normally on `PATH`. |
 
@@ -58,12 +62,12 @@ presets because not every module reaches the 50 Hz loop at full field of view.
 
 | preset | hfov | render | fps | note |
 | --- | --- | --- | --- | --- |
-| `module2_1640` | 62.2° | 820×616 | 41.9 | **default.** The thesis camera; every archived bag was flown on it. Below the 50 Hz loop. |
+| `module2_1640` | 62.2° | 820×616 | 41.9 | Camera Module 2, the narrower lens. Below the 50 Hz loop. |
 | `module2_1640_native` | 62.2° | 1640×1232 | 41.9 | Same optics at native resolution — the one preset that breaks the half-resolution rule. |
 | `module2_1640_8bit` | 62.2° | 820×616 | 83.7 | 8-bit readout; the only way IMX219 clears 50 Hz without losing FOV. |
 | `module2_1920` | 38.9° | 960×540 | 47.6 | Cropped mode. Kept to make the FOV cost measurable, not because it is usable. |
 | `module3_2304` | 66.0° | 1152×648 | 56.0 | Module 3. Wider horizontally, **narrower vertically** — and the short axis binds. A downgrade here. |
-| `module3wide_2304` | 102.0° | 1152×648 | 56.0 | Module 3 Wide. Full FOV above 50 Hz. Barrel coefficients are an assumption, not a calibration. |
+| `module3wide_2304` | 102.0° | 1152×648 | 56.0 | **default.** Module 3 Wide. Full FOV above 50 Hz, which is what makes the acquisition transient fit. Barrel coefficients are an assumption, not a calibration. |
 | `module3wide_2304_ideal` | 102.0° | 1152×648 | 56.0 | The same with distortion zeroed. Not a real camera — the control arm separating FOV from lens. |
 | `module3wide_1536` | 78.9° | 768×432 | 120.1 | High-rate fallback, cropped. Its coefficients overstate edge distortion at this crop. |
 
@@ -73,11 +77,11 @@ repoints `image_features` at `/quad/camera/image_distorted`; a zero vector leave
 
 | argument | default | what it does |
 | --- | --- | --- |
-| `camera` | `module2_1640` | Preset from the table above. An unknown name fails at launch with the valid list. |
-| `target_scale` | `1.0` | Scales the ArUco target. Smaller markers buy FOV slack and cost decode pixels; `aD` follows automatically. |
+| `camera` | `module3wide_2304` | Preset from the table above. An unknown name fails at launch with the valid list. |
+| `target_scale` | `0.5` | Scales the ArUco target; the default is 450 × 375 mm printed. Larger markers buy field-of-view slack and cost decode pixels. `aD` follows automatically. |
 | `marker_dict` | `7x7` | `7x7` (the thesis, and every archived bag) or `4x4`, which decodes at about two thirds the pixel size. Same IDs, so corner ordering is unchanged. |
 | `camera_rate` | `0.0` | Above zero, overrides the sensor's update rate — use it to fly the real mode's fps against the 50 Hz loop instead of the sim's free 50. |
-| `zD` | `2.5` | Servoing depth. `aD`, `MIS_TAKEOFF_ALT` and the takeoff gate are all derived from it, so it is one number, not three. |
+| `zD` | `1.2` | Servoing depth. `aD`, `MIS_TAKEOFF_ALT` and the takeoff gate are all derived from it, so it is one number, not three. See `RUNS.md` for the 2.5 m configuration. |
 
 ### Disturbance
 
@@ -87,17 +91,24 @@ inertial-frame force in newtons on a 2 kg airframe, held until `pos_ctrl` publis
 
 | argument | default | what it does |
 | --- | --- | --- |
-| `disturbance` | `none` | `none`, `step`, `gust`, `wind`, `csv`. Profiles **compose**: `disturbance:=wind,step`. |
+| `disturbance` | `none` | `none`, `step`, `gust`, `wind`, `table52`, `csv`. Profiles **compose**: `disturbance:=wind,step`. |
 | `disturbance_seed` | `0` | RNG seed for `gust` and for `wind`'s turbulence. Same seed, same realisation. |
 | `gust_scale` | `1.0` | Multiplies `gust_sigma` (0.10, 0.10, 0.05 N). |
 | `wind_scale` | `1.0` | Multiplies `wind_velocity` (0.8, 0.4, 0.0 m/s) **and its turbulence**. Drag is quadratic, so quote realised force, never the scale. |
 | `gust_tau` | `1.5` | The gust's correlation time in seconds. Sweep it against the estimator lag. |
+| `turbulence_scale` | `1.0` | `table52` only. Scales the Von Karman sigmas and nothing else, so `0.0` flies the thesis' wind **structure** — the reversals and the downdraft — with no gusting. That separates what the schedule costs from what the turbulence costs. |
+
+`table52` is the thesis' own Table 5.2: a mean schedule that reverses direction, carries a
+−4 m/s downdraft, and is switched off at t > 190 s so convergence can be shown afterwards. The
+schedule and the turbulence intensities live in `disturbances.cpp`, not in the YAML — they are a
+specification to reproduce, and a run with edited intervals is not Table 5.2. The altitude the
+altitude-dependent sigmas are evaluated at follows `zD` automatically.
 
 ### Target trajectory
 
 | argument | default | what it does |
 | --- | --- | --- |
-| `target_profile` | `thesis` | `thesis`, `hover`, `line`, `circle`, `steps`. `thesis` is the archived trajectory: it ends near t = 165 s with hover to ~260 s. |
+| `target_profile` | `hover` | `thesis`, `hover`, `line`, `circle`, `steps`. `thesis` is the archived trajectory: it ends near t = 165 s with hover to ~260 s, and its 0.9 m/s peak wants the 2.5 m geometry — see `RUNS.md`. |
 | `target_speed` | `1.0` | m/s. Used by `line`, `circle`, `steps`. |
 | `target_yaw_rate` | `0.1` | rad/s. Used by `circle`. |
 | `target_accel` | `0.5` | m/s². Used by `line` and `steps`. |
@@ -114,13 +125,29 @@ estimators) then `ibvs_gate` (plant, target and a held marker lock → start `po
 
 | argument | default | what it does |
 | --- | --- | --- |
-| `takeoff_alt` | *(empty → `zD`)* | Depth at handover. Setting it away from `zD` makes the initial depth error a swept variable rather than an accident. One resolver feeds PX4, the bridge and the gate, so they cannot disagree. |
+| `takeoff_alt` | `1.5` | Depth at handover; empty means "use `zD`". 1.5 against `zD` 1.2 is the deployment profile — launch high and descend onto the target rather than climb to it. Setting it away from `zD` makes the initial depth error a swept variable rather than an accident. One resolver feeds PX4, the bridge and the gate, so they cannot disagree. |
 | `takeoff_tolerance` | `0.10` | How close to `takeoff_alt` the gate insists on. The node's own 0.5 m default straddles the depth stability threshold. |
 | `estimators_ready` | `5.0` | Seconds of settled hover held before handover. EKF2's pitch reads ~0.019 rad high early; commanding zero against that is uncommanded forward acceleration into the tight FOV axis. |
 | `max_feature_error` | `0.15` | Marker alignment required before handover. `\|qpsi\|` at handover separates held from collapsed runs at ~0.17; `0` disables the test. |
 
-Both gates carry wall-clock timeouts that are **not** launch arguments — 180 s on takeoff,
-120 s on lock. A gate that times out logs why and the stage after it never starts.
+Both gates carry wall-clock timeouts — 180 s on takeoff, 120 s on lock (`gate_timeout`). A gate
+that times out logs why, the stage after it never starts, and the launch tears itself down
+rather than idling: EKF2 never recovers from a failed initialisation, so the remaining minutes
+buy nothing and in a sweep they are the single largest cost.
+
+`px4_takeoff_gate` carries two further deadlines, both launch arguments on the node:
+
+| argument | default | what it does |
+| --- | --- | --- |
+| `aiding_deadline` | `25.0` | Seconds after EKF2 **starts publishing** before missing aiding is called terminal. Tests **both** `cs_yaw_align` and `cs_gnss_pos` — separate failures with one cost, since `px4_offboard_bridge` arms on `xy_valid && z_valid` and `xy_valid` needs horizontal aiding. Measured from the first `estimator_status_flags`, not from the node's start, so it does not also count PX4's 9–10 s of boot and vary with machine speed. 25 s covers the slowest legitimate start: `cs_tilt_align` has been seen at 7.2 s and `checkMagField()` then refuses for a further mandatory second, while a healthy start has both flags up within ~1 s. `0` disables. |
+| `ekf_silence_deadline` | `60.0` | Backstop for the other failure — PX4 never comes up at all, so no EKF2 message ever arrives and `aiding_deadline` never starts counting. |
+
+**If `aiding_deadline` starts firing, read the ulog before raising it.** ~55% of starts once
+failed to align yaw, and it was never a race: `F450_base/model.sdf` gave the magnetometer no
+`<stddev>`, so its output was byte-identical while the aircraft sat still, PX4's `DataValidator`
+counted 1000 equal values and stopped publishing `vehicle_magnetometer` altogether — and EKF2
+lost its only heading source before it could arm and move. Fixed at the model, 10/10 starts
+align since. A sensor that goes quiet mid-run means something has lost its noise again.
 
 ### PX4 plant
 
@@ -158,13 +185,17 @@ Eq. 5.81's −1.
 rates; everything from `image_features` through `pos_ctrl` is the same code the analytic and
 gazebo plants use.
 
-Not exposed here, but available on `estimation.launch.py` directly:
-`initial_estimate_offset`, the seeded initial estimation error `(qx,qy,qz,qpsi)`.
+`initial_estimate_offset` (default `[0.0, 0.0, 0.0, 0.0]`) seeds `fixed_eso`'s initial state
+with an estimation error `(qx,qy,qz,qpsi)`. Sweeping it is how the fixed-time claim gets
+measured — settling time must stay bounded as it grows — and it needs `record_from:=launch` to
+be visible at all. Note that the observer **peaks** before it converges, so the measured `|e₀|`
+is larger than the seeded offset and is what the result must be keyed on.
 
 ## Recipes
 
-    # calm air on the wide camera, recorded, no GUI
-    ros2 launch quad_px4 sitl.launch.py camera:=module3wide_2304 headless:=true rosbag:=true
+The standing configurations — the deployment and thesis conditions, the wind cases, the
+observer ladder — are in `RUNS.md` at the repository root. These are the argument shapes it
+does not cover:
 
     # separate what the field of view buys from what the assumed barrel profile costs
     ros2 launch quad_px4 sitl.launch.py camera:=module3wide_2304_ideal
@@ -178,11 +209,11 @@ Not exposed here, but available on `estimation.launch.py` directly:
     # takeoff and camera framing only, no handover
     ros2 launch quad_px4 sitl.launch.py controllers:=false
 
-    # a deliberate initial depth error at handover
-    ros2 launch quad_px4 sitl.launch.py zD:=2.5 takeoff_alt:=2.0
+    # no initial depth error at handover — takeoff_alt defaults to 1.5 against zD 1.2
+    ros2 launch quad_px4 sitl.launch.py takeoff_alt:=1.2
 
-    # hold the target still and sweep the observer instead
-    ros2 launch quad_px4 sitl.launch.py target_profile:=hover observer_omega:=6.0
+    # place the observer's x/y gains as a triple pole instead of setting gamma1_xy
+    ros2 launch quad_px4 sitl.launch.py observer_omega:=6.0
 
 ## Reading the log
 

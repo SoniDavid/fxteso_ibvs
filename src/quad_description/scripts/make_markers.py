@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
 """Generate the ArUco marker textures for an alternative dictionary.
 
-models/aruco_target/meshes/ carries DICT_7X7_50 markers 4/6/8/10, which is what the thesis and
-every recorded bag used. DICT_4X4_50 is 6 modules per side against 7x7's 9 (both counting the
-black border), so it decodes at roughly two thirds the pixel size - which is a direct multiplier
-on how small the target can be at a 2 m lab ceiling.
-
     python3 make_markers.py 4x4          # writes models/aruco_target/meshes_4x4/
 
 gz_sim.launch.py's marker_dict:= argument symlinks the derived aruco_target's meshes/ at the
 directory this writes, so the filenames and the Target2.dae beside them must match the original
 exactly - the DAE references the JPEGs by bare filename.
 
-The white quiet zone is reproduced rather than dropped: the original textures fill 0.815 of the
-quad with ink (measured 0.812-0.820 over the four), and footprint.py's marker-pixel figures are
-computed from that fraction. Changing it here silently changes every decode margin.
 """
 import os
 import shutil

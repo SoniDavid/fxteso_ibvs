@@ -25,9 +25,12 @@ Start-up runs through two gates:
 
   ros2 launch quad_px4 sitl.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
                                       [controllers:=false] [record_from:=handover|launch]
-                                      [disturbance:=none|step|gust|wind|csv]
-                                      [disturbance_seed:=N]
+                                      [disturbance:=none|step|gust|wind|table52|csv]
+                                      [disturbance_seed:=N] [turbulence_scale:=1.0]
                                       [px4_dir:=...] [xrce_agent:=...]
+
+Defaults: module3wide_2304, takeoff at 1.5 m, servo at zD 1.2 with a 0.5-scale target, holding
+station. See RUNS.md at the repository root for the standing configurations.
 
 Prerequisites, both one-off:
   git submodule update --init --recursive external/PX4-Autopilot
@@ -451,8 +454,7 @@ def generate_launch_description():
             if event.returncode == 0 else
             # Tear the run down instead of idling to the harness timeout. EKF2 never recovers
             # from a failed initialisation - one run sat 82 s - so the remaining minutes buy
-            # nothing, and at the ~40% start-up race of experiments/e29.md they are the single
-            # largest cost in a sweep: one failed point cost 26 minutes of the E31 batch.
+            # nothing, and in a sweep they are the single largest cost.
             [LogInfo(msg='px4_takeoff_gate failed - estimators not started. See its error '
                          'above.'), Shutdown(reason='takeoff gate failed')]
         )))
