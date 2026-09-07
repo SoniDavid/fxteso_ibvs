@@ -46,7 +46,8 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
                             IncludeLaunchDescription, LogInfo, OpaqueFunction,
-                            RegisterEventHandler, Shutdown, TimerAction)
+                            RegisterEventHandler, SetLaunchConfiguration, Shutdown,
+                            TimerAction)
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -224,8 +225,12 @@ def generate_launch_description():
         # Servoing depth, and the tighter of the two geometries flown: the field-of-view budget
         # and the station-keeping margin both shrink with it.
         DeclareLaunchArgument('zD', default_value='1.2'),
-        # Depth at handover. Empty means "use zD". 1.5 against zD 1.2 is deliberate: take off
-        # high and descend onto the target rather than climb to it. Empty gives no depth error.
+        # Depth at handover. 1.5 against zD 1.2 is deliberate: take off high and descend onto the
+        # target rather than climb to it. Pass "zD" to start at the servoing depth instead, which
+        # is what a depth SWEEP wants - E38c left this at 1.5 across zD 1.2/1.8/2.5, so its 2.5
+        # arm had to climb, never acquired, and was discarded (e45.md). Empty means the same
+        # thing but only as a default: `ros2 launch` rejects `takeoff_alt:=` on the command line
+        # as a malformed argument, so "zD" is the form a spec can actually use.
         DeclareLaunchArgument('takeoff_alt', default_value='1.5'),
         # How close to takeoff_alt the gate insists on. The node's own 0.5 m default is wide
         # enough to straddle the depth stability threshold, making the IC an accident.
@@ -241,7 +246,19 @@ def generate_launch_description():
     def takeoff_alt_of(context):
         """takeoff_alt, defaulting to zD. One resolver so PX4 and the gate cannot disagree."""
         raw = LaunchConfiguration('takeoff_alt').perform(context).strip()
-        return float(raw) if raw else float(LaunchConfiguration('zD').perform(context))
+        if not raw or raw.lower() == 'zd':
+            return float(LaunchConfiguration('zD').perform(context))
+        return float(raw)
+
+    def _normalise_takeoff_alt(context):
+        """Resolve takeoff_alt to a number before any consumer reads it.
+
+        px4_takeoff_gate is a plain Node and re-implements the "empty means zD" rule as a
+        PythonExpression, so there are two resolvers where the comment above promises one. Pinning
+        the launch configuration here collapses them: downstream both see a plain number, and
+        `takeoff_alt:=zD` works everywhere rather than reaching value_type=float as a string.
+        """
+        return [SetLaunchConfiguration('takeoff_alt', '%.6f' % takeoff_alt_of(context))]
 
     def eso_z_des_of(context):
         """eso_z_des, defaulting to zD - the same idiom as takeoff_alt_of, for the same reason."""
@@ -471,7 +488,8 @@ def generate_launch_description():
         )))
 
     return LaunchDescription(
-        args + [OpaqueFunction(function=_bag_at_launch)] + simulation
+        args + [OpaqueFunction(function=_normalise_takeoff_alt),
+                OpaqueFunction(function=_bag_at_launch)] + simulation
         + [OpaqueFunction(function=_px4), state_adapter,
            OpaqueFunction(function=_offboard_bridge), viz,
            estimation, takeoff_gate])

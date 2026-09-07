@@ -74,6 +74,15 @@ explicit value only to reproduce a pre-fix run:
 ros2 launch quad_px4 sitl.launch.py eso_z_des:=2.5
 ```
 
+`takeoff_alt:=zD` — take off at the servoing depth instead of descending onto it. Wanted for a
+depth SWEEP, where a fixed 1.5 m makes the aircraft *climb* to reach zD 2.5; E38c did that and its
+2.5 m arm never acquired. Note `takeoff_alt:=` (empty) is rejected by `ros2 launch` as a malformed
+argument even though it means the same thing internally — pass the literal `zD`.
+
+```sh
+ros2 launch quad_px4 sitl.launch.py zD:=1.8 takeoff_alt:=zD
+```
+
 `fixed_eso` now also logs its depth, mass and gains at startup. It logged nothing before, which is
 how the frozen `z_des` survived the whole campaign — and note `run_matrix.py` deletes a successful
 run's launch log, so the manifest is the durable record of what was flown.
