@@ -219,6 +219,14 @@ def generate_launch_description():
         DeclareLaunchArgument('target_scale', default_value='0.5'),
         DeclareLaunchArgument('marker_dict', default_value='7x7'),
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
+        # Direction of travel for target_profile:=line, degrees from +x. 0 (the default, and
+        # every run before 2026-09-05) sends the target down the camera's TIGHT axis; 90 uses the
+        # wide one. quad_gz_sim/src/target_position.cpp explains why that is worth 2x the budget.
+        DeclareLaunchArgument('target_heading', default_value='0.0'),
+        # Wind direction, m/s per axis, scaled by wind_scale. The default points down the
+        # camera's TIGHT axis; rotating it onto the long one is the wind analogue of mounting
+        # the camera 90 deg (e58.md). See quad_gz_sim/launch/scenario.launch.py.
+        DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # Servoing depth. aD follows from it and target_scale, and MIS_TAKEOFF_ALT is pushed
         # into PX4 to match - otherwise takeoff delivers the aircraft to the wrong depth and
         # the feature vector is mis-scaled from the first frame.
@@ -288,6 +296,8 @@ def generate_launch_description():
                  'target_speed': LaunchConfiguration('target_speed'),
                  'target_yaw_rate': LaunchConfiguration('target_yaw_rate'),
                  'target_accel': LaunchConfiguration('target_accel'),
+                 'target_heading': LaunchConfiguration('target_heading'),
+                 'wind_velocity': LaunchConfiguration('wind_velocity'),
                  'zD': LaunchConfiguration('zD')}),
     ]
 

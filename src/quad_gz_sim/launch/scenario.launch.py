@@ -8,6 +8,7 @@ disturbance takes a comma-separated subset; profiles compose. Magnitudes:
 config/disturbances.yaml.
 """
 import os
+from typing import List
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -49,6 +50,14 @@ def generate_launch_description():
                               description='rad/s, used by circle'),
         DeclareLaunchArgument('target_accel', default_value='0.5',
                               description='m/s^2, used by line and steps'),
+        # Travel direction for target_profile:=line, degrees from +x. 0 is the camera's tight
+        # axis, 90 the wide one. Rotates the TARGET's travel, not the camera.
+        DeclareLaunchArgument('target_heading', default_value='0.0'),
+        # Wind DIRECTION, m/s per axis, scaled by wind_scale. Exposed 2026-09-06 because the
+        # default [0.8, 0.4, 0] points down the camera's TIGHT axis (0.62 m of slack at zD 1.2
+        # against 1.31 m on the long one), and E60 showed wind failure there is FOV-limited -
+        # so the axis the wind blows along should matter as much as its magnitude.
+        DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # The servoing depth /position_error is measured against; must match the zD the
         # controller and aD are derived from, or that error carries a constant bias.
         DeclareLaunchArgument('zD', default_value='2.5'),
@@ -67,6 +76,8 @@ def generate_launch_description():
          'seed': ParameterValue(LaunchConfiguration('disturbance_seed'), value_type=int),
          'gust_scale': ParameterValue(LaunchConfiguration('gust_scale'), value_type=float),
          'wind_scale': ParameterValue(LaunchConfiguration('wind_scale'), value_type=float),
+         'wind_velocity': ParameterValue(
+             LaunchConfiguration('wind_velocity'), value_type=List[float]),
          'gust_tau': ParameterValue(LaunchConfiguration('gust_tau'), value_type=float),
          'turbulence_scale': ParameterValue(
              LaunchConfiguration('turbulence_scale'), value_type=float),
@@ -94,6 +105,8 @@ def generate_launch_description():
                          LaunchConfiguration('target_yaw_rate'), value_type=float),
                      'accel': ParameterValue(
                          LaunchConfiguration('target_accel'), value_type=float),
+                     'heading': ParameterValue(
+                         LaunchConfiguration('target_heading'), value_type=float),
                      'zD': ParameterValue(
                          LaunchConfiguration('zD'), value_type=float)}])
 
