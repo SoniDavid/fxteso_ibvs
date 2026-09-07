@@ -54,7 +54,7 @@ float beta3 = 0;
 
 float fx = 0;
 float gx_u = 0;
-float quad_mass = 2;
+float quad_mass = 2;   // overridden by the quad_mass parameter; see main()
 // The DESIRED servoing depth, thesis Eq. 5.81's z_d, which sets the input coefficient
 // g_xi = -1/z_d on x/y/z. It has to track pos_ctrl's zD: the thesis' -2.5 m is its own
 // choice of depth, not a constant. Overridden by the z_des parameter; see main().
@@ -186,6 +186,9 @@ int main(int argc, char *argv[])
     // to it - a mismatch leaves the part of the command the observer cannot explain to be booked
     // as disturbance, which pos_ctrl then feeds back in. Yaw is exempt: g_xi,psi = -1, no depth.
     z_des = node->declare_parameter<double>("z_des", z_des);
+    // Thesis value, 8% above the F450 SDF's 1.852 kg. Exposed for the real airframe; the default
+    // changes nothing.
+    quad_mass = node->declare_parameter<double>("quad_mass", quad_mass);
 
     //ROS publishers and subscribers
     auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);

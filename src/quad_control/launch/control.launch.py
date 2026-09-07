@@ -25,6 +25,8 @@ def generate_launch_description():
         # was flown at; a smaller one is what a low lab ceiling needs. It has to move together
         # with image_features' aD and with the plant's takeoff altitude - the caller owns that.
         DeclareLaunchArgument('zD', default_value='2.5'),
+        # The same number estimation.launch.py gives fixed_eso; see there.
+        DeclareLaunchArgument('quad_mass', default_value='2.0'),
     ]
 
     def _nodes(context, *a, **k):
@@ -38,6 +40,8 @@ def generate_launch_description():
             p = {'use_sim_time': True}
             if exe == 'pos_ctrl':
                 p['zD'] = ParameterValue(LaunchConfiguration('zD'), value_type=float)
+                p['quad_mass'] = ParameterValue(
+                    LaunchConfiguration('quad_mass'), value_type=float)
             return [p]
 
         return [

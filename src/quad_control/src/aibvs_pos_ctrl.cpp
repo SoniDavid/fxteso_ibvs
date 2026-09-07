@@ -36,7 +36,7 @@ Eigen::Vector3f quad_vel_BF(0,0,0);
 Eigen::Vector3f quad_vel_VF(0,0,0);
 Eigen::Vector3f quad_attVel(0,0,0);
 Eigen::Vector3f yawVel_e3(0,0,0);
-float quad_mass = 2;
+float quad_mass = 2;   // overridden by the quad_mass parameter; see main()
 float gravity = 9.81;
 float thrust = quad_mass * gravity;
 Eigen::Vector3f attitudeEstimates(0,0,0);
@@ -260,7 +260,11 @@ int main(int argc, char *argv[])
 	// Servoing depth. Must agree with image_features' aD, which is what actually sets where
 	// the aircraft settles, and with the takeoff altitude the plant is delivered to.
 	zD = node->declare_parameter<double>("zD", zD);
-	RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m", zD);
+	// The airframe's mass, and the SAME quantity fixed_eso scales its disturbance by. The 2 kg
+	// default is the simulated F450; a real one must be weighed as flown, battery included.
+	quad_mass = node->declare_parameter<double>("quad_mass", quad_mass);
+	thrust = quad_mass * gravity;
+	RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg", zD, quad_mass);
     
 ////////////////////////ROS publishers///////////////////////////////////////////////////////
 	auto error_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_visual_servoing",100);

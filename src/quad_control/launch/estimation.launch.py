@@ -74,6 +74,8 @@ def generate_launch_description():
         # The camera topic image_features reads. A remapping, so a distortion-applying node can
         # be inserted upstream without image_features knowing.
         DeclareLaunchArgument('camera_topic', default_value='/quad/camera/image_raw'),
+        # Airframe mass as flown. fixed_eso and pos_ctrl must get the same number.
+        DeclareLaunchArgument('quad_mass', default_value='2.0'),
     ]
 
     def params(exe):
@@ -100,6 +102,7 @@ def generate_launch_description():
                       'alpha_yaw', 'beta_yaw', 'gamma4_yaw', 'eso_yaw_sign'):
                 p[g] = ParameterValue(LaunchConfiguration(g), value_type=float)
             p['z_des'] = ParameterValue(LaunchConfiguration('z_des'), value_type=float)
+            p['quad_mass'] = ParameterValue(LaunchConfiguration('quad_mass'), value_type=float)
             p['initial_estimate_offset'] = ParameterValue(
                 LaunchConfiguration('initial_estimate_offset'), value_type=List[float])
         return [p]
