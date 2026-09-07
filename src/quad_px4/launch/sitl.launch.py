@@ -177,6 +177,11 @@ def generate_launch_description():
         # bounded as this grows. Available on estimation.launch.py; exposed here so it can be
         # flown against the px4 plant rather than only the analytic one.
         DeclareLaunchArgument('initial_estimate_offset', default_value='[0.0, 0.0, 0.0, 0.0]'),
+        # The observer's z_d (thesis Eq. 5.81), which sets g_xi = -1/z_d on x/y/z. Empty means
+        # "use zD", which is what it must be: a mismatch leaves part of the command booked as
+        # disturbance and fed back in. 2.5 reproduces every run flown before 2026-09-04, when
+        # this was frozen at 2.5 regardless of zD - that is the A/B arm, not a setting to fly.
+        DeclareLaunchArgument('eso_z_des', default_value=''),
         # How aligned the markers must be before pos_ctrl takes over. |qpsi| at
         # handover separates held from collapsed runs at ~0.17; 0 disables the test.
         DeclareLaunchArgument('max_feature_error', default_value='0.15'),
@@ -236,6 +241,11 @@ def generate_launch_description():
     def takeoff_alt_of(context):
         """takeoff_alt, defaulting to zD. One resolver so PX4 and the gate cannot disagree."""
         raw = LaunchConfiguration('takeoff_alt').perform(context).strip()
+        return float(raw) if raw else float(LaunchConfiguration('zD').perform(context))
+
+    def eso_z_des_of(context):
+        """eso_z_des, defaulting to zD - the same idiom as takeoff_alt_of, for the same reason."""
+        raw = LaunchConfiguration('eso_z_des').perform(context).strip()
         return float(raw) if raw else float(LaunchConfiguration('zD').perform(context))
 
     simulation = [
@@ -425,6 +435,7 @@ def generate_launch_description():
                 float(LaunchConfiguration('camera_rate').perform(context)))),
             include(CTRL_PKG, 'estimation.launch.py',
                     {'initial_estimate_offset': LaunchConfiguration('initial_estimate_offset'),
+                     'z_des': '%.6f' % eso_z_des_of(context),
                      'gamma1_xy': LaunchConfiguration('gamma1_xy'),
                      'gamma2_xy': LaunchConfiguration('gamma2_xy'),
                      'gamma3_xy': LaunchConfiguration('gamma3_xy'),

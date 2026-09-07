@@ -55,6 +55,9 @@ float beta3 = 0;
 float fx = 0;
 float gx_u = 0;
 float quad_mass = 2;
+// The DESIRED servoing depth, thesis Eq. 5.81's z_d, which sets the input coefficient
+// g_xi = -1/z_d on x/y/z. It has to track pos_ctrl's zD: the thesis' -2.5 m is its own
+// choice of depth, not a constant. Overridden by the z_des parameter; see main().
 float z_des = 2.5;
 
 float yawRate_desired = 0;
@@ -178,6 +181,12 @@ int main(int argc, char *argv[])
     if (x0_offset.size() != 4)
         throw std::runtime_error("initial_estimate_offset needs exactly 4 values (qx,qy,qz,qpsi).");
 
+    // Thesis Eq. 5.81: g_xi,x = g_xi,y = g_xi,z = -1/z_d, with z_d "the desired normal distance
+    // between the UAV and its target". It is the same quantity as pos_ctrl's zD and must be set
+    // to it - a mismatch leaves the part of the command the observer cannot explain to be booked
+    // as disturbance, which pos_ctrl then feeds back in. Yaw is exempt: g_xi,psi = -1, no depth.
+    z_des = node->declare_parameter<double>("z_des", z_des);
+
     //ROS publishers and subscribers
     auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);
     auto im_feat_valid_sub = node->create_subscription<std_msgs::msg::Bool>("ImFeat_valid", 1, imFeatValidCallback);
@@ -237,6 +246,18 @@ int main(int argc, char *argv[])
     mu1 = gamma1;
     mu2 = gamma2;
     mu3 = gamma3;
+
+    // The node logged nothing at all until 2026-09-04, which is how a z_des frozen at 2.5 while
+    // zD moved to 1.2 went unnoticed. A bag records neither, and run_matrix deletes a successful
+    // run's launch log, so this line plus the manifest are the record of what was flown.
+    RCLCPP_INFO(node->get_logger(),
+                "servoing depth z_des = %.3f m, mass = %.3f kg%s", z_des, quad_mass,
+                eso_yaw_sign < 0.0 ? ", yaw g(xi) sign -1 (thesis Eq. 5.81)" : "");
+    RCLCPP_INFO(node->get_logger(),
+                "gains xy (%.3g,%.3g,%.3g) z (%.3g,%.3g,%.3g) yaw (%.3g,%.3g,%.3g) "
+                "gamma4_yaw %.3g alpha %.3g beta %.3g",
+                gamma1(0), gamma2(0), gamma3(0), gamma1(2), gamma2(2), gamma3(2),
+                gamma1(3), gamma2(3), gamma3(3), gamma4(3), alpha_yaw, beta_yaw);
     
 
     im_feat_est_var.x = imFeat_estimate(0);

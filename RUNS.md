@@ -60,6 +60,24 @@ ros2 launch quad_px4 sitl.launch.py zD:=2.5 takeoff_alt:=2.5 target_scale:=1.0 \
     target_profile:=thesis gamma2_xy:=10.0 gamma3_xy:=7.0 gamma3_yaw:=7.0
 ```
 
+## Two knobs added 2026-09-05
+
+`eso_z_des` — the observer's desired servoing depth, thesis Eq. 5.81's `z_d`. **It now tracks
+`zD` automatically and that is the fix**: it used to be hardcoded at 2.5 m in `fixed_eso.cpp`
+regardless of `zD`, so at the 1.2 m deployment depth the observer cancelled only `1.2/2.5 = 48%`
+of the commanded acceleration and booked the rest as disturbance, which `pos_ctrl` fed back in.
+Correcting it took station-keeping from **0.409 m to 0.0073 m** (`experiments/e51.md`). Pass an
+explicit value only to reproduce a pre-fix run:
+
+```sh
+# the as-flown behaviour of every run before 2026-09-05, for A/B comparison
+ros2 launch quad_px4 sitl.launch.py eso_z_des:=2.5
+```
+
+`fixed_eso` now also logs its depth, mass and gains at startup. It logged nothing before, which is
+how the frozen `z_des` survived the whole campaign — and note `run_matrix.py` deletes a successful
+run's launch log, so the manifest is the durable record of what was flown.
+
 ## The observer on its own
 
 `controllers:=false` so nothing acts on the estimate and what is measured is a property of the

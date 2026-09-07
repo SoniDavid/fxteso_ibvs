@@ -48,6 +48,11 @@ def generate_launch_description():
         # The observer's g(xi)*u sign on yaw. 1.0 is the as-flown value; -1.0 is
         # thesis Eq. 5.81's g_xi,psi = -1. See fixed_eso.cpp.
         DeclareLaunchArgument('eso_yaw_sign', default_value='1.0'),
+        # The observer's desired servoing depth, thesis Eq. 5.81's z_d, which sets g_xi = -1/z_d
+        # on x/y/z. THE SAME QUANTITY AS pos_ctrl's zD - every composer below passes its own zD
+        # here. The 2.5 default is only for running this file on its own; it matches the zD
+        # default of sim.launch.py and observer_only.launch.py.
+        DeclareLaunchArgument('z_des', default_value='2.5'),
         DeclareLaunchArgument(
             'initial_estimate_offset', default_value='[0.0, 0.0, 0.0, 0.0]',
             description="Added to fixed_eso's initial state estimate, i.e. the seeded initial "
@@ -94,6 +99,7 @@ def generate_launch_description():
             for g in ('gamma2_xy', 'gamma3_xy', 'gamma3_yaw', 'gamma1_yaw', 'gamma2_yaw',
                       'alpha_yaw', 'beta_yaw', 'gamma4_yaw', 'eso_yaw_sign'):
                 p[g] = ParameterValue(LaunchConfiguration(g), value_type=float)
+            p['z_des'] = ParameterValue(LaunchConfiguration('z_des'), value_type=float)
             p['initial_estimate_offset'] = ParameterValue(
                 LaunchConfiguration('initial_estimate_offset'), value_type=List[float])
         return [p]
