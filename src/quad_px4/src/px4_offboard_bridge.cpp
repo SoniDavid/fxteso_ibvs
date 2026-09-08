@@ -67,6 +67,13 @@ int main(int argc, char **argv)
 	const double stream_before_switch = node->declare_parameter<double>("stream_before_switch", 1.5);
 	// Retry interval for arm and mode commands, which PX4 may reject while still settling.
 	const double command_retry = node->declare_parameter<double>("command_retry", 1.0);
+
+	// KNOWN HARMFUL, default false. PX4 recovers on its own; this re-arms OFFBOARD off the
+	// heartbeat alone, while the loop is still blind. Kept only to reproduce E59.
+	const bool offboard_recovery = node->declare_parameter<bool>("offboard_recovery", false);
+	// So an intermittently visible target cannot flap the aircraft between Hold and OFFBOARD.
+	const int max_recoveries = node->declare_parameter<int>("max_recoveries", 5);
+
 	// Must match MIS_TAKEOFF_ALT in the airframe, and so zD in aibvs_pos_ctrl.cpp.
 	const double takeoff_altitude = node->declare_parameter<double>("takeoff_altitude", 2.5);
 	const double altitude_tolerance = node->declare_parameter<double>("altitude_tolerance", 0.4);
@@ -116,12 +123,23 @@ int main(int argc, char **argv)
 	uint8_t nav_state = 0;
 	uint8_t arming_state = 0;
 	bool have_status = false;
+	// One-way latch: a pilot who has taken over must never have the aircraft grabbed back.
+	bool pilot_has_it = false;
 	auto statusSub = node->create_subscription<VehicleStatus>(
 		px4Topic<VehicleStatus>("/fmu/out/vehicle_status"), px4In,
 		[&](const VehicleStatus::ConstSharedPtr s)
 		{
 			nav_state = s->nav_state;
 			arming_state = s->arming_state;
+			// PX4's own flag. nav_state_user_intention cannot serve: it reads OFFBOARD from the
+			// moment this node commands the mode, so it cannot tell the pilot from us.
+			if (s->failsafe_and_user_took_over && !pilot_has_it)
+			{
+				pilot_has_it = true;
+				RCLCPP_WARN(node->get_logger(),
+				            "the pilot took the aircraft out of a failsafe - offboard recovery "
+				            "is disabled for the rest of this flight.");
+			}
 			have_status = true;
 		});
 
@@ -196,6 +214,7 @@ int main(int argc, char **argv)
 
 	// --- state machine --------------------------------------------------------
 	Phase phase = Phase::WaitEkf;
+	int recoveries = 0;   // offboard re-commands spent; see Phase::Offboard
 	bool seen_takeoff = false;
 	rclcpp::Time last_command(0, 0, RCL_ROS_TIME);
 	rclcpp::Time stream_since(0, 0, RCL_ROS_TIME);
@@ -205,6 +224,9 @@ int main(int argc, char **argv)
 		RCLCPP_INFO(node->get_logger(), "%s -> %s", phaseName(phase), phaseName(next));
 		phase = next;
 		last_command = rclcpp::Time(0, 0, RCL_ROS_TIME);
+		// Cleared on every transition: Streaming only initialises it when zero, so a re-entry
+		// would inherit the first timestamp and switch mode before PX4 accepts it.
+		stream_since = rclcpp::Time(0, 0, RCL_ROS_TIME);
 	};
 
 	// True once enough time has passed to retry a command PX4 did not act on.
@@ -289,6 +311,34 @@ int main(int argc, char **argv)
 				                     "desired_attitude stale for more than %.2f s - dropping the "
 				                     "offboard stream and letting PX4 fail safe.",
 				                     setpoint_timeout);
+
+				// Still in OFFBOARD means COM_OF_LOSS_T has not expired: nothing to recover from.
+				if (nav_state != VehicleStatus::NAVIGATION_STATE_OFFBOARD)
+				{
+					if (!offboard_recovery)
+						RCLCPP_WARN_THROTTLE(
+							node->get_logger(), *node->get_clock(), 5000,
+							"PX4 has failed safe and offboard_recovery is off - this run is over "
+							"even if the markers come back.");
+					else if (pilot_has_it)
+						RCLCPP_WARN_THROTTLE(
+							node->get_logger(), *node->get_clock(), 5000,
+							"PX4 has failed safe but the pilot has the aircraft - not recovering.");
+					else if (recoveries >= max_recoveries)
+						RCLCPP_WARN_THROTTLE(
+							node->get_logger(), *node->get_clock(), 5000,
+							"PX4 has failed safe and max_recoveries (%d) is spent - not recovering.",
+							max_recoveries);
+					else
+					{
+						++recoveries;
+						RCLCPP_WARN(node->get_logger(),
+						            "PX4 failed safe out of OFFBOARD (nav_state %u). Re-streaming "
+						            "to recover, attempt %d of %d.",
+						            nav_state, recoveries, max_recoveries);
+						enter(Phase::Streaming);
+					}
+				}
 				break;
 			}
 			publishOffboardMode();

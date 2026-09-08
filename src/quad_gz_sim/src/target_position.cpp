@@ -286,6 +286,11 @@ int main(int argc, char** argv)
 	// what every pre-2026-09-05 run flew; 90 is the wide axis. See lineProfile.
 	const float heading =
 		node->declare_parameter<double>("heading", 0.0) * static_cast<float>(M_PI) / 180.0f;
+	// Hide the target for a window to exercise the lock-loss path. Needs > 1.3 s (bridge
+	// setpoint_timeout 0.3 s + COM_OF_LOSS_T 1.0 s) before PX4 fails safe. 0 disables.
+	const float blackout_at = node->declare_parameter<double>("blackout_at", 0.0);
+	const float blackout_for = node->declare_parameter<double>("blackout_for", 3.0);
+	bool was_blacked_out = false;
 	// The servoing depth /position_error is measured against. Hardcoded at 2.5 it put a
 	// constant (zD - 2.5) bias on the z error of every run flown at another depth.
 	const float zD = node->declare_parameter<double>("zD", 2.5);
@@ -401,7 +406,20 @@ int main(int argc, char** argv)
 		error(1) = quad_pos(1) - pos_y;
 		error(2) = quad_pos(2) + zD + pos_z;
 
-		tgt_position.x = pos_x;
+		// Only the PUBLISHED value moves; pos_x/pos_y keep integrating, so the target returns
+		// exactly where it would have been.
+		const bool blacked_out =
+			blackout_at > 0.0f && t >= blackout_at && t < blackout_at + blackout_for;
+		if (blacked_out != was_blacked_out)
+		{
+			RCLCPP_WARN(node->get_logger(), blacked_out
+			            ? "BLACKOUT: hiding the target for %.1f s at t=%.1f"
+			            : "blackout over at t=%.1f (%.1f s)",
+			            blacked_out ? blackout_for : t, blacked_out ? t : blackout_for);
+			was_blacked_out = blacked_out;
+		}
+
+		tgt_position.x = pos_x + (blacked_out ? 1000.0f : 0.0f);
 		tgt_position.y = pos_y;
 		tgt_position.z = -pos_z;
 	

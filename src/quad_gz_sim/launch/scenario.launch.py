@@ -58,6 +58,10 @@ def generate_launch_description():
         # against 1.31 m on the long one), and E60 showed wind failure there is FOV-limited -
         # so the axis the wind blows along should matter as much as its magnitude.
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
+        # Hide the target for a window to exercise the lock-loss path; needs > 1.3 s before
+        # PX4 fails safe. The target returns where it left. 0 disables.
+        DeclareLaunchArgument('blackout_at', default_value='0.0'),
+        DeclareLaunchArgument('blackout_for', default_value='3.0'),
         # The servoing depth /position_error is measured against; must match the zD the
         # controller and aD are derived from, or that error carries a constant bias.
         DeclareLaunchArgument('zD', default_value='2.5'),
@@ -107,6 +111,10 @@ def generate_launch_description():
                          LaunchConfiguration('target_accel'), value_type=float),
                      'heading': ParameterValue(
                          LaunchConfiguration('target_heading'), value_type=float),
+                     'blackout_at': ParameterValue(
+                         LaunchConfiguration('blackout_at'), value_type=float),
+                     'blackout_for': ParameterValue(
+                         LaunchConfiguration('blackout_for'), value_type=float),
                      'zD': ParameterValue(
                          LaunchConfiguration('zD'), value_type=float)}])
 

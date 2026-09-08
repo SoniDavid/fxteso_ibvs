@@ -183,6 +183,9 @@ def generate_launch_description():
         # disturbance and fed back in. 2.5 reproduces every run flown before 2026-09-04, when
         # this was frozen at 2.5 regardless of zD - that is the A/B arm, not a setting to fly.
         DeclareLaunchArgument('eso_z_des', default_value=''),
+        # Known harmful, default false: PX4 recovers on its own, and this re-arms OFFBOARD
+        # off the heartbeat alone while the loop is still blind.
+        DeclareLaunchArgument('offboard_recovery', default_value='false'),
         # How aligned the markers must be before pos_ctrl takes over. |qpsi| at
         # handover separates held from collapsed runs at ~0.17; 0 disables the test.
         DeclareLaunchArgument('max_feature_error', default_value='0.15'),
@@ -227,6 +230,10 @@ def generate_launch_description():
         # camera's TIGHT axis; rotating it onto the long one is the wind analogue of mounting
         # the camera 90 deg (e58.md). See quad_gz_sim/launch/scenario.launch.py.
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
+        # Hide the target for `blackout_for` seconds at `blackout_at`, to exercise the lock-loss
+        # and offboard-recovery path deliberately. 0 disables. See target_position.cpp.
+        DeclareLaunchArgument('blackout_at', default_value='0.0'),
+        DeclareLaunchArgument('blackout_for', default_value='3.0'),
         # Servoing depth. aD follows from it and target_scale, and MIS_TAKEOFF_ALT is pushed
         # into PX4 to match - otherwise takeoff delivers the aircraft to the wrong depth and
         # the feature vector is mis-scaled from the first frame.
@@ -298,6 +305,8 @@ def generate_launch_description():
                  'target_accel': LaunchConfiguration('target_accel'),
                  'target_heading': LaunchConfiguration('target_heading'),
                  'wind_velocity': LaunchConfiguration('wind_velocity'),
+                 'blackout_at': LaunchConfiguration('blackout_at'),
+                 'blackout_for': LaunchConfiguration('blackout_for'),
                  'zD': LaunchConfiguration('zD')}),
     ]
 
@@ -383,6 +392,8 @@ def generate_launch_description():
             parameters=[{'use_sim_time': True,
                          'hover_thrust': LaunchConfiguration('hover_thrust'),
                          'takeoff_altitude': takeoff_alt_of(context),
+                         'offboard_recovery': ParameterValue(
+                             LaunchConfiguration('offboard_recovery'), value_type=bool),
                          # Same value as the adapter's: one rotates into the workspace frame,
                          # the other rotates back out of it.
                          'frame_yaw_offset': FRAME_YAW_OFFSET}])]
