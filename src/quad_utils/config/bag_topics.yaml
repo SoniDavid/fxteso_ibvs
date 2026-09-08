@@ -18,6 +18,12 @@ plant_and_target:
   # Gazebo ground truth, published whenever BodyWrench runs (plant:=gazebo and plant:=px4).
   # Under px4 it is the only unfiltered reference against which EKF2 can be checked.
   - /quad_state
+  # plant:=px4 only: whether the loop or PX4's failsafe was flying, which lock% cannot show.
+  # The _v4 suffix is NOT optional - the unversioned name subscribes silently to nothing.
+  # Bump it when px4_msgs bumps VehicleStatus.
+  - /fmu/out/vehicle_status_v4
+  # plant:=px4 only. An EKF2 reset steps quad_position; the td_linear spike is not motion.
+  - /quad_estimator_reset
 
 # thesis Figs 5.10d, 5.11a, 5.12
 vision_and_observer:

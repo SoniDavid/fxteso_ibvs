@@ -4,6 +4,7 @@
 #include "quad_common/unwrapped.hpp"
 #include "quad_px4/px4_topic.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <tf2/LinearMath/Matrix3x3.hpp>
 #include <tf2/LinearMath/Quaternion.hpp>
@@ -29,6 +30,9 @@ int main(int argc, char **argv)
 	auto velocityPub = node->create_publisher<geometry_msgs::msg::Vector3>("quad_velocity", 100);
 	auto attVelPub = node->create_publisher<geometry_msgs::msg::Vector3>("quad_attitude_velocity", 100);
 	auto velBFPub = node->create_publisher<geometry_msgs::msg::Vector3>("quad_velocity_BF", 100);
+	// An EKF2 reset steps quad_position, which td_linear differentiates into a velocity spike.
+	// Published rather than smoothed, so those windows can be excluded in analysis.
+	auto resetPub = node->create_publisher<std_msgs::msg::UInt8>("quad_estimator_reset", 10);
 
 	fxteso::Unwrapped unwrapRoll, unwrapPitch, unwrapYaw;
 	uint8_t last_reset = 0;
@@ -86,6 +90,14 @@ int main(int argc, char **argv)
 				unwrapRoll.reseed(roll);
 				unwrapPitch.reseed(pitch);
 				unwrapYaw.reseed(yaw);
+
+				std_msgs::msg::UInt8 r;
+				r.data = odom->reset_counter;
+				resetPub->publish(r);
+				RCLCPP_WARN(node->get_logger(),
+				            "EKF2 reset %u - quad_position stepped; the velocity spike "
+				            "that follows is not motion.",
+				            static_cast<unsigned>(odom->reset_counter));
 			}
 
 			attitudePub->publish(unwrap

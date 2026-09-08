@@ -1,6 +1,7 @@
 // Exits 0 once PX4 has the aircraft settled at the servoing altitude: started during the climb,
 // the observer books it as disturbance and pos_ctrl then flies that error.
 #include <rclcpp/rclcpp.hpp>
+#include "quad_px4/px4_topic.hpp"
 #include <px4_msgs/msg/estimator_status_flags.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 
@@ -58,8 +59,9 @@ int main(int argc, char **argv)
 	std::chrono::steady_clock::time_point ekf_first{};
 
 	const rclcpp::QoS px4Qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile();
+	// px4Topic appends the _vN suffix from px4_msgs, as every sibling node does.
 	auto sub = node->create_subscription<VehicleLocalPosition>(
-		"/fmu/out/vehicle_local_position_v1", px4Qos,
+		quad_px4::px4Topic<VehicleLocalPosition>("/fmu/out/vehicle_local_position"), px4Qos,
 		[&](const VehicleLocalPosition::ConstSharedPtr p)
 		{
 			valid = p->z_valid && p->v_z_valid;
@@ -68,7 +70,7 @@ int main(int argc, char **argv)
 		});
 
 	auto ekf_sub = node->create_subscription<EstimatorStatusFlags>(
-		"/fmu/out/estimator_status_flags", px4Qos,
+		quad_px4::px4Topic<EstimatorStatusFlags>("/fmu/out/estimator_status_flags"), px4Qos,
 		[&](const EstimatorStatusFlags::ConstSharedPtr f)
 		{
 			if (!ekf_seen)
