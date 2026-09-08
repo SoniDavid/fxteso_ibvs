@@ -16,6 +16,8 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <algorithm>
+#include <chrono>
 #include <math.h>
 #include <cmath>
 #include <string>
@@ -89,6 +91,10 @@ float cam_cy = 308.0f;      // 616 / 2
 cv::Mat cam_K, cam_D;
 bool cam_distorted = false; // false keeps the undistortion out of the path entirely
 
+// The de-rotation applies the CURRENT attitude, so frame age is a phase error.
+rclcpp::Time last_image_stamp(0, 0, RCL_ROS_TIME);
+bool have_image_stamp = false;
+
 void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr info)
 {
     cam_fx = info->k[0];
@@ -153,10 +159,12 @@ void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr msg)
 	try
 	{
 		frame = cv_bridge::toCvShare(msg, "bgr8")->image; //Saving the image
+		last_image_stamp = rclcpp::Time(msg->header.stamp);
+		have_image_stamp = last_image_stamp.nanoseconds() != 0;
 	}
-	
+
 	catch(cv_bridge::Exception& e)
-	{ 
+	{
 		RCLCPP_ERROR(rclcpp::get_logger("image_features"), "Couldn't convert from '%s' to 'bgr8'.", msg->encoding.c_str());
 	}
 }
@@ -184,7 +192,9 @@ int main(int argc, char *argv[])
 	rclcpp::init(argc, argv);
 	auto node = rclcpp::Node::make_shared("image_features");
 
-	fxteso::SimRate loop_rate(node, 50);	
+	// One rate: the timing report below quotes its period as the budget.
+	const double kLoopHz = 50.0;
+	fxteso::SimRate loop_rate(node, kLoopHz);
     
     //ROS publishers and subscribers
 	auto im_feat_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("ImFeat_vector",100);
@@ -277,19 +287,32 @@ int main(int argc, char *argv[])
 	im_feat_valid_pub->publish(im_feat_valid);
 	loop_rate.sleepFor(1.7);
 
+	// Built once: it carries no per-frame state.
+	cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
+
+	// detectMarkers blocks the loop, so its cost is the loop's budget.
+	double detect_ms_max = 0.0;
+	double detect_ms_sum = 0.0;
+	long detect_n = 0;
+	auto last_timing_report = std::chrono::steady_clock::now();
+
     while (rclcpp::ok())
 	{
-        //Initializing the detector parameters using default values
-		cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
-		//Declaring the 2D vectors that contain the aruco's corners and rejected candidates 
+		//Declaring the 2D vectors that contain the aruco's corners and rejected candidates
 		std::vector<std::vector<cv::Point2f>> markerCorners, rejectCandidates;
 		//Declaring a vector to save de ID numbers of the detected arucos
 		std::vector<int> markerIds;
-		
+
 		if(!frame.empty())
 		{
+			const auto t0 = std::chrono::steady_clock::now();
 			//Detect the markers in the image
-		cv::aruco::detectMarkers(frame, dictionary, markerCorners, markerIds, parameters, rejectCandidates);
+			cv::aruco::detectMarkers(frame, dictionary, markerCorners, markerIds, parameters, rejectCandidates);
+			const double ms = std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - t0).count();
+			detect_ms_max = std::max(detect_ms_max, ms);
+			detect_ms_sum += ms;
+			++detect_n;
 		}
 		else
 		{
@@ -696,8 +719,26 @@ int main(int argc, char *argv[])
 			
         }
 
+		// Detector cost and frame age. Age is a phantom lateral offset, not just latency.
+		const auto now_wall = std::chrono::steady_clock::now();
+		if (std::chrono::duration<double>(now_wall - last_timing_report).count() >= 10.0)
+		{
+			last_timing_report = now_wall;
+			double age_ms = -1.0;
+			if (have_image_stamp)
+				age_ms = (node->now() - last_image_stamp).seconds() * 1000.0;
+			RCLCPP_INFO(node->get_logger(),
+			            "detectMarkers %.1f ms mean / %.1f ms worst over %ld frames "
+			            "(budget %.1f ms); frame age %.1f ms",
+			            detect_n ? detect_ms_sum / detect_n : 0.0, detect_ms_max, detect_n,
+			            1000.0 / kLoopHz, age_ms);
+			detect_ms_max = 0.0;
+			detect_ms_sum = 0.0;
+			detect_n = 0;
+		}
+
 		loop_rate.sleep();
-	}  
+	}
 
     rclcpp::shutdown();
 
