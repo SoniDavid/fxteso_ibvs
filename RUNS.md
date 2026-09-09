@@ -44,6 +44,26 @@ ros2 launch quad_px4 sitl.launch.py disturbance:=table52 turbulence_scale:=0.0 \
 ros2 launch quad_px4 sitl.launch.py disturbance:=table52
 ```
 
+## Indoor Vicon lab — no GPS, safety pilot
+
+`venue:=indoor` switches the whole venue at once, so the pieces cannot disagree: EKF2 loses GNSS
+aiding and takes height from the barometer, `px4_offboard_bridge` stops arming and waits for the
+pilot, `px4_takeoff_gate` stops requiring GNSS, `ibvs_gate` stops requiring a target topic, and
+the offboard-loss failsafe becomes Altitude rather than Hold.
+
+```sh
+ros2 launch quad_px4 sitl.launch.py venue:=indoor
+```
+
+In SITL the pilot is `sim_pilot`, which arms, selects Altitude, climbs, and then **keeps flying** —
+an IMU/mag/baro-only aircraft has no horizontal hold at all, so a centred stick departs
+(`experiments/e49.md`). It reads `/quad_state` to do that, which models the real pilot's eyes; the
+IBVS chain still takes no position anywhere.
+
+**One parameter differs from hardware.** SITL sets `COM_RC_IN_MODE` 1 (MAVLink only) so PX4
+accepts `sim_pilot`'s stream over DDS. On the real aircraft it must be **0 (RC only)** — the
+safety pilot is on a transmitter.
+
 ## Thesis geometry — 2.5 m
 
 ```sh

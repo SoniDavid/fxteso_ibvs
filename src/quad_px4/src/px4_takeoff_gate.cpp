@@ -26,24 +26,13 @@ int main(int argc, char **argv)
 	// Wall clock, deliberately: a sim-time timeout would never fire if Gazebo failed to
 	// start and /clock never advanced - exactly the case this needs to report.
 	const double timeout_s = node->declare_parameter<double>("timeout", 180.0);
-	// EKF2 can fail to start mag or GNSS aiding, and then it never will - arming stays blocked,
-	// so waiting out the full timeout only wastes the slot. Zero disables. Measured from the
-	// FIRST estimator_status_flags message, not from this node's start: the gate comes up
-	// before PX4 boots, so a deadline counted from here also counts 9-10 s of boot and varies
-	// with machine speed.
-	//
-	// BOTH flags are tested. They are separate failures with one cost: a start that aligned yaw
-	// at 1 s but never started GNSS aiding sat the full 180 s, because px4_offboard_bridge arms
-	// on xy_valid && z_valid and xy_valid needs horizontal aiding. On a healthy start both are
-	// up within ~1 s of EKF2's first message.
-	//
-	// 25 s covers the slowest legitimate alignment: cs_tilt_align has been seen at 7.2 s, and
-	// checkMagField() then refuses for a further mandatory second (_min_mag_health_time_us).
-	// This used to be 12 s, sized against the zero-noise-magnetometer deadlock that cost ~55%
-	// of starts; that is fixed in F450_base/model.sdf and the tight deadline is no longer worth
-	// its risk of aborting a slow but healthy start.
+	// Aiding that never starts never will, so abandon rather than wait out the timeout. Zero
+	// disables. Measured from EKF2's FIRST message, not this node's start, which precedes boot.
 	const double aiding_deadline =
 		node->declare_parameter<double>("aiding_deadline", 25.0);
+	// Indoors cs_gnss_pos never comes true; yaw alignment is still required, horizontal aiding
+	// is not.
+	const bool require_gnss = node->declare_parameter<bool>("require_gnss", true);
 	// Backstop for the other failure: PX4 never comes up at all, so no EKF2 message ever
 	// arrives and the deadline above never starts counting.
 	const double ekf_silence_deadline =
@@ -111,17 +100,23 @@ int main(int argc, char **argv)
 		const double since_ekf =
 			ekf_seen ? std::chrono::duration<double>(now - ekf_first).count() : 0.0;
 
-		if (aiding_deadline > 0.0 && ekf_seen && since_ekf > aiding_deadline
-		    && (!yaw_align || !gnss_pos))
+		// z_valid, not just the aiding flags: GPS-denied the barometer is the only height
+		// source, and it intermittently never reaches PX4 at all.
+		const bool aiding_up = yaw_align && (gnss_pos || !require_gnss) && valid;
+
+		if (aiding_deadline > 0.0 && ekf_seen && since_ekf > aiding_deadline && !aiding_up)
 		{
 			RCLCPP_ERROR(node->get_logger(),
 			             "EKF2 never started aiding %.1f s after it began publishing: "
-			             "yaw_align=%s gnss_pos=%s. It will not recover, and arming stays "
-			             "blocked, so this run is abandoned rather than waiting out the %.0f s "
-			             "timeout. Relaunch. Check the ulog: a sensor that stops publishing "
-			             "mid-run has lost its noise and PX4's DataValidator has flagged it "
-			             "STALE - that is what a missing <stddev> in the model looks like.",
+			             "yaw_align=%s gnss_pos=%s (gnss %s) z_valid=%s. It will not recover, "
+			             "and arming stays blocked, so this run is abandoned rather than "
+			             "waiting out the %.0f s timeout. Relaunch. Two known causes: a sensor "
+			             "that stopped publishing has lost its noise and PX4's DataValidator "
+			             "has flagged it STALE (a missing <stddev> in the model); or the "
+			             "barometer never reached PX4 at all, which is intermittent and is "
+			             "fatal only when there is no GNSS height to mask it.",
 			             since_ekf, yaw_align ? "yes" : "no", gnss_pos ? "yes" : "no",
+			             require_gnss ? "required" : "not required", valid ? "yes" : "no",
 			             timeout_s);
 			rclcpp::shutdown();
 			return 1;
@@ -153,9 +148,10 @@ int main(int argc, char **argv)
 			last_report = now;
 			RCLCPP_WARN(node->get_logger(),
 			            "Still waiting (%.0f s, ekf %.0f s): z_valid=%s altitude=%.2f/%.2f "
-			            "climb=%.2f run=%d/%d yaw_align=%s gnss=%s",
+			            "climb=%.2f run=%d/%d yaw_align=%s gnss=%s%s",
 			            waited, since_ekf, valid ? "yes" : "no", alt, altitude, climb, run,
-			            need, yaw_align ? "yes" : "no", gnss_pos ? "yes" : "no");
+			            need, yaw_align ? "yes" : "no", gnss_pos ? "yes" : "no",
+			            require_gnss ? "" : " (not required)");
 		}
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));

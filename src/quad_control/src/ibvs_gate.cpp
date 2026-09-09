@@ -42,6 +42,10 @@ int main(int argc, char **argv)
 	const double estimators_ready =
 		node->declare_parameter<double>("estimators_ready", 5.0);
 
+	// tgt_position is the simulator's; on hardware the target is a printed plate and no such
+	// topic exists. Only its arrival is tested, never its value.
+	const bool require_target = node->declare_parameter<bool>("require_target", true);
+
 	auto quad_sub = node->create_subscription<geometry_msgs::msg::Vector3>(
 		"quad_position", 10, [](const geometry_msgs::msg::Vector3::ConstSharedPtr) { have_quad = true; });
 	auto tgt_sub = node->create_subscription<geometry_msgs::msg::Vector3>(
@@ -60,8 +64,8 @@ int main(int argc, char **argv)
 		});
 
 	RCLCPP_INFO(node->get_logger(),
-	            "Holding the controllers until the plant, the target and a %d-frame marker "
-	            "lock are all up", need);
+	            "Holding the controllers until the plant,%s a %d-frame marker lock are all up",
+	            require_target ? " the target and" : " (target not required) and", need);
 
 	const auto started = std::chrono::steady_clock::now();
 	auto last_report = started;
@@ -79,7 +83,8 @@ int main(int argc, char **argv)
 			sim_start = sim_now;
 		const double sim_t = sim_start < 0.0 ? 0.0 : sim_now - sim_start;
 
-		if (have_quad && have_tgt && lock_run >= need && sim_t >= estimators_ready)
+		if (have_quad && (have_tgt || !require_target) && lock_run >= need
+		    && sim_t >= estimators_ready)
 		{
 			RCLCPP_INFO(node->get_logger(),
 			            "Quad and target placed, markers locked and aligned for %d frames "
@@ -103,7 +108,8 @@ int main(int argc, char **argv)
 			             "they would servo on the no-lock feature vector. Check that the "
 			             "camera is rendering (/quad/camera/image_raw) and that the quad "
 			             "starts above the target.",
-			             timeout_s, have_quad ? "yes" : "no", have_tgt ? "yes" : "no",
+			             timeout_s, have_quad ? "yes" : "no",
+			             have_tgt ? "yes" : (require_target ? "no" : "no (not required)"),
 			             lock_run, need, sim_t, estimators_ready,
 			             last_feat.w, last_feat.x, last_feat.y, max_feature_error);
 			rclcpp::shutdown();
@@ -116,7 +122,8 @@ int main(int argc, char **argv)
 			RCLCPP_WARN(node->get_logger(),
 			            "Still waiting (%.0f s): quad_position=%s tgt_position=%s "
 			            "marker_lock=%d/%d sim_t=%.2f/%.2f feat=(%.3f,%.3f,%.3f) limit=%.3f",
-			            waited, have_quad ? "yes" : "no", have_tgt ? "yes" : "no",
+			            waited, have_quad ? "yes" : "no",
+			            have_tgt ? "yes" : (require_target ? "no" : "no (not required)"),
 			            lock_run, need, sim_t, estimators_ready,
 			            last_feat.w, last_feat.x, last_feat.y, max_feature_error);
 		}

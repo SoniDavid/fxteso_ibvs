@@ -198,6 +198,10 @@ def generate_launch_description():
         # the true yaw swings tens of degrees during takeoff and unwinds over ~100 s. The
         # target is held until handover, so waiting costs wall clock and nothing else.
         DeclareLaunchArgument('gate_timeout', default_value='120.0'),
+        # 'indoor' is the Vicon lab: no GNSS aiding, and a human flies it up before the
+        # offboard switch. One argument drives every node so they cannot disagree.
+        DeclareLaunchArgument('venue', default_value='outdoor',
+                              choices=['outdoor', 'indoor']),
         # EKF2 only fuses mag heading while horizontal acceleration exceeds this and GNSS is
         # aiding. 0.0 keeps heading aided through station-keeping; PX4's default is 0.5.
         # Exposed so the two can be A/B'd without a rebuild.
@@ -280,6 +284,10 @@ def generate_launch_description():
         raw = LaunchConfiguration('eso_z_des').perform(context).strip()
         return float(raw) if raw else float(LaunchConfiguration('zD').perform(context))
 
+    def _indoor(context):
+        """venue:=indoor. One resolver, for the same reason takeoff_alt_of is one."""
+        return LaunchConfiguration('venue').perform(context).strip().lower() == 'indoor'
+
     simulation = [
         include(SIM_PKG, 'gz_sim.launch.py',
                 {'headless': LaunchConfiguration('headless'),
@@ -346,7 +354,27 @@ def generate_launch_description():
 
         # Loss of marker lock stops the setpoint stream. The default 0 = Position expects RC
         # that SITL has not, so the aircraft descends; 5 = Hold is the only recoverable mode.
-        env['PX4_PARAM_COM_OBL_RC_ACT'] = '5'
+        # Indoors Hold needs a horizontal estimate that does not exist, so 1 = Altitude.
+        env['PX4_PARAM_COM_OBL_RC_ACT'] = '1' if _indoor(context) else '5'
+
+        # BOTH branches, always: PX4 saves these into parameters.bson, so a one-sided value
+        # would survive into the next run of the other venue.
+        indoor = _indoor(context)
+        # Bitmask: 7 is PX4's default, 0 is no GNSS aiding. EKF2 then dead-reckons
+        # horizontally, which nothing downstream uses.
+        env['PX4_PARAM_EKF2_GPS_CTRL'] = '0' if indoor else '7'
+        # 0 barometric, 1 GPS. Indoors the barometer is the ONLY height source there is.
+        env['PX4_PARAM_EKF2_HGT_REF'] = '0' if indoor else '1'
+        # Set explicitly, not trusted to its default: PX4 intermittently refuses to arm with
+        # "Preflight Fail: barometer 0 missing".
+        env['PX4_PARAM_SIM_GZ_EN_BARO'] = '1'
+
+        # 4 ignores every stick source; 1 is MAVLink only, so PX4 accepts sim_pilot's stream.
+        # On the real aircraft this must be 0 (RC only) - the pilot is on a transmitter.
+        env['PX4_PARAM_COM_RC_IN_MODE'] = '1' if indoor else '4'
+        # From boot until disarm, not the default "while armed": the start-up failures worth
+        # diagnosing are exactly the runs that never arm, which would log nothing.
+        env['PX4_PARAM_SDLOG_MODE'] = '1'
 
         # Takeoff has to deliver the aircraft to the depth image_features' aD was computed
         # for, or the feature vector is mis-scaled from the first frame. Same derivation, one
@@ -383,6 +411,17 @@ def generate_launch_description():
                      'origin_down': SPAWN_NED[2],
                      'frame_yaw_offset': FRAME_YAW_OFFSET}])
 
+    def _sim_pilot(context, *a, **k):
+        """venue:=indoor only. Nothing else can get the aircraft off the ground there."""
+        if not _indoor(context):
+            return []
+        return [Node(
+            package=PKG, executable='sim_pilot', name='sim_pilot', output='screen',
+            parameters=[{'use_sim_time': True,
+                         # Same resolver as the bridge's, or the pilot stops climbing below the
+                         # height the bridge is waiting for and the handover never happens.
+                         'takeoff_altitude': takeoff_alt_of(context)}])]
+
     def _offboard_bridge(context, *a, **k):
         # Must come from the SAME resolver as MIS_TAKEOFF_ALT and the takeoff gate: left at the
         # node's own default the bridge never streams below it, and records loiter as servoing.
@@ -392,6 +431,7 @@ def generate_launch_description():
             parameters=[{'use_sim_time': True,
                          'hover_thrust': LaunchConfiguration('hover_thrust'),
                          'takeoff_altitude': takeoff_alt_of(context),
+                         'bringup': ('pilot' if _indoor(context) else 'auto'),
                          'offboard_recovery': ParameterValue(
                              LaunchConfiguration('offboard_recovery'), value_type=bool),
                          # Same value as the adapter's: one rotates into the workspace frame,
@@ -430,7 +470,11 @@ def generate_launch_description():
                                            "' or '", LaunchConfiguration('zD'), "'"]),
                          value_type=float),
                      'tolerance': ParameterValue(
-                         LaunchConfiguration('takeoff_tolerance'), value_type=float)}])
+                         LaunchConfiguration('takeoff_tolerance'), value_type=float),
+                     # Indoors cs_gnss_pos never comes true. Yaw alignment is still required.
+                     'require_gnss': ParameterValue(
+                         PythonExpression(["'", LaunchConfiguration('venue'),
+                                           "' != 'indoor'"]), value_type=bool)}])
 
     # Same gate as the other plants: exits 0 once the aircraft is placed, the target is
     # placed and the markers have held a lock.
@@ -442,7 +486,12 @@ def generate_launch_description():
                              'estimators_ready': ParameterValue(
                                  LaunchConfiguration('estimators_ready'), value_type=float),
                              'timeout': ParameterValue(
-                                 LaunchConfiguration('gate_timeout'), value_type=float)}])
+                                 LaunchConfiguration('gate_timeout'), value_type=float),
+                             # tgt_position is the simulator's scenario generator; on hardware
+                             # the target is a printed plate and no such topic exists.
+                             'require_target': ParameterValue(
+                                 PythonExpression(["'", LaunchConfiguration('venue'),
+                                                   "' != 'indoor'"]), value_type=bool)}])
 
     # pos_ctrl publishing desired_attitude is what tips px4_offboard_bridge into OFFBOARD,
     # so starting it here is the handover. att_ctrl stays off: PX4 owns the inner loop.
@@ -512,5 +561,6 @@ def generate_launch_description():
         args + [OpaqueFunction(function=_normalise_takeoff_alt),
                 OpaqueFunction(function=_bag_at_launch)] + simulation
         + [OpaqueFunction(function=_px4), state_adapter,
+           OpaqueFunction(function=_sim_pilot),
            OpaqueFunction(function=_offboard_bridge), viz,
            estimation, takeoff_gate])

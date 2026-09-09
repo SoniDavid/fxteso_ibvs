@@ -1,5 +1,6 @@
 // The setpoint sink for plant:=px4: pos_ctrl's desired attitude and thrust out as OFFBOARD
-// setpoints. WAIT_EKF -> ARM -> TAKEOFF -> (loiter) -> STREAMING -> OFFBOARD.
+// setpoints. auto: WAIT_EKF -> ARM -> TAKEOFF -> STREAMING -> OFFBOARD. pilot: WAIT_EKF ->
+// WAIT_PILOT -> STREAMING -> OFFBOARD, where a human flies it up and this never arms.
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include "quad_px4/px4_topic.hpp"
@@ -29,6 +30,7 @@ enum class Phase
 	WaitEkf,     // EKF2 has not converged; do nothing
 	Arm,         // arm command sent, waiting for ARMING_STATE_ARMED
 	Takeoff,     // takeoff commanded, waiting to reach loiter at altitude
+	WaitPilot,   // bringup:=pilot - a human arms and flies it to altitude; we touch nothing
 	Streaming,   // OffboardControlMode flowing, waiting for pos_ctrl
 	Offboard,    // servoing
 };
@@ -40,6 +42,7 @@ static const char *phaseName(Phase p)
 	case Phase::WaitEkf:   return "WaitEkf";
 	case Phase::Arm:       return "Arm";
 	case Phase::Takeoff:   return "Takeoff";
+	case Phase::WaitPilot: return "WaitPilot";
 	case Phase::Streaming: return "Streaming";
 	case Phase::Offboard:  return "Offboard";
 	}
@@ -67,6 +70,15 @@ int main(int argc, char **argv)
 	const double stream_before_switch = node->declare_parameter<double>("stream_before_switch", 1.5);
 	// Retry interval for arm and mode commands, which PX4 may reject while still settling.
 	const double command_retry = node->declare_parameter<double>("command_retry", 1.0);
+	// "auto" arms and commands AUTO_TAKEOFF; "pilot" does neither and waits for the human.
+	// Defaults to the passive one: a bare `ros2 run` must not arm an aircraft.
+	const std::string bringup = node->declare_parameter<std::string>("bringup", "pilot");
+	if (bringup != "auto" && bringup != "pilot")
+	{
+		RCLCPP_FATAL(node->get_logger(), "bringup:=%s must be 'auto' or 'pilot'.", bringup.c_str());
+		return 1;
+	}
+	const bool pilot_bringup = (bringup == "pilot");
 
 	// KNOWN HARMFUL, default false. PX4 recovers on its own; this re-arms OFFBOARD off the
 	// heartbeat alone, while the loop is still blind. Kept only to reproduce E59.
@@ -149,7 +161,9 @@ int main(int argc, char **argv)
 		px4Topic<VehicleLocalPosition>("/fmu/out/vehicle_local_position"), px4In,
 		[&](const VehicleLocalPosition::ConstSharedPtr p)
 		{
-			ekf_ready = p->xy_valid && p->z_valid;
+			// xy_valid needs horizontal aiding, which indoors never arrives; nothing downstream
+			// uses horizontal position.
+			ekf_ready = pilot_bringup ? p->z_valid : (p->xy_valid && p->z_valid);
 			if (p->z_valid)
 				altitude = -p->z;
 		});
@@ -240,10 +254,17 @@ int main(int argc, char **argv)
 		return true;
 	};
 
-	RCLCPP_INFO(node->get_logger(),
-	            "Waiting for EKF2. Will arm, take off, then hand over to OFFBOARD on the first "
-	            "desired_attitude. Thrust map: %.2f normalized at %.2f N.",
-	            hover_thrust, weight);
+	if (pilot_bringup)
+		RCLCPP_INFO(node->get_logger(),
+		            "Waiting for EKF2. bringup:=pilot - this will NOT arm or take off. Offboard "
+		            "is requested once the pilot is armed at %.2f m (+/- %.2f). "
+		            "Thrust map: %.2f normalized at %.2f N.",
+		            takeoff_altitude, altitude_tolerance, hover_thrust, weight);
+	else
+		RCLCPP_INFO(node->get_logger(),
+		            "Waiting for EKF2. bringup:=auto - will arm, take off, then hand over to "
+		            "OFFBOARD on the first desired_attitude. Thrust map: %.2f normalized at %.2f N.",
+		            hover_thrust, weight);
 
 	fxteso::SimRate loop_rate(node, rate_hz);
 
@@ -257,7 +278,19 @@ int main(int argc, char **argv)
 		{
 		case Phase::WaitEkf:
 			if (have_status && ekf_ready)
-				enter(Phase::Arm);
+				enter(pilot_bringup ? Phase::WaitPilot : Phase::Arm);
+			break;
+
+		case Phase::WaitPilot:
+			// Passive until the pilot is armed and at height; Streaming will not switch mode
+			// until setpoint_fresh anyway.
+			if (arming_state == VehicleStatus::ARMING_STATE_ARMED &&
+			    altitude >= takeoff_altitude - altitude_tolerance)
+			{
+				RCLCPP_INFO(node->get_logger(),
+				            "Pilot has it at %.2f m and armed - requesting offboard.", altitude);
+				enter(Phase::Streaming);
+			}
 			break;
 
 		case Phase::Arm:
