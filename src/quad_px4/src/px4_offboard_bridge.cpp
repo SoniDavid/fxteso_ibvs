@@ -7,7 +7,9 @@
 
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
+#include <px4_msgs/msg/manual_control_setpoint.hpp>
 #include <px4_msgs/msg/offboard_control_mode.hpp>
 #include <px4_msgs/msg/vehicle_attitude_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
@@ -18,7 +20,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
+using px4_msgs::msg::ManualControlSetpoint;
 using px4_msgs::msg::OffboardControlMode;
 using px4_msgs::msg::VehicleAttitudeSetpoint;
 using px4_msgs::msg::VehicleCommand;
@@ -88,7 +92,20 @@ int main(int argc, char **argv)
 
 	// Must match MIS_TAKEOFF_ALT in the airframe, and so zD in aibvs_pos_ctrl.cpp.
 	const double takeoff_altitude = node->declare_parameter<double>("takeoff_altitude", 2.5);
+	// 0.4 m fires the handover 0.4 m BELOW the target, mid-climb. Callers pass their own.
 	const double altitude_tolerance = node->declare_parameter<double>("altitude_tolerance", 0.4);
+
+	// Altitude alone is not consent: the handover also needs the RC aux switch or ~/handover,
+	// and withdrawing it drops the stream. Defaults true - wait for a person.
+	const bool require_consent = node->declare_parameter<bool>("require_consent", true);
+	// 1..6 selects manual_control_setpoint.auxN; needs RC_MAP_AUXn. 0 = services only.
+	const int consent_aux = node->declare_parameter<int>("consent_rc_aux", 0);
+	const double consent_threshold = node->declare_parameter<double>("consent_rc_threshold", 0.5);
+	if (consent_aux < 0 || consent_aux > 6)
+	{
+		RCLCPP_FATAL(node->get_logger(), "consent_rc_aux:=%d must be 0..6.", consent_aux);
+		return 1;
+	}
 
 	// The mirror of px4_state_adapter's frame_yaw_offset, and MUST be the same number: that one
 	// rotates into the workspace frame, this one rotates back out.
@@ -166,6 +183,53 @@ int main(int argc, char **argv)
 			ekf_ready = pilot_bringup ? p->z_valid : (p->xy_valid && p->z_valid);
 			if (p->z_valid)
 				altitude = -p->z;
+		});
+
+	// Two grants, either sufficient, both LIVE: withdrawing one takes the aircraft back.
+	// Only meaningful under bringup:=pilot; auto has no human on the sticks to ask.
+	const bool consent_required = require_consent && pilot_bringup;
+	bool consent_rc = false;
+	bool consent_service = false;
+	auto consentGiven = [&]() { return !consent_required || consent_rc || consent_service; };
+
+	rclcpp::Subscription<ManualControlSetpoint>::SharedPtr manualSub;
+	if (consent_aux > 0)
+	{
+		manualSub = node->create_subscription<ManualControlSetpoint>(
+			px4Topic<ManualControlSetpoint>("/fmu/out/manual_control_setpoint"), px4In,
+			[&](const ManualControlSetpoint::ConstSharedPtr m)
+			{
+				const float aux[6] = {m->aux1, m->aux2, m->aux3, m->aux4, m->aux5, m->aux6};
+				const float v = aux[consent_aux - 1];
+				// An unmapped channel is NaN, which must read as "no".
+				const bool now_rc = m->valid && std::isfinite(v) && v >= consent_threshold;
+				if (now_rc != consent_rc)
+					RCLCPP_WARN(node->get_logger(), "RC consent (aux%d = %.2f): %s",
+					            consent_aux, v, now_rc ? "GRANTED" : "WITHDRAWN");
+				consent_rc = now_rc;
+			});
+	}
+
+	auto handoverSrv = node->create_service<std_srvs::srv::Trigger>(
+		"~/handover",
+		[&](const std_srvs::srv::Trigger::Request::SharedPtr,
+		    std_srvs::srv::Trigger::Response::SharedPtr res)
+		{
+			consent_service = true;
+			RCLCPP_WARN(node->get_logger(), "handover consent GRANTED by service.");
+			res->success = true;
+			res->message = "consent granted";
+		});
+
+	auto abortSrv = node->create_service<std_srvs::srv::Trigger>(
+		"~/abort",
+		[&](const std_srvs::srv::Trigger::Request::SharedPtr,
+		    std_srvs::srv::Trigger::Response::SharedPtr res)
+		{
+			consent_service = false;
+			RCLCPP_WARN(node->get_logger(), "handover consent WITHDRAWN by service.");
+			res->success = true;
+			res->message = "consent withdrawn";
 		});
 
 	// --- helpers --------------------------------------------------------------
@@ -257,9 +321,14 @@ int main(int argc, char **argv)
 	if (pilot_bringup)
 		RCLCPP_INFO(node->get_logger(),
 		            "Waiting for EKF2. bringup:=pilot - this will NOT arm or take off. Offboard "
-		            "is requested once the pilot is armed at %.2f m (+/- %.2f). "
+		            "is requested once the pilot is armed at %.2f m (+/- %.2f) %s. "
 		            "Thrust map: %.2f normalized at %.2f N.",
-		            takeoff_altitude, altitude_tolerance, hover_thrust, weight);
+		            takeoff_altitude, altitude_tolerance,
+		            consent_required
+		                ? (consent_aux > 0 ? "and consents by RC aux or ~/handover"
+		                                   : "and consents by ~/handover")
+		                : "(CONSENT NOT REQUIRED)",
+		            hover_thrust, weight);
 	else
 		RCLCPP_INFO(node->get_logger(),
 		            "Waiting for EKF2. bringup:=auto - will arm, take off, then hand over to "
@@ -274,6 +343,16 @@ int main(int argc, char **argv)
 		const bool setpoint_fresh =
 			have_setpoint && (now - last_setpoint).seconds() < setpoint_timeout;
 
+		// Withdrawing consent aborts the same way a lock loss does: stop the stream.
+		if ((phase == Phase::Streaming || phase == Phase::Offboard) && !consentGiven())
+		{
+			RCLCPP_ERROR(node->get_logger(),
+			             "consent withdrawn - dropping the offboard stream, PX4 fails safe.");
+			enter(Phase::WaitPilot);
+			loop_rate.sleep();
+			continue;
+		}
+
 		switch (phase)
 		{
 		case Phase::WaitEkf:
@@ -282,14 +361,23 @@ int main(int argc, char **argv)
 			break;
 
 		case Phase::WaitPilot:
-			// Passive until the pilot is armed and at height; Streaming will not switch mode
-			// until setpoint_fresh anyway.
+			// Passive: no arm, no mode command until the pilot is armed, at height, and
+			// consenting. Streaming will not switch mode until setpoint_fresh anyway.
 			if (arming_state == VehicleStatus::ARMING_STATE_ARMED &&
-			    altitude >= takeoff_altitude - altitude_tolerance)
+			    altitude >= takeoff_altitude - altitude_tolerance &&
+			    consentGiven())
 			{
 				RCLCPP_INFO(node->get_logger(),
-				            "Pilot has it at %.2f m and armed - requesting offboard.", altitude);
+				            "Pilot has it at %.2f m, armed and consenting - requesting offboard.",
+				            altitude);
 				enter(Phase::Streaming);
+			}
+			else if (arming_state == VehicleStatus::ARMING_STATE_ARMED &&
+			         altitude >= takeoff_altitude - altitude_tolerance)
+			{
+				RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
+				                     "At %.2f m and armed, waiting for consent: flip the RC aux "
+				                     "switch or call ~/handover.", altitude);
 			}
 			break;
 

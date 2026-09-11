@@ -432,6 +432,9 @@ def generate_launch_description():
                          'hover_thrust': LaunchConfiguration('hover_thrust'),
                          'takeoff_altitude': takeoff_alt_of(context),
                          'bringup': ('pilot' if _indoor(context) else 'auto'),
+                         # sim_pilot has no consent input and never will - it is not a person.
+                         # hardware.launch.py is where this stays true.
+                         'require_consent': False,
                          'offboard_recovery': ParameterValue(
                              LaunchConfiguration('offboard_recovery'), value_type=bool),
                          # Same value as the adapter's: one rotates into the workspace frame,

@@ -13,6 +13,8 @@
 
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
+  <!-- px4_offboard_bridge's ~/handover and ~/abort consent services. -->
+  <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
   <depend>px4_msgs</depend>
   <depend>tf2</depend>

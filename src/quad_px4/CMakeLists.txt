@@ -8,6 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(tf2 REQUIRED)
@@ -40,7 +41,7 @@ foreach(node ${PX4_NODES})
   # include/quad_px4/px4_topic.hpp derives the _vN topic suffix from px4_msgs.
   target_include_directories(${node} PRIVATE include)
   ament_target_dependencies(${node}
-    rclcpp std_msgs geometry_msgs nav_msgs px4_msgs tf2 tf2_geometry_msgs quad_common)
+    rclcpp std_msgs std_srvs geometry_msgs nav_msgs px4_msgs tf2 tf2_geometry_msgs quad_common)
 endforeach()
 
 install(TARGETS ${PX4_NODES}
