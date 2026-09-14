@@ -80,6 +80,7 @@ You can configure the runs by appending these arguments to the `ros2 launch` com
 - `offboard_recovery:=<bool>` — Attempt offboard recovery on lock-loss (default: `false`).
 - `px4_dir:=<path>` — Path to the PX4 fork submodule.
 - `xrce_agent:=<path>` — Path to the MicroXRCEAgent binary.
+- `quad_mass:=<float>`, `camera_topic:=<str>`, `camera_info_topic:=<str>`, `bringup:=pilot`, `require_consent:=true`, `consent_rc_aux:=1` — (Used by `hardware.launch.py`).
 
 ## Running the Simulation 
 Although the repository considers using _Gazebo's DART_ physics and _euler integrated analytical physics_, the **default sim environment** is _PX4 Software in the Loop (SITL)_ due to its higher fidelity to real world conditions. Furthermore, default deployment geometry considers **1.5 m takeoff, 1.2 m servoing**
@@ -122,6 +123,35 @@ The `venue` argument toggles the simulation to mirror either a GPS-denied lab or
 
 ```sh
 ros2 launch quad_px4 sitl.launch.py venue:=indoor
+```
+
+## Running IRL (Still in development)
+
+`sitl.launch.py` is not it. Use `hardware.launch.py` — the eleven-node flight subset, nothing
+simulated:
+
+```sh
+ros2 launch quad_px4 hardware.launch.py \
+    quad_mass:=<weighed, battery in> hover_thrust:=<measured MPC_THR_HOVER> \
+    camera_topic:=/camera/image_raw camera_info_topic:=/camera/camera_info \
+    consent_rc_aux:=1
+```
+
+Four differences from SITL, all silent if wrong:
+
+- `use_sim_time` is **false** — with no `/clock` the stack hangs rather than slows.
+- `frame_yaw_offset` is **0**, not the sim's `-pi/2`.
+- The camera runs at **native** resolution and subscribes BEST_EFFORT.
+- The handover needs a **person**: `bringup:=pilot` and `require_consent:=true`, granted by the
+  RC aux switch or `~/handover` and withdrawable.
+
+Load `params/hardware.params` onto the aircraft first. It is **not** derived from the SITL
+airframe, which a real flight controller cannot load and which disables failsafes.
+
+Build without the simulated pilot — it arms the aircraft and flies on Gazebo ground truth:
+
+```sh
+colcon build --packages-select quad_px4 --cmake-args -DBUILD_SIM_PILOT=OFF
 ```
 
 ## Running only the Extended State Observer

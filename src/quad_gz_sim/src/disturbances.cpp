@@ -2,14 +2,12 @@
 // IN NEWTONS, applied by uav_dynamics.cpp as "- R(eta)' * dist" (note the sign).
 // Tuning: config/disturbances.yaml. 
 
-//Including ROS libraries
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include <chrono>
 #include <std_msgs/msg/float64.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
-//Including C++ nominal libraries
 #include <iostream>
 #include <math.h>
 #include <vector>
@@ -18,7 +16,6 @@
 #include <sstream>
 #include <random>
 #include <algorithm>
-//Including Eigen library
 #include <eigen3/Eigen/Dense>
 
 using namespace std;

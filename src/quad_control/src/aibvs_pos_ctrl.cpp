@@ -1,4 +1,3 @@
-//Including ROS libraries
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include <chrono>
@@ -10,39 +9,30 @@
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/twist.hpp>
-//Including C++ nominal libraries
 #include <iostream>
 #include <math.h>
 #include <vector>
-//Including Eigen library
 #include <eigen3/Eigen/Dense>
 
 using namespace std;
 
-//Declaring global variables
-/////////////////Estimation variables///////////////
 Eigen::Vector4f imgFeat_est(0,0,0,0);
 Eigen::Vector4f imgFeat_dot_est(0,0,0,0);
 Eigen::Vector4f ibvs_dist(0,0,0,0);
 Eigen::Vector3f ibvs_dist_linear(0,0,0);
 Eigen::Vector3f ibvs_dist_linear2(0,0,0);
-/////////////////Error signal///////////////
 Eigen::Vector4f error(0,0,0,0);
 Eigen::Vector4f error_dot(0,0,0,0);
-
-/////////////////Quadrotor measurements////////////
 Eigen::Vector3f quad_att(0,0,0);
 Eigen::Vector3f quad_vel_BF(0,0,0);
 Eigen::Vector3f quad_vel_VF(0,0,0);
 Eigen::Vector3f quad_attVel(0,0,0);
 Eigen::Vector3f yawVel_e3(0,0,0);
-float quad_mass = 2;   // overridden by the quad_mass parameter; see main()
+float quad_mass = 2;
 float gravity = 9.81;
 float thrust = quad_mass * gravity;
 Eigen::Vector3f attitudeEstimates(0,0,0);
 Eigen::Vector3f attitudeVelEstimates(0,0,0);
-
-/////////////////For comparison///////////////
 Eigen::Vector3f imgFeatLinear(0,0,0);
 Eigen::Vector3f imgFeatLinear_dot(0,0,0);
 Eigen::Vector3f quad_vel_VF_real(0,0,0);
@@ -55,8 +45,6 @@ Eigen::Vector3f tgt_vel_VF(0,0,0);
 Eigen::Vector4f v_imgFeat(0,0,0,0);
 Eigen::Vector4f kappa(0,0,0,0);
 Eigen::Vector4f kappa_dot(0,0,0,0);
-
-////////////////////Sliding surface and ASMC///////////////////
 Eigen::Vector4f ss(0,0,0,0);
 Eigen::Vector4f xi_1(0,0,0,0);
 Eigen::Vector4f lambda(0,0,0,0);
@@ -67,31 +55,22 @@ Eigen::Vector4f asmc(0,0,0,0);
 Eigen::Vector4f k_dot(0,0,0,0);
 Eigen::Vector4f k(0,0,0,0);
 Eigen::Vector4f alpha(0,0,0,0);
-// Written ::beta at use sites: under C++17 plain `beta` is ambiguous with std::beta.
-// Qualification only; the gain is unchanged.
 Eigen::Vector4f beta(0,0,0,0);
-///////////////////////////Control input///////////////////////////
 Eigen::Vector4f ibvs_ctrl_input(0,0,0,0);
-////////////////////////////Quad's VF Dynamics/////////////////////
 Eigen::Vector3f quad_accel_VF(0,0,0);
 Eigen::Vector3f quad_linear_forces_VF(0,0,0);
 Eigen::Vector3f e3(0,0,1);
-
-//////////////////////////Desired attitude for the quadrotor//////////
 Eigen::Vector3f attitude_desired(0,0,0);
 float yawRate_desired = 0;
 float roll_des_arg = 0;
 float pitch_des_arg = 0;
-
-/////////////////////////Other variables//////////////////////
 Eigen::Vector4f imgFeat_des(0,0,0,0);
 float a = 0;
-float zD = 2.5;   // overridden by the zD parameter; see main()
+float zD = 2.5;
 float tgt_YR = 0;
 float tgt_YAccel = 0;
 float step_size = 0.02;
 
-/////////////////////////Functions///////////////////////////////
 Eigen::Matrix3f skewMatrix(Eigen::Vector3f vector)
 {
 	Eigen::Matrix3f Skew;
@@ -249,7 +228,6 @@ void quadAttEstCallback(const geometry_msgs::msg::Twist::ConstSharedPtr aE)
     attitudeVelEstimates(2) = aE->angular.z;
 }
 
-/////////////////////////////////Main Program//////////////////////////
 int main(int argc, char *argv[])
 {
 	rclcpp::init(argc, argv);
@@ -264,9 +242,8 @@ int main(int argc, char *argv[])
 	// default is the simulated F450; a real one must be weighed as flown, battery included.
 	quad_mass = node->declare_parameter<double>("quad_mass", quad_mass);
 	thrust = quad_mass * gravity;
-	RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg", zD, quad_mass);
+RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg", zD, quad_mass);
     
-////////////////////////ROS publishers///////////////////////////////////////////////////////
 	auto error_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_visual_servoing",100);
     auto error_dot_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_dot_visual_servoing",100);
 
@@ -286,7 +263,6 @@ int main(int argc, char *argv[])
 
     auto ctrl_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("ibvs_control_input",100);
 
-////////////////////////ROS subscribers////////////////////////////////////////////////
 	auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);
 	auto im_feat_valid_sub = node->create_subscription<std_msgs::msg::Bool>("ImFeat_valid", 1, imFeatValidCallback);
     auto imFeat_est_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_estimates_fxt", 1, ImFeatEstCallback);
@@ -298,15 +274,13 @@ int main(int argc, char *argv[])
     auto tgt_vel_sub = node->create_subscription<geometry_msgs::msg::Vector3>("tgt_velocity", 1, tgtVelCallback);
     auto tgt_YR_sub = node->create_subscription<std_msgs::msg::Float64>("tgt_yaw_rate", 1, tgtYRCallback);
     auto tgt_accel_sub = node->create_subscription<geometry_msgs::msg::Vector3>("tgt_acceleration", 1, tgtAccelCallback);
-  
+   
 
-    //auto quad_vel_BF_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_velocity_BF", 1, quadVelBFCallback);
     auto quad_vel_BF_sub = node->create_subscription<geometry_msgs::msg::Vector3>("lin_vel_BF_estimates", 1, quadVelBFCallback);
     auto attitude_est_sub = node->create_subscription<geometry_msgs::msg::Twist>("attitude_estimates", 1, quadAttEstCallback);
     auto quad_attVel_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_attitude_velocity", 1, quadAttVelCallback);
     auto quad_att_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_attitude", 1, quadAttCallback);
 
- ////////////////////////ROS variables///////////////////////////////////////////////////////
     geometry_msgs::msg::Quaternion error_var;
     geometry_msgs::msg::Quaternion error_dot_var;
     geometry_msgs::msg::Quaternion adaptive_gain_var;
@@ -319,12 +293,9 @@ int main(int argc, char *argv[])
     geometry_msgs::msg::Quaternion desired_attitude_var;
     geometry_msgs::msg::Quaternion real_err_dot_var;
     geometry_msgs::msg::Vector3 quad_vel_VF_var;
-    geometry_msgs::msg::Vector3 quad_vel_VF_real_var;
-
-////////////////////////Controller Gains///////////////////////////////////////////////////////
+geometry_msgs::msg::Vector3 quad_vel_VF_real_var;
 
 imgFeat_des << 0,0,1,0;
-    
     
     xi_1 << 7, 7, 1, 4;
     xi_2 << 8, 8, 6, 6;
@@ -335,16 +306,6 @@ imgFeat_des << 0,0,1,0;
     k_dot << 0,0,0,0;
     alpha << 0.000006, 0.000006, 0.001, 0.0001;
     ::beta << 85, 85, 5, 5;
-
-    /*xi_1 << 6, 6, 1, 3;
-    xi_2 << 14, 14, 6, 6;
-    lambda << 1.5, 1.5, 2, 2;
-    varpi << 4, 4, 4, 4;
-    vartheta << 3, 3, 3, 3;
-    k << 0,0,0,0;
-    k_dot << 0,0,0,0;
-    alpha << 0.00000002, 0.00000002, 0.001, 0.0001;
-    beta << 8000, 8000, 5, 5;*/
 
     quad_vel_VF << 0,0,0;
     quad_accel_VF << 0,0,0;
@@ -445,18 +406,13 @@ imgFeat_des << 0,0,1,0;
 
         v_imgFeat << quad_vel_VF_real(0),quad_vel_VF_real(1),quad_vel_VF_real(2),quad_attVel(2);
         kappa << (tgt_vel_VF(0)/zD), (tgt_vel_VF(1)/zD), (tgt_vel_VF(2)/zD), tgt_YR; 
-
-        err_dot = Omega*v_imgFeat + kappa;
-
-        //error = imgFeat - imgFeat_des;
-        //error_dot = Omega*v_imgFeat + kappa;
-/////////////////////////////////////////////////////////////////////////////////////////////
+err_dot = Omega*v_imgFeat + kappa;
 
 		error = imgFeat_est - imgFeat_des;
         error_dot = imgFeat_dot_est;
         ibvs_dist_linear <<  ibvs_dist(0), ibvs_dist(1), ibvs_dist(2);
         
-        //Sliding surfaces and adaptive sliding mode controller
+        // Sliding surfaces and adaptive sliding mode controller
         for (int i = 0; i<=3; i++)
         {
             ss(i) = error(i) + xi_1(i) * powf(std::abs(error(i)),lambda(i)) * sign(error(i)) + xi_2(i) * powf(std::abs(error_dot(i)),(varpi(i)/vartheta(i))) * sign(error_dot(i));
@@ -468,24 +424,14 @@ imgFeat_des << 0,0,1,0;
             asmc(i) = -2*k(i) * powf(std::abs(ss(i)),0.5) * sign(ss(i)) - (powf(k(i),2)/2) * ss(i);
         }
         
-
-        //Control inputs
-        /////////////yaw_rotation///////////////////////
-        ibvs_ctrl_input(3) = (-asmc(3) + ibvs_dist(3) + (vartheta(3)/(varpi(3)*xi_2(3))) * sign(error_dot(3)) * powf(std::abs(error_dot(3)),(2-(varpi(3)/vartheta(3)))) * (1 + xi_1(3) * lambda(3) * powf(std::abs(error(3)),lambda(3)-1))); //yaw_ddot
+        // Control inputs
+        ibvs_ctrl_input(3) = (-asmc(3) + ibvs_dist(3) + (vartheta(3)/(varpi(3)*xi_2(3))) * sign(error_dot(3)) * powf(std::abs(error_dot(3)),(2-(varpi(3)/vartheta(3)))) * (1 + xi_1(3) * lambda(3) * powf(std::abs(error(3)),lambda(3)-1))); // yaw_ddot
         yawRate_desired = yawRate_desired + step_size * ibvs_ctrl_input(3);
-        /////////////x-axis///////////////////////
         ibvs_ctrl_input(0) = zD * (-asmc(0) + ibvs_dist(0) + yawRate_desired * imgFeat_dot_est(1)  + (vartheta(0)/(varpi(0)*xi_2(0))) * sign(error_dot(0)) * powf(std::abs(error_dot(0)),(2-(varpi(0)/vartheta(0)))) * (1 + xi_1(0) * lambda(0) * powf(std::abs(error(0)),lambda(0)-1)));
-        /////////////y-axis///////////////////////
         ibvs_ctrl_input(1) = zD * (-asmc(1) + ibvs_dist(1) - yawRate_desired * imgFeat_dot_est(0)  + (vartheta(1)/(varpi(1)*xi_2(1))) * sign(error_dot(1)) * powf(std::abs(error_dot(1)),(2-(varpi(1)/vartheta(1)))) * (1 + xi_1(1) * lambda(1) * powf(std::abs(error(1)),lambda(1)-1)));
-        /////////////z-axis///////////////////////
-        ibvs_ctrl_input(2) = zD * (-asmc(2) + ibvs_dist(2) + (vartheta(2)/(varpi(2)*xi_2(2))) * sign(error_dot(2)) * powf(std::abs(error_dot(2)),(2-(varpi(2)/vartheta(2)))) * (1 + xi_1(2) * lambda(2) * powf(std::abs(error(2)),lambda(2)-1)));    
+        ibvs_ctrl_input(2) = zD * (-asmc(2) + ibvs_dist(2) + (vartheta(2)/(varpi(2)*xi_2(2))) * sign(error_dot(2)) * powf(std::abs(error_dot(2)),(2-(varpi(2)/vartheta(2)))) * (1 + xi_1(2) * lambda(2) * powf(std::abs(error(2)),lambda(2)-1)));
         
-        //     
-        //       + ibvs_ctrl_input(3) * imgFeat_est(1)         - ibvs_ctrl_input(3) * imgFeat_est(0)
-        
-        //        
-        
-        //Quad's virtual frame dynamics 
+        // Quad's virtual frame dynamics 
         quad_accel_VF << ibvs_ctrl_input(0), ibvs_ctrl_input(1), ibvs_ctrl_input(2); 
 
         quad_vel_VF(0) = quad_vel_VF(0) + quad_accel_VF(0)*step_size;
@@ -494,7 +440,6 @@ imgFeat_des << 0,0,1,0;
         
         quad_linear_forces_VF = (quad_mass * quad_accel_VF) + (quad_mass * skewMatrix(yawVel_e3)) * quad_vel_VF_real; 
         
-        //////////////////Thrust///////////////////////////////
         thrust = e3.transpose() * (Rtp(attitudeEstimates(0),attitudeEstimates(1)).transpose() * ((quad_mass * gravity * e3) - quad_linear_forces_VF));
         if (thrust > 30)
         {

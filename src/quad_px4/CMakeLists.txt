@@ -47,10 +47,10 @@ endforeach()
 install(TARGETS ${PX4_NODES}
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY launch
+install(DIRECTORY launch params
   DESTINATION share/${PROJECT_NAME})
 
-# The airframe lives in the PX4 fork at external/PX4-Autopilot, not here - PX4 only reads
-# airframes out of its own ROMFS, so there is nothing for ROS to install.
+# The SITL airframe lives in the PX4 fork's ROMFS, not here. params/ is its hardware
+# counterpart: a real FC cannot load an init.d-posix autostart.
 
 ament_package()
