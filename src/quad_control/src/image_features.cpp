@@ -91,12 +91,40 @@ float cam_cy = 308.0f;      // 616 / 2
 cv::Mat cam_K, cam_D;
 bool cam_distorted = false; // false keeps the undistortion out of the path entirely
 
+// Checked against every frame: a size mismatch moves the principal point silently.
+int expect_width = 0;
+int expect_height = 0;
 // The de-rotation applies the CURRENT attitude, so frame age is a phase error.
 rclcpp::Time last_image_stamp(0, 0, RCL_ROS_TIME);
 bool have_image_stamp = false;
 
 void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr info)
 {
+    // An all-zero d[] means "not calibrated", not "rectified": keep the parameters.
+    bool any_d = false;
+    for (size_t i = 0; i < info->d.size(); ++i)
+        if (info->d[i] != 0.0)
+            any_d = true;
+    if (!any_d && cam_distorted)
+    {
+        RCLCPP_WARN_ONCE(rclcpp::get_logger("image_features"),
+                         "camera_info carries an all-zero distortion vector while the launch "
+                         "parameters model distortion - ignoring it and keeping the parameters. "
+                         "Publish real coefficients, or clear camera_distortion, to change this.");
+        return;
+    }
+
+    if (expect_width > 0 &&
+        (static_cast<int>(info->width) != expect_width ||
+         static_cast<int>(info->height) != expect_height))
+    {
+        RCLCPP_ERROR_ONCE(rclcpp::get_logger("image_features"),
+                          "camera_info is %ux%u but camera_width/height say %dx%d - ignoring it. "
+                          "Fix the launch parameters to match the driver.",
+                          info->width, info->height, expect_width, expect_height);
+        return;
+    }
+
     cam_fx = info->k[0];
     cam_cx = info->k[2];
     cam_cy = info->k[5];
@@ -156,6 +184,20 @@ Eigen::Matrix3f Ryaw(float yaw)
 /////////////////////ROS Subscribers//////////////////////////////////
 void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
+	// cam_cx/cam_cy are p_width/2, p_height/2, so a wrong size shifts the principal point.
+	if (expect_width > 0 &&
+	    (static_cast<int>(msg->width) != expect_width ||
+	     static_cast<int>(msg->height) != expect_height))
+	{
+		// Cleared, not just dropped: otherwise the loop servoes on the last good frame.
+		frame = cv::Mat();
+		RCLCPP_ERROR_ONCE(rclcpp::get_logger("image_features"),
+		                  "image is %ux%u but camera_width/height say %dx%d - refusing to servo "
+		                  "on it. Pass the size the driver actually publishes.",
+		                  msg->width, msg->height, expect_width, expect_height);
+		return;
+	}
+
 	try
 	{
 		frame = cv_bridge::toCvShare(msg, "bgr8")->image; //Saving the image
@@ -205,12 +247,25 @@ int main(int argc, char *argv[])
 	auto u_coord_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("u_coordinates",100);
 	auto n_coord_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("n_coordinates",100);
 	
-    auto sub = node->create_subscription<sensor_msgs::msg::Image>("/quad/camera/image_raw", 1, imageCallback); //Gazebo_camera 
-    //auto sub = node->create_subscription<sensor_msgs::msg::Image>("camera/image", 1, imageCallback); //Real camera
+	// Parameters, not remaps: the QoS has to be chosen for the same publisher. Real drivers
+	// publish BEST_EFFORT, and a RELIABLE subscription to one receives nothing, silently.
+	const std::string image_topic =
+		node->declare_parameter<std::string>("image_topic", "/quad/camera/image_raw");
+	const std::string caminfo_topic =
+		node->declare_parameter<std::string>("camera_info_topic", "/quad/camera/camera_info");
+	const bool sensor_qos = node->declare_parameter<bool>("sensor_qos", false);
+	const rclcpp::QoS image_qos =
+		sensor_qos ? rclcpp::QoS(rclcpp::SensorDataQoS()) : rclcpp::QoS(rclcpp::KeepLast(1));
+	RCLCPP_INFO(node->get_logger(), "image: %s (%s), camera_info: %s",
+	            image_topic.c_str(), sensor_qos ? "best-effort" : "reliable",
+	            caminfo_topic.c_str());
+
+	auto sub = node->create_subscription<sensor_msgs::msg::Image>(
+		image_topic, image_qos, imageCallback);
 	//auto attitude_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_attitude", 1, attitude_callback);
 	auto attitude_sub = node->create_subscription<geometry_msgs::msg::Twist>("attitude_estimates", 1, attEstCallback);
 	auto caminfo_sub = node->create_subscription<sensor_msgs::msg::CameraInfo>(
-		"/quad/camera/camera_info", 1, cameraInfoCallback);
+		caminfo_topic, image_qos, cameraInfoCallback);
 
 	// The image-moment area at the desired depth. It scales as fx^2, so a different
 	// camera needs a different value - hover at zD and read /a_value to measure it.
@@ -226,6 +281,8 @@ int main(int argc, char *argv[])
 	// is skipped entirely; an empty default cannot be statically typed, hence the zeros.
 	const std::vector<double> p_dist = node->declare_parameter<std::vector<double>>(
 		"camera_distortion", {0.0, 0.0, 0.0, 0.0, 0.0});
+	expect_width = p_width;
+	expect_height = p_height;
 	cam_fx = p_width / (2.0 * tan(p_hfov / 2.0));
 	cam_cx = p_width / 2.0f;
 	cam_cy = p_height / 2.0f;

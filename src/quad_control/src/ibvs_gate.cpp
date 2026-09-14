@@ -70,9 +70,10 @@ int main(int argc, char **argv)
 	const auto started = std::chrono::steady_clock::now();
 	auto last_report = started;
 
-	// Latched on the first non-zero sample, not here: with use_sim_time the clock reads 0 until
-	// the first /clock arrives, and latching that would revert this to an absolute check.
+	// Latched on the first non-zero sample: the clock reads 0 until /clock arrives. NOT
+	// steady_clock - the estimators hold on SimRate, so a wall clock releases early at RTF < 1.
 	double sim_start = -1.0;
+	bool warned_no_clock = false;
 
 	while (rclcpp::ok())
 	{
@@ -98,6 +99,17 @@ int main(int argc, char **argv)
 
 		const auto now = std::chrono::steady_clock::now();
 		const double waited = std::chrono::duration<double>(now - started).count();
+
+		// A stuck clock otherwise reads exactly like slow estimators.
+		if (!warned_no_clock && sim_start < 0.0 && waited > 5.0)
+		{
+			warned_no_clock = true;
+			RCLCPP_ERROR(node->get_logger(),
+			             "The clock has not advanced in %.0f s. If this is hardware, "
+			             "use_sim_time is true and nothing publishes /clock - every node on "
+			             "SimRate is blocked, not slow. Relaunch with use_sim_time:=false.",
+			             waited);
+		}
 
 		if (waited > timeout_s)
 		{

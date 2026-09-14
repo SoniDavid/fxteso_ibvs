@@ -30,7 +30,7 @@ Start-up runs through two gates:
                                       [px4_dir:=...] [xrce_agent:=...]
 
 Defaults: module3wide_2304, takeoff at 1.5 m, servo at zD 1.2 with a 0.5-scale target, holding
-station. See RUNS.md at the repository root for the standing configurations.
+station. See RUNNING.md at the repository root for the standing configurations.
 
 Prerequisites, both one-off:
   git submodule update --init --recursive external/PX4-Autopilot
@@ -149,7 +149,7 @@ def generate_launch_description():
         # table52 only: scales the Von Karman sigmas, leaving the mean schedule alone.
         DeclareLaunchArgument('turbulence_scale', default_value='1.0'),
         # Target trajectory; see quad_gz_sim/scenario.launch.py. 'hover' pairs with the default
-        # depth below; the 'thesis' course wants the 2.5 m geometry - see RUNS.md.
+        # depth below; the 'thesis' course wants the 2.5 m geometry - see RUNNING.md.
         DeclareLaunchArgument('target_profile', default_value='hover'),
         DeclareLaunchArgument('target_speed', default_value='1.0'),
         DeclareLaunchArgument('target_yaw_rate', default_value='0.1'),
@@ -200,7 +200,9 @@ def generate_launch_description():
         DeclareLaunchArgument('gate_timeout', default_value='120.0'),
         # 'indoor' is the Vicon lab: no GNSS aiding, and a human flies it up before the
         # offboard switch. One argument drives every node so they cannot disagree.
-        DeclareLaunchArgument('venue', default_value='outdoor',
+        # Default because it is the deployment config; 'outdoor' needs a heading reference
+        # before EKF2 will fuse GNSS, and that comes up only intermittently in SITL.
+        DeclareLaunchArgument('venue', default_value='indoor',
                               choices=['outdoor', 'indoor']),
         # EKF2 only fuses mag heading while horizontal acceleration exceeds this and GNSS is
         # aiding. 0.0 keeps heading aided through station-keeping; PX4's default is 0.5.

@@ -28,6 +28,8 @@ int main(int argc, char **argv)
 	const double timeout_s = node->declare_parameter<double>("timeout", 180.0);
 	// Aiding that never starts never will, so abandon rather than wait out the timeout. Zero
 	// disables. Measured from EKF2's FIRST message, not this node's start, which precedes boot.
+	// Sim time, unlike the two deadlines above: EKF2 converges in simulated seconds, so a wall
+	// clock shortens this to RTF x aiding_deadline and abandons runs for being on a slow machine.
 	const double aiding_deadline =
 		node->declare_parameter<double>("aiding_deadline", 25.0);
 	// Indoors cs_gnss_pos never comes true; yaw alignment is still required, horizontal aiding
@@ -45,7 +47,9 @@ int main(int argc, char **argv)
 	bool yaw_align = false;
 	bool gnss_pos = false;
 	bool ekf_seen = false;
-	std::chrono::steady_clock::time_point ekf_first{};
+	// Safe to latch on the ROS clock: it is set inside the EKF2 callback, which cannot fire
+	// before PX4 and Gazebo are up, so /clock has already advanced past zero.
+	rclcpp::Time ekf_first(0, 0, RCL_ROS_TIME);
 
 	const rclcpp::QoS px4Qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile();
 	// px4Topic appends the _vN suffix from px4_msgs, as every sibling node does.
@@ -65,7 +69,7 @@ int main(int argc, char **argv)
 			if (!ekf_seen)
 			{
 				ekf_seen = true;
-				ekf_first = std::chrono::steady_clock::now();
+				ekf_first = node->now();
 			}
 			yaw_align = f->cs_yaw_align;
 			gnss_pos = f->cs_gnss_pos;
@@ -97,8 +101,7 @@ int main(int argc, char **argv)
 		const auto now = std::chrono::steady_clock::now();
 		const double waited = std::chrono::duration<double>(now - started).count();
 
-		const double since_ekf =
-			ekf_seen ? std::chrono::duration<double>(now - ekf_first).count() : 0.0;
+		const double since_ekf = ekf_seen ? (node->now() - ekf_first).seconds() : 0.0;
 
 		// z_valid, not just the aiding flags: GPS-denied the barometer is the only height
 		// source, and it intermittently never reaches PX4 at all.
@@ -107,7 +110,7 @@ int main(int argc, char **argv)
 		if (aiding_deadline > 0.0 && ekf_seen && since_ekf > aiding_deadline && !aiding_up)
 		{
 			RCLCPP_ERROR(node->get_logger(),
-			             "EKF2 never started aiding %.1f s after it began publishing: "
+			             "EKF2 never started aiding %.1f sim s after it began publishing: "
 			             "yaw_align=%s gnss_pos=%s (gnss %s) z_valid=%s. It will not recover, "
 			             "and arming stays blocked, so this run is abandoned rather than "
 			             "waiting out the %.0f s timeout. Relaunch. Two known causes: a sensor "
@@ -147,7 +150,7 @@ int main(int argc, char **argv)
 		{
 			last_report = now;
 			RCLCPP_WARN(node->get_logger(),
-			            "Still waiting (%.0f s, ekf %.0f s): z_valid=%s altitude=%.2f/%.2f "
+			            "Still waiting (%.0f s wall, ekf %.0f sim s): z_valid=%s altitude=%.2f/%.2f "
 			            "climb=%.2f run=%d/%d yaw_align=%s gnss=%s%s",
 			            waited, since_ekf, valid ? "yes" : "no", alt, altitude, climb, run,
 			            need, yaw_align ? "yes" : "no", gnss_pos ? "yes" : "no",

@@ -72,8 +72,17 @@ def generate_launch_description():
         DeclareLaunchArgument('marker_dict', default_value='7x7',
                               description='must match the textures gz_sim.launch.py selected'),
         # The camera topic image_features reads. A remapping, so a distortion-applying node can
-        # be inserted upstream without image_features knowing.
+        # be inserted upstream without image_features knowing - and so a real camera driver can
+        # be pointed at it without touching the source.
         DeclareLaunchArgument('camera_topic', default_value='/quad/camera/image_raw'),
+        # Its CameraInfo, which image_features prefers over the parameters above whenever one
+        # arrives - how a calibrated real lens reaches the feature model without a rebuild.
+        DeclareLaunchArgument('camera_info_topic', default_value='/quad/camera/camera_info'),
+        # True for a real driver: they publish BEST_EFFORT and a RELIABLE subscription to one
+        # receives nothing. ros_gz_bridge is RELIABLE, so simulation cannot surface it.
+        DeclareLaunchArgument('sensor_qos', default_value='false'),
+        # False on hardware: SimRate blocks on node->now(), so with no /clock this hangs.
+        DeclareLaunchArgument('use_sim_time', default_value='true'),
         # Airframe mass as flown. fixed_eso and pos_ctrl must get the same number.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
     ]
@@ -81,7 +90,8 @@ def generate_launch_description():
     def params(exe):
         # Each node declares only its own parameters; handing one the others' would fail its
         # launch, so these are split by executable rather than passed to everything.
-        p = {'use_sim_time': True}
+        p = {'use_sim_time': ParameterValue(
+            LaunchConfiguration('use_sim_time'), value_type=bool)}
         if exe == 'image_features':
             p['camera_hfov'] = ParameterValue(
                 LaunchConfiguration('camera_hfov'), value_type=float)
@@ -94,6 +104,13 @@ def generate_launch_description():
             p['aD'] = ParameterValue(LaunchConfiguration('aD'), value_type=float)
             p['marker_dict'] = ParameterValue(
                 LaunchConfiguration('marker_dict'), value_type=str)
+            # Parameters, not remaps: the QoS is chosen for the same publisher.
+            p['image_topic'] = ParameterValue(
+                LaunchConfiguration('camera_topic'), value_type=str)
+            p['camera_info_topic'] = ParameterValue(
+                LaunchConfiguration('camera_info_topic'), value_type=str)
+            p['sensor_qos'] = ParameterValue(
+                LaunchConfiguration('sensor_qos'), value_type=bool)
         if exe == 'fixed_eso':
             p['gamma1_xy'] = ParameterValue(LaunchConfiguration('gamma1_xy'), value_type=float)
             p['observer_omega'] = ParameterValue(
@@ -107,16 +124,10 @@ def generate_launch_description():
                 LaunchConfiguration('initial_estimate_offset'), value_type=List[float])
         return [p]
 
-    # Every node runs on the simulator's clock; /clock is bridged in quad_gz_sim.
-    def remaps(exe):
-        if exe != 'image_features':
-            return []
-        return [('/quad/camera/image_raw', LaunchConfiguration('camera_topic'))]
-
+    # No remaps: image_features takes both camera topics as parameters.
     return LaunchDescription(args + [
         Node(package=PKG, executable=exe, name=exe,
              output='screen' if verbose else 'log',
-             remappings=remaps(exe),
              parameters=params(exe))
         for exe, verbose in NODES
     ])

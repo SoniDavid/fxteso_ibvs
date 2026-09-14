@@ -25,6 +25,8 @@ def generate_launch_description():
         # was flown at; a smaller one is what a low lab ceiling needs. It has to move together
         # with image_features' aD and with the plant's takeoff altitude - the caller owns that.
         DeclareLaunchArgument('zD', default_value='2.5'),
+        # False on hardware: SimRate blocks on node->now(), so with no /clock this hangs.
+        DeclareLaunchArgument('use_sim_time', default_value='true'),
         # The same number estimation.launch.py gives fixed_eso; see there.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
     ]
@@ -37,7 +39,8 @@ def generate_launch_description():
 
         def params(exe):
             # Only pos_ctrl declares zD; handing it to att_ctrl would fail its launch.
-            p = {'use_sim_time': True}
+            p = {'use_sim_time': ParameterValue(
+                LaunchConfiguration('use_sim_time'), value_type=bool)}
             if exe == 'pos_ctrl':
                 p['zD'] = ParameterValue(LaunchConfiguration('zD'), value_type=float)
                 p['quad_mass'] = ParameterValue(
