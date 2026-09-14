@@ -392,14 +392,26 @@ def generate_launch_description():
                 'hover_thrust:=%.4f but %s on %dS derives %.4f. Pass hover_thrust:=%.4f.'
                 % (declared, prop, cells, thr_hover, thr_hover))
 
+        px4_proc = ExecuteProcess(cmd=[binary], cwd=rootfs, env=env,
+                                  name='px4_sitl', output='screen')
+
         return [
             ExecuteProcess(cmd=[agent, 'udp4', '-p', '8888'],
                            name='micro_xrce_agent', output='log'),
             # px4-rc.gzsim already polls 30 s for the world; this just keeps the console clean.
-            TimerAction(period=5.0, actions=[
-                ExecuteProcess(cmd=[binary], cwd=rootfs, env=env,
-                               name='px4_sitl', output='screen'),
-            ]),
+            TimerAction(period=5.0, actions=[px4_proc]),
+            # gz_bridge now refuses to boot on a sensor whose gz stream never arrived. Without
+            # this the run would idle to px4_takeoff_gate's 60 s no-PX4 timeout instead.
+            # Positive codes only: a negative one is the signal WE sent it during a teardown
+            # already in progress, which is not a cause and must not be reported as one.
+            RegisterEventHandler(OnProcessExit(
+                target_action=px4_proc,
+                on_exit=lambda event, context: (
+                    [LogInfo(msg='px4_sitl exited %d during start-up - see its error above.'
+                                 % event.returncode),
+                     Shutdown(reason='px4 exited')]
+                    if (event.returncode or 0) > 0 else []
+                ))),
         ]
 
     state_adapter = Node(
