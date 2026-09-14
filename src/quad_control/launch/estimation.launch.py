@@ -11,7 +11,7 @@ Camera Module 2 geometry image_features had hardcoded, so an unadorned launch is
 from typing import List
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -76,13 +76,45 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_topic', default_value='/quad/camera/image_raw'),
         # Airframe mass as flown. fixed_eso and pos_ctrl must get the same number.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
+        # true in SITL (nodes run on the bridged /clock); false on the aircraft, where
+        # there is no /clock and SimRate would otherwise hang on node->now(). The default
+        # keeps sim.launch.py / sitl.launch.py unchanged - they do not forward this.
+        DeclareLaunchArgument('use_sim_time', default_value='true'),
+        # Benchmark only: when set (e.g. '_probe'), image_features' feature outputs are
+        # remapped aside so a synthetic feeder can drive the downstream chain while
+        # image_features still runs for its real cost. Empty = normal wiring.
+        DeclareLaunchArgument('vision_out_suffix', default_value=''),
+        # 'reliable' (default, matches ros_gz_bridge in SITL) or 'sensor_data' - chosen
+        # together with the publisher, since a RELIABLE subscription against a BEST_EFFORT
+        # publisher receives nothing, and the reverse pairing can back-pressure a
+        # struggling publisher.
+        DeclareLaunchArgument('image_qos', default_value='reliable'),
+        # Pin image_features to a CPU core, e.g. '3' - empty (default) leaves it unpinned.
+        # image_features is the heaviest node in the graph (cv::aruco::detectMarkers), and
+        # under load its own SimRate loop can fall well behind (see fixed_eso's neighbours
+        # for the achieved-rate picture); pinning removes competition for its core.
+        DeclareLaunchArgument('image_features_cpu', default_value=''),
+        # False (OpenCV's own default) keeps a bare launch - what SITL uses - unchanged.
+        # hardware.launch.py turns this on with min_marker_length_ratio computed from the
+        # deployed zD/target_scale; see image_features.cpp for what the pair does.
+        DeclareLaunchArgument('use_aruco3_detection', default_value='false'),
+        DeclareLaunchArgument('min_marker_length_ratio', default_value='0.0'),
+        # 0 (default) leaves OpenCV's TBB thread count untouched. Pair with
+        # image_features_cpu for an A/B - see image_features.cpp.
+        DeclareLaunchArgument('cv_num_threads', default_value='0'),
+        # 'opencv' (default) keeps the validated behavior; 'nano' switches to aruco_nano -
+        # a different detection algorithm, opt-in until field-validated. See image_features.cpp.
+        DeclareLaunchArgument('detector_backend', default_value='opencv'),
     ]
 
     def params(exe):
         # Each node declares only its own parameters; handing one the others' would fail its
         # launch, so these are split by executable rather than passed to everything.
-        p = {'use_sim_time': True}
+        p = {'use_sim_time': ParameterValue(
+            LaunchConfiguration('use_sim_time'), value_type=bool)}
         if exe == 'image_features':
+            p['image_qos'] = ParameterValue(
+                LaunchConfiguration('image_qos'), value_type=str)
             p['camera_hfov'] = ParameterValue(
                 LaunchConfiguration('camera_hfov'), value_type=float)
             p['camera_width'] = ParameterValue(
@@ -94,6 +126,14 @@ def generate_launch_description():
             p['aD'] = ParameterValue(LaunchConfiguration('aD'), value_type=float)
             p['marker_dict'] = ParameterValue(
                 LaunchConfiguration('marker_dict'), value_type=str)
+            p['use_aruco3_detection'] = ParameterValue(
+                LaunchConfiguration('use_aruco3_detection'), value_type=bool)
+            p['min_marker_length_ratio'] = ParameterValue(
+                LaunchConfiguration('min_marker_length_ratio'), value_type=float)
+            p['cv_num_threads'] = ParameterValue(
+                LaunchConfiguration('cv_num_threads'), value_type=int)
+            p['detector_backend'] = ParameterValue(
+                LaunchConfiguration('detector_backend'), value_type=str)
         if exe == 'fixed_eso':
             p['gamma1_xy'] = ParameterValue(LaunchConfiguration('gamma1_xy'), value_type=float)
             p['observer_omega'] = ParameterValue(
@@ -107,16 +147,36 @@ def generate_launch_description():
                 LaunchConfiguration('initial_estimate_offset'), value_type=List[float])
         return [p]
 
-    # Every node runs on the simulator's clock; /clock is bridged in quad_gz_sim.
     def remaps(exe):
         if exe != 'image_features':
             return []
-        return [('/quad/camera/image_raw', LaunchConfiguration('camera_topic'))]
+        suffix = LaunchConfiguration('vision_out_suffix')
+        # Identity when vision_out_suffix is empty (the SITL default).
+        return [('/quad/camera/image_raw', LaunchConfiguration('camera_topic'))] + [
+            (t, [t, suffix]) for t in ('ImFeat_vector', 'ImFeat_valid', 'a_value')]
 
-    return LaunchDescription(args + [
-        Node(package=PKG, executable=exe, name=exe,
-             output='screen' if verbose else 'log',
-             remappings=remaps(exe),
-             parameters=params(exe))
-        for exe, verbose in NODES
-    ])
+    def prefix(exe, context):
+        if exe != 'image_features':
+            return {}
+        cpu = LaunchConfiguration('image_features_cpu').perform(context)
+        return {'prefix': 'taskset -c ' + cpu} if cpu else {}
+
+    def nodes(context, *a, **k):
+        return [
+            Node(package=PKG, executable=exe, name=exe,
+                 output='screen' if verbose else 'log',
+                 remappings=remaps(exe),
+                 parameters=params(exe),
+                 # Fast DDS's default shared-memory segment is 512 KiB; image_features'
+                 # incoming frame (1152x648 bgr8) is 2.24 MB. Under CPU contention a
+                 # publisher this much larger than the segment gets silently dropped well
+                 # before the OS network layer, even though the publisher reports a
+                 # healthy fps - the LARGE_DATA transport profile raises the segment (and
+                 # the UDP fallback's max message size) to fit. Every quad_cam / quad_control
+                 # participant sets this the same way - see camera.launch.py.
+                 additional_env={'FASTDDS_BUILTIN_TRANSPORTS': 'LARGE_DATA'},
+                 **prefix(exe, context))
+            for exe, verbose in NODES
+        ]
+
+    return LaunchDescription(args + [OpaqueFunction(function=nodes)])

@@ -27,6 +27,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
+#include "quad_control/third_party/aruco_nano.h"
 //Including Eigen library
 #include <eigen3/Eigen/Dense>
 
@@ -152,7 +153,13 @@ void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
 	try
 	{
-		frame = cv_bridge::toCvShare(msg, "bgr8")->image; //Saving the image
+		// toCvCopy, not toCvShare: when the publisher's encoding already matches ("bgr8",
+		// which the real camera driver sends) toCvShare hands back a cv::Mat that only
+		// borrows the message buffer, and the ConstSharedPtr keeping that buffer alive is
+		// this temporary - so `frame` dangles the moment the callback returns and the next
+		// detectMarkers() reads freed memory (SIGSEGV). SITL only survived because the gz
+		// bridge publishes rgb8, forcing a converting copy. The copy is ~2 MB/frame, nil.
+		frame = cv_bridge::toCvCopy(msg, "bgr8")->image; //Saving the image
 	}
 	
 	catch(cv_bridge::Exception& e)
@@ -195,7 +202,22 @@ int main(int argc, char *argv[])
 	auto u_coord_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("u_coordinates",100);
 	auto n_coord_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("n_coordinates",100);
 	
-    auto sub = node->create_subscription<sensor_msgs::msg::Image>("/quad/camera/image_raw", 1, imageCallback); //Gazebo_camera 
+	// image_qos: "reliable" (default, matches ros_gz_bridge in SITL and is the drop-in for
+	// a RELIABLE camera driver) or "sensor_data" (BEST_EFFORT, the correct choice once the
+	// publisher is one too) - a RELIABLE subscription against a BEST_EFFORT publisher
+	// receives nothing silently, and the reverse pairing can back-pressure a struggling
+	// publisher (observed on the real camera under full-graph CPU load). The topic itself
+	// is still selected by remapping /quad/camera/image_raw via camera_topic, above.
+	const std::string image_qos_kind = node->declare_parameter<std::string>(
+		"image_qos", "reliable");
+	if (image_qos_kind != "reliable" && image_qos_kind != "sensor_data")
+		RCLCPP_WARN(node->get_logger(), "image_qos:=%s is not reliable or sensor_data, using reliable",
+		            image_qos_kind.c_str());
+	const rclcpp::QoS image_qos = (image_qos_kind == "sensor_data")
+		? rclcpp::QoS(rclcpp::SensorDataQoS())
+		: rclcpp::QoS(1);
+
+    auto sub = node->create_subscription<sensor_msgs::msg::Image>("/quad/camera/image_raw", image_qos, imageCallback); //Gazebo_camera
     //auto sub = node->create_subscription<sensor_msgs::msg::Image>("camera/image", 1, imageCallback); //Real camera
 	//auto attitude_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_attitude", 1, attitude_callback);
 	auto attitude_sub = node->create_subscription<geometry_msgs::msg::Twist>("attitude_estimates", 1, attEstCallback);
@@ -260,7 +282,61 @@ int main(int argc, char *argv[])
 	RCLCPP_INFO(node->get_logger(), "marker dictionary: DICT_%s_50",
 	            dict_name == "4x4" ? "4X4" : dict_name == "5x5" ? "5X5" :
 	            dict_name == "6x6" ? "6X6" : "7X7");
-	cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(dict_it->second);
+	cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(dict_it->second);
+
+	// useAruco3Detection (Romero-Ramirez et al. 2018, "Speeded up detection of squared
+	// fiducial markers"): candidate-quad search - the adaptiveThreshold+findContours pass
+	// that dominates detectMarkers' cost - runs on a downscaled "canonical" image instead
+	// of the full frame; corner refinement still runs through an image pyramid back up to
+	// full resolution, so decode accuracy is unaffected. Off (OpenCV's own default) unless
+	// a caller opts in, so a bare launch (SITL) is unchanged - hardware.launch.py is the
+	// one that turns it on with a ratio computed from the deployed marker-size budget.
+	//
+	// min_marker_length_ratio (tau_i in the paper): the smallest marker side length, as a
+	// fraction of max(width,height), that must still resolve in the downscaled candidate
+	// search. 0.0 (OpenCV's default) makes useAruco3Detection a no-op regardless of the
+	// bool above - the two parameters only do something together. See camera-geometry.md /
+	// printable-target.md for how a caller should derive this from zD and target_scale.
+	const bool use_aruco3 = node->declare_parameter<bool>("use_aruco3_detection", false);
+	const double min_marker_ratio =
+		node->declare_parameter<double>("min_marker_length_ratio", 0.0);
+
+	// 0 (default) leaves OpenCV's own thread count untouched - a blind change here isn't
+	// safe to assume, it needs an A/B against whatever CPU-pinning (image_features_cpu)
+	// is or isn't in effect: TBB spinning up worker threads it can't actually schedule
+	// once pinned to one core is pure overhead, but unpinned it may help.
+	const int cv_num_threads = node->declare_parameter<int>("cv_num_threads", 0);
+	if (cv_num_threads > 0)
+		cv::setNumThreads(cv_num_threads);
+
+	// Built once, not every loop iteration: only launch parameters (set once, above) ever
+	// change these fields, so re-constructing a DetectorParameters + re-initializing every
+	// default field 50x/s (even on an empty/idle frame) was pure waste.
+	cv::aruco::DetectorParameters parameters;
+	parameters.useAruco3Detection = use_aruco3;
+	parameters.minMarkerLengthRatioOriginalImg = static_cast<float>(min_marker_ratio);
+	if (use_aruco3)
+		RCLCPP_INFO(node->get_logger(), "aruco3 detection: on, min_marker_length_ratio %.4f",
+		            min_marker_ratio);
+	else
+		RCLCPP_INFO(node->get_logger(), "aruco3 detection: off");
+	cv::aruco::ArucoDetector detector(dictionary, parameters);
+
+	// "opencv" (default) keeps today's validated behavior; "nano" switches to
+	// aruco_nano's detector - a different algorithm (not a recompile of the same one),
+	// so it's opt-in and revertible via a launch arg with no rebuild until its
+	// detection reliability has been field-validated the same way the OpenCV path has.
+	const std::string detector_backend =
+		node->declare_parameter<std::string>("detector_backend", "opencv");
+	if (detector_backend != "opencv" && detector_backend != "nano")
+	{
+		RCLCPP_FATAL(node->get_logger(),
+		             "detector_backend:=%s is not one of opencv, nano.", detector_backend.c_str());
+		return 1;
+	}
+	const bool use_nano = (detector_backend == "nano");
+	aruco_nano::ArucoDetector nano_detector(dictionary);
+	RCLCPP_INFO(node->get_logger(), "aruco detector backend: %s", detector_backend.c_str());
 
 	qx = 0;
 	qy = 0;
@@ -279,17 +355,18 @@ int main(int argc, char *argv[])
 
     while (rclcpp::ok())
 	{
-        //Initializing the detector parameters using default values
-		cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
-		//Declaring the 2D vectors that contain the aruco's corners and rejected candidates 
-		std::vector<std::vector<cv::Point2f>> markerCorners, rejectCandidates;
+		//Declaring the 2D vector that contains the aruco's corners
+		std::vector<std::vector<cv::Point2f>> markerCorners;
 		//Declaring a vector to save de ID numbers of the detected arucos
 		std::vector<int> markerIds;
-		
+
 		if(!frame.empty())
 		{
 			//Detect the markers in the image
-		cv::aruco::detectMarkers(frame, dictionary, markerCorners, markerIds, parameters, rejectCandidates);
+		if (use_nano)
+			nano_detector.detectMarkers(frame, markerCorners, markerIds);
+		else
+			detector.detectMarkers(frame, markerCorners, markerIds);
 		}
 		else
 		{

@@ -7,7 +7,9 @@
 #
 for p in "[g]z sim" "[p]x4_sitl" "[M]icroXRCEAgent" "[p]arameter_bridge" "[c]amera_distort" \
          "[t]arget_position" "[d]isturbances" "[i]mage_features" "[p]os_ctrl" \
-         "[f]ixed_eso" "[i]bvs_gate" "[p]x4_takeoff_gate"; do
+         "[f]ixed_eso" "[i]bvs_gate" "[p]x4_takeoff_gate" \
+         "[c]amera_node" "[t]d_attitude" "[t]d_linear" "[a]tt_ctrl" \
+         "[b]ench_feeder" "[p]robe_bench"; do
     pkill -f "$p" 2>/dev/null
 done
 sleep 3

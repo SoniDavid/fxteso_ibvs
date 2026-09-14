@@ -21,6 +21,9 @@ PKG = 'quad_control'
 def generate_launch_description():
     args = [
         DeclareLaunchArgument('attitude_controller', default_value='true'),
+        # true in SITL, false on the aircraft (no /clock). Default keeps sim.launch.py /
+        # sitl.launch.py unchanged - they do not forward this.
+        DeclareLaunchArgument('use_sim_time', default_value='true'),
         # Servoing depth. 2.5 is the value pos_ctrl carried hardcoded and every recorded bag
         # was flown at; a smaller one is what a low lab ceiling needs. It has to move together
         # with image_features' aD and with the plant's takeoff altitude - the caller owns that.
@@ -37,7 +40,8 @@ def generate_launch_description():
 
         def params(exe):
             # Only pos_ctrl declares zD; handing it to att_ctrl would fail its launch.
-            p = {'use_sim_time': True}
+            p = {'use_sim_time': ParameterValue(
+                LaunchConfiguration('use_sim_time'), value_type=bool)}
             if exe == 'pos_ctrl':
                 p['zD'] = ParameterValue(LaunchConfiguration('zD'), value_type=float)
                 p['quad_mass'] = ParameterValue(
@@ -47,7 +51,11 @@ def generate_launch_description():
         return [
             Node(package=PKG, executable=exe, name=exe,
                  output='screen' if verbose else 'log',
-                 parameters=params(exe))
+                 parameters=params(exe),
+                 # Matches estimation.launch.py's camera-size fix - kept consistent across
+                 # every participant in this DDS graph rather than only the nodes that
+                 # touch large messages.
+                 additional_env={'FASTDDS_BUILTIN_TRANSPORTS': 'LARGE_DATA'})
             for exe, verbose in nodes
         ]
 

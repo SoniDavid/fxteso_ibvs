@@ -7,3 +7,5 @@ bags/
 *.db3
 docs/
 __pycache__/
+bench_*.log
+src/vision_opencv/
