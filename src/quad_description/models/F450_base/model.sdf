@@ -200,7 +200,7 @@
             <!-- 820x616 is Camera Module 2's 1640x1232 binned mode at half linear resolution,
                  so a marker is exactly half as many pixels here as on the hardware. This whole
                  <camera> block is rewritten by gz_sim.launch.py's camera:= argument, from
-                 quad_gz_sim/config/cameras.yaml; these values are the default preset and what
+                 quad_description/config/cameras.yaml; these values are the default preset and what
                  a bare `gz sim` on this model gets. image_features derives its fx from the
                  same table, never from these literals. -->
             <width>820</width>

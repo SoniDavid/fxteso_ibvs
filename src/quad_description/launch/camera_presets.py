@@ -1,13 +1,13 @@
 """The camera preset table and everything derived from it.
 
-One implementation, because the numbers have to reach two places that must never disagree:
-the <camera> block gz-sim renders, and image_features' feature model. A mismatch there does
-not fail - it silently computes image moments against a camera that was not rendered.
+One implementation, because the numbers have to reach places that must never disagree: the
+<camera> block gz-sim renders, the Pi camera driver, and image_features' feature model. A mismatch
+does not fail - it silently computes image moments against a camera that was not rendered.
 
-Imported by gz_sim.launch.py directly, and by the top-level launch files (quad_px4's
-sitl.launch.py, quad_utils' sim.launch.py) through importlib, since share/<pkg>/launch is not
-on sys.path. The offline footprint calculator reads the same YAML, so the two agree by
-construction rather than by convention.
+Lives in quad_description, not quad_gz_sim, because the Pi cannot build the simulator and flies
+from the same table. Loaded through importlib by gz_sim.launch.py, quad_px4's sitl/hardware
+launches, quad_utils' sim/observer_only launches and quad_cam's bench launch, since
+share/<pkg>/launch is not on sys.path. The offline footprint calculator reads the same YAML.
 """
 import math
 import os
@@ -16,7 +16,7 @@ import yaml
 
 from ament_index_python.packages import get_package_share_directory
 
-PKG = 'quad_gz_sim'
+PKG = 'quad_description'
 
 # Camera Module 3 Wide at 2304x1296. The widest preset that still clears the 50 Hz loop, which
 # is what gives the acquisition transient the field of view it needs.
@@ -30,6 +30,9 @@ FOCAL_LENGTH = 0.00304
 # mu20+mu02 at unit scale and unit depth; the quiet zone around each marker does not enter it,
 # which is why the derivation below reproduces the flown constant exactly.
 CENTROID_MOMENT = 0.5625
+
+# Marker ink, black edge to black edge, at target_scale 1.0. The printed 0.5 plate carries 122.2 mm.
+MARKER_INK = 0.2445
 
 # The rate image_features and fixed_eso both run at.
 LOOP_HZ = 50.0
@@ -72,6 +75,16 @@ def resolve(camera, target_scale=1.0, zD=2.5):
         'native': list(cam['native']),
         'aD': CENTROID_MOMENT * target_scale ** 2 * (FOCAL_LENGTH / zD) ** 2,
     }
+
+
+def marker_px(cam, target_scale, zD):
+    """Nominal marker side in pixels at the servoing depth, at the width cam['fx'] was sized for."""
+    return MARKER_INK * target_scale * cam['fx'] / zD
+
+
+def min_marker_ratio(cam, target_scale, zD, margin=0.7):
+    """aruco3's minMarkerLengthRatioOriginalImg: margin x the nominal marker, over the long side."""
+    return margin * marker_px(cam, target_scale, zD) / max(cam['width'], cam['height'])
 
 
 def summary(cam, zD, camera_rate=0.0):
