@@ -100,6 +100,7 @@ def generate_launch_description():
                     {'initial_estimate_offset':
                          LaunchConfiguration('initial_estimate_offset'),
                      'observer_omega': LaunchConfiguration('observer_omega'),
+                     'z_des': LaunchConfiguration('zD'),
                      'camera_hfov': '%.9f' % cam['hfov'],
                      'camera_width': str(cam['width']),
                      'camera_height': str(cam['height']),

@@ -30,7 +30,7 @@ Start-up runs through two gates:
                                       [px4_dir:=...] [xrce_agent:=...]
 
 Defaults: module3wide_2304, takeoff at 1.5 m, servo at zD 1.2 with a 0.5-scale target, holding
-station. See RUNS.md at the repository root for the standing configurations.
+station. See RUNNING.md at the repository root for the standing configurations.
 
 Prerequisites, both one-off:
   git submodule update --init --recursive external/PX4-Autopilot
@@ -46,7 +46,8 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
                             IncludeLaunchDescription, LogInfo, OpaqueFunction,
-                            RegisterEventHandler, Shutdown, TimerAction)
+                            RegisterEventHandler, SetLaunchConfiguration, Shutdown,
+                            TimerAction)
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -140,28 +141,22 @@ def generate_launch_description():
         DeclareLaunchArgument('foxglove', default_value='false'),
         DeclareLaunchArgument('disturbance', default_value='none'),
         DeclareLaunchArgument('disturbance_seed', default_value='0'),
-        # Scale the magnitudes in quad_gz_sim/config/disturbances.yaml; one number per sweep
-        # point, with the YAML keeping the shape.
         DeclareLaunchArgument('gust_scale', default_value='1.0'),
         DeclareLaunchArgument('wind_scale', default_value='1.0'),
         DeclareLaunchArgument('gust_tau', default_value='1.5'),
-        # table52 only: scales the Von Karman sigmas, leaving the mean schedule alone.
         DeclareLaunchArgument('turbulence_scale', default_value='1.0'),
-        # Target trajectory; see quad_gz_sim/scenario.launch.py. 'hover' pairs with the default
-        # depth below; the 'thesis' course wants the 2.5 m geometry - see RUNS.md.
+        # 'thesis' wants the 2.5 m geometry — see RUNNING.md.
         DeclareLaunchArgument('target_profile', default_value='hover'),
         DeclareLaunchArgument('target_speed', default_value='1.0'),
         DeclareLaunchArgument('target_yaw_rate', default_value='0.1'),
         DeclareLaunchArgument('target_accel', default_value='0.5'),
         # Above zero, places fixed_eso's x/y gains as a triple pole at this rate.
         DeclareLaunchArgument('observer_omega', default_value='0.0'),
-        # 4S, not 3S: at 2.0 kg a 9545 on 3S needs 91% throttle to hover, which leaves the
-        # attitude loop nothing. On 4S the same prop gives T/W 2.07 and hovers at 0.65.
+        # 4S, not 3S: 9545 on 3S needs 91% throttle to hover at 2.0 kg, leaving attitude loop nothing.
         DeclareLaunchArgument('battery_cells', default_value='4'),
         DeclareLaunchArgument('prop', default_value='9545'),
-        # No per-plant value: at n=8 against n=6, 18 and 9 are indistinguishable on px4.
+        # Table 5.3 thesis values: gamma2_xy=10, gamma3_xy=7, gamma3_yaw=7.
         DeclareLaunchArgument('gamma1_xy', default_value='18.0'),
-        # Table 5.3 has gamma2_xy 10, gamma3_xy 7, gamma3_yaw 7.
         DeclareLaunchArgument('gamma2_xy', default_value='20.0'),
         DeclareLaunchArgument('gamma3_xy', default_value='4.0'),
         DeclareLaunchArgument('gamma3_yaw', default_value='3.0'),
@@ -170,28 +165,25 @@ def generate_launch_description():
         DeclareLaunchArgument('alpha_yaw', default_value='0.75'),
         DeclareLaunchArgument('beta_yaw', default_value='1.2'),
         DeclareLaunchArgument('gamma4_yaw', default_value='0.001'),
-        # 1.0 is the as-flown observer yaw sign; -1.0 is thesis Eq. 5.81's -1.
+        # 1.0 is as-flown; -1.0 is thesis Eq. 5.81's sign.
         DeclareLaunchArgument('eso_yaw_sign', default_value='1.0'),
-        # Seeded initial estimation error (qx,qy,qz,qpsi) added to fixed_eso's initial state.
-        # Sweeping it is how the fixed-time claim gets measured: settling time must stay
-        # bounded as this grows. Available on estimation.launch.py; exposed here so it can be
-        # flown against the px4 plant rather than only the analytic one.
+        # Seeded estimation error (qx,qy,qz,qpsi). Sweep to verify fixed-time convergence claim.
         DeclareLaunchArgument('initial_estimate_offset', default_value='[0.0, 0.0, 0.0, 0.0]'),
-        # How aligned the markers must be before pos_ctrl takes over. |qpsi| at
-        # handover separates held from collapsed runs at ~0.17; 0 disables the test.
+        # Empty = use zD. A mismatch books part of the command as disturbance and feeds it back.
+        # Pass 2.5 to reproduce runs flown before 2026-09-04 (A/B arm only, not a normal setting).
+        DeclareLaunchArgument('eso_z_des', default_value=''),
+        # Known harmful: re-arms OFFBOARD off the heartbeat while the loop is still blind.
+        DeclareLaunchArgument('offboard_recovery', default_value='false'),
+        # |qpsi| at handover separates held from collapsed runs at ~0.17; 0 disables.
         DeclareLaunchArgument('max_feature_error', default_value='0.15'),
-        # Settled hover held before handover. EKF2's pitch reads ~0.019 rad high for the
-        # first 10 s and decays through zero by ~25 s; commanding 0 against that bias is
-        # 0.18 m/s^2 of uncommanded forward acceleration, straight into the tight FOV axis.
+        # EKF2 pitch bias ~0.019 rad for first 10 s → 0.18 m/s² uncommanded acceleration.
         DeclareLaunchArgument('estimators_ready', default_value='5.0'),
-        # ibvs_gate's own default. Raise it when the aircraft needs longer to align: PX4
-        # latches its yaw setpoint against an EKF2 heading that has not finished aligning, so
-        # the true yaw swings tens of degrees during takeoff and unwinds over ~100 s. The
-        # target is held until handover, so waiting costs wall clock and nothing else.
+        # PX4 yaw unwinds over ~100 s after takeoff; target is held so waiting costs only wall clock.
         DeclareLaunchArgument('gate_timeout', default_value='120.0'),
-        # EKF2 only fuses mag heading while horizontal acceleration exceeds this and GNSS is
-        # aiding. 0.0 keeps heading aided through station-keeping; PX4's default is 0.5.
-        # Exposed so the two can be A/B'd without a rebuild.
+        # One arg drives every node so they cannot disagree. See RUNNING.md for full explanation.
+        DeclareLaunchArgument('venue', default_value='indoor',
+                              choices=['outdoor', 'indoor']),
+        # 0.0 keeps heading aided through station-keeping (PX4 default is 0.5).
         DeclareLaunchArgument('mag_acclim', default_value='0.0'),
         DeclareLaunchArgument(
             'px4_dir',
@@ -203,32 +195,28 @@ def generate_launch_description():
             default_value=os.path.expanduser(
                 '~/Robotics/Micro-XRCE-DDS-Agent/build/MicroXRCEAgent'),
             description='MicroXRCEAgent binary. It is not normally on PATH.'),
-        # Anchors the newton -> normalized thrust map; keep equal to MPC_THR_HOVER in the
-        # fork's airframes/22100_gz_F450_px4, which documents how it was measured.
+        # Must equal MPC_THR_HOVER in the airframe — a drift silently mis-scales every command.
         DeclareLaunchArgument('hover_thrust', default_value='0.6461'),
-        # Camera module and sensor mode; see quad_gz_sim/config/cameras.yaml. Feeds both the
-        # rendered <camera> block and image_features' intrinsics, from one table.
+        # Feeds both the rendered <camera> block and image_features' intrinsics from one table.
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
-        # 0.5 is the printed target, 450 x 375 mm - the sheet that exists, not a tuned value.
+        # 0.5 = printed target, 450×375 mm — the sheet that exists, not a tuned value.
         DeclareLaunchArgument('target_scale', default_value='0.5'),
         DeclareLaunchArgument('marker_dict', default_value='7x7'),
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
-        # Servoing depth. aD follows from it and target_scale, and MIS_TAKEOFF_ALT is pushed
-        # into PX4 to match - otherwise takeoff delivers the aircraft to the wrong depth and
-        # the feature vector is mis-scaled from the first frame.
-        # Servoing depth, and the tighter of the two geometries flown: the field-of-view budget
-        # and the station-keeping margin both shrink with it.
+        # Degrees from +x. 0 = tight FOV axis; 90 = wide axis (~2× field budget).
+        DeclareLaunchArgument('target_heading', default_value='0.0'),
+        # m/s per axis, scaled by wind_scale. Default points down the camera's tight axis.
+        DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
+        # Hides target to exercise lock-loss path. 0 disables.
+        DeclareLaunchArgument('blackout_at', default_value='0.0'),
+        DeclareLaunchArgument('blackout_for', default_value='3.0'),
+        # aD and MIS_TAKEOFF_ALT are both derived from zD — one number drives three things.
         DeclareLaunchArgument('zD', default_value='1.2'),
-        # Depth at handover. Empty means "use zD". 1.5 against zD 1.2 is deliberate: take off
-        # high and descend onto the target rather than climb to it. Empty gives no depth error.
+        # 1.5 > zD 1.2: take off high, descend onto target. Pass 'zD' to start at servo depth.
         DeclareLaunchArgument('takeoff_alt', default_value='1.5'),
-        # How close to takeoff_alt the gate insists on. The node's own 0.5 m default is wide
-        # enough to straddle the depth stability threshold, making the IC an accident.
+        # Node default (0.5 m) straddles the depth stability threshold — tighten it here.
         DeclareLaunchArgument('takeoff_tolerance', default_value='0.10'),
-        # Where the recorder starts. 'handover' records the servoing run and nothing before it,
-        # which is what every flight wants. 'launch' is for measuring the OBSERVER: fixed_eso
-        # starts at the takeoff gate and converges in ~1 s, so a recorder started at handover -
-        # or even at the gate, since it needs ~1 s to come up - misses the transient entirely.
+        # 'launch' needed for observer experiments: fixed_eso converges in ~1 s post-gate.
         DeclareLaunchArgument('record_from', default_value='handover',
                               description='handover | launch'),
     ]
@@ -236,7 +224,28 @@ def generate_launch_description():
     def takeoff_alt_of(context):
         """takeoff_alt, defaulting to zD. One resolver so PX4 and the gate cannot disagree."""
         raw = LaunchConfiguration('takeoff_alt').perform(context).strip()
+        if not raw or raw.lower() == 'zd':
+            return float(LaunchConfiguration('zD').perform(context))
+        return float(raw)
+
+    def _normalise_takeoff_alt(context):
+        """Resolve takeoff_alt to a number before any consumer reads it.
+
+        px4_takeoff_gate is a plain Node and re-implements the "empty means zD" rule as a
+        PythonExpression, so there are two resolvers where the comment above promises one. Pinning
+        the launch configuration here collapses them: downstream both see a plain number, and
+        `takeoff_alt:=zD` works everywhere rather than reaching value_type=float as a string.
+        """
+        return [SetLaunchConfiguration('takeoff_alt', '%.6f' % takeoff_alt_of(context))]
+
+    def eso_z_des_of(context):
+        """eso_z_des, defaulting to zD - the same idiom as takeoff_alt_of, for the same reason."""
+        raw = LaunchConfiguration('eso_z_des').perform(context).strip()
         return float(raw) if raw else float(LaunchConfiguration('zD').perform(context))
+
+    def _indoor(context):
+        """venue:=indoor. One resolver, for the same reason takeoff_alt_of is one."""
+        return LaunchConfiguration('venue').perform(context).strip().lower() == 'indoor'
 
     simulation = [
         include(SIM_PKG, 'gz_sim.launch.py',
@@ -261,6 +270,10 @@ def generate_launch_description():
                  'target_speed': LaunchConfiguration('target_speed'),
                  'target_yaw_rate': LaunchConfiguration('target_yaw_rate'),
                  'target_accel': LaunchConfiguration('target_accel'),
+                 'target_heading': LaunchConfiguration('target_heading'),
+                 'wind_velocity': LaunchConfiguration('wind_velocity'),
+                 'blackout_at': LaunchConfiguration('blackout_at'),
+                 'blackout_for': LaunchConfiguration('blackout_for'),
                  'zD': LaunchConfiguration('zD')}),
     ]
 
@@ -300,7 +313,27 @@ def generate_launch_description():
 
         # Loss of marker lock stops the setpoint stream. The default 0 = Position expects RC
         # that SITL has not, so the aircraft descends; 5 = Hold is the only recoverable mode.
-        env['PX4_PARAM_COM_OBL_RC_ACT'] = '5'
+        # Indoors Hold needs a horizontal estimate that does not exist, so 1 = Altitude.
+        env['PX4_PARAM_COM_OBL_RC_ACT'] = '1' if _indoor(context) else '5'
+
+        # BOTH branches, always: PX4 saves these into parameters.bson, so a one-sided value
+        # would survive into the next run of the other venue.
+        indoor = _indoor(context)
+        # Bitmask: 7 is PX4's default, 0 is no GNSS aiding. EKF2 then dead-reckons
+        # horizontally, which nothing downstream uses.
+        env['PX4_PARAM_EKF2_GPS_CTRL'] = '0' if indoor else '7'
+        # 0 barometric, 1 GPS. Indoors the barometer is the ONLY height source there is.
+        env['PX4_PARAM_EKF2_HGT_REF'] = '0' if indoor else '1'
+        # Set explicitly, not trusted to its default: PX4 intermittently refuses to arm with
+        # "Preflight Fail: barometer 0 missing".
+        env['PX4_PARAM_SIM_GZ_EN_BARO'] = '1'
+
+        # 4 ignores every stick source; 1 is MAVLink only, so PX4 accepts sim_pilot's stream.
+        # On the real aircraft this must be 0 (RC only) - the pilot is on a transmitter.
+        env['PX4_PARAM_COM_RC_IN_MODE'] = '1' if indoor else '4'
+        # From boot until disarm, not the default "while armed": the start-up failures worth
+        # diagnosing are exactly the runs that never arm, which would log nothing.
+        env['PX4_PARAM_SDLOG_MODE'] = '1'
 
         # Takeoff has to deliver the aircraft to the depth image_features' aD was computed
         # for, or the feature vector is mis-scaled from the first frame. Same derivation, one
@@ -318,14 +351,26 @@ def generate_launch_description():
                 'hover_thrust:=%.4f but %s on %dS derives %.4f. Pass hover_thrust:=%.4f.'
                 % (declared, prop, cells, thr_hover, thr_hover))
 
+        px4_proc = ExecuteProcess(cmd=[binary], cwd=rootfs, env=env,
+                                  name='px4_sitl', output='screen')
+
         return [
             ExecuteProcess(cmd=[agent, 'udp4', '-p', '8888'],
                            name='micro_xrce_agent', output='log'),
             # px4-rc.gzsim already polls 30 s for the world; this just keeps the console clean.
-            TimerAction(period=5.0, actions=[
-                ExecuteProcess(cmd=[binary], cwd=rootfs, env=env,
-                               name='px4_sitl', output='screen'),
-            ]),
+            TimerAction(period=5.0, actions=[px4_proc]),
+            # gz_bridge now refuses to boot on a sensor whose gz stream never arrived. Without
+            # this the run would idle to px4_takeoff_gate's 60 s no-PX4 timeout instead.
+            # Positive codes only: a negative one is the signal WE sent it during a teardown
+            # already in progress, which is not a cause and must not be reported as one.
+            RegisterEventHandler(OnProcessExit(
+                target_action=px4_proc,
+                on_exit=lambda event, context: (
+                    [LogInfo(msg='px4_sitl exited %d during start-up - see its error above.'
+                                 % event.returncode),
+                     Shutdown(reason='px4 exited')]
+                    if (event.returncode or 0) > 0 else []
+                ))),
         ]
 
     state_adapter = Node(
@@ -337,6 +382,17 @@ def generate_launch_description():
                      'origin_down': SPAWN_NED[2],
                      'frame_yaw_offset': FRAME_YAW_OFFSET}])
 
+    def _sim_pilot(context, *a, **k):
+        """venue:=indoor only. Nothing else can get the aircraft off the ground there."""
+        if not _indoor(context):
+            return []
+        return [Node(
+            package=PKG, executable='sim_pilot', name='sim_pilot', output='screen',
+            parameters=[{'use_sim_time': True,
+                         # Same resolver as the bridge's, or the pilot stops climbing below the
+                         # height the bridge is waiting for and the handover never happens.
+                         'takeoff_altitude': takeoff_alt_of(context)}])]
+
     def _offboard_bridge(context, *a, **k):
         # Must come from the SAME resolver as MIS_TAKEOFF_ALT and the takeoff gate: left at the
         # node's own default the bridge never streams below it, and records loiter as servoing.
@@ -346,6 +402,12 @@ def generate_launch_description():
             parameters=[{'use_sim_time': True,
                          'hover_thrust': LaunchConfiguration('hover_thrust'),
                          'takeoff_altitude': takeoff_alt_of(context),
+                         'bringup': ('pilot' if _indoor(context) else 'auto'),
+                         # sim_pilot has no consent input and never will - it is not a person.
+                         # hardware.launch.py is where this stays true.
+                         'require_consent': False,
+                         'offboard_recovery': ParameterValue(
+                             LaunchConfiguration('offboard_recovery'), value_type=bool),
                          # Same value as the adapter's: one rotates into the workspace frame,
                          # the other rotates back out of it.
                          'frame_yaw_offset': FRAME_YAW_OFFSET}])]
@@ -382,7 +444,11 @@ def generate_launch_description():
                                            "' or '", LaunchConfiguration('zD'), "'"]),
                          value_type=float),
                      'tolerance': ParameterValue(
-                         LaunchConfiguration('takeoff_tolerance'), value_type=float)}])
+                         LaunchConfiguration('takeoff_tolerance'), value_type=float),
+                     # Indoors cs_gnss_pos never comes true. Yaw alignment is still required.
+                     'require_gnss': ParameterValue(
+                         PythonExpression(["'", LaunchConfiguration('venue'),
+                                           "' != 'indoor'"]), value_type=bool)}])
 
     # Same gate as the other plants: exits 0 once the aircraft is placed, the target is
     # placed and the markers have held a lock.
@@ -394,7 +460,12 @@ def generate_launch_description():
                              'estimators_ready': ParameterValue(
                                  LaunchConfiguration('estimators_ready'), value_type=float),
                              'timeout': ParameterValue(
-                                 LaunchConfiguration('gate_timeout'), value_type=float)}])
+                                 LaunchConfiguration('gate_timeout'), value_type=float),
+                             # tgt_position is the simulator's scenario generator; on hardware
+                             # the target is a printed plate and no such topic exists.
+                             'require_target': ParameterValue(
+                                 PythonExpression(["'", LaunchConfiguration('venue'),
+                                                   "' != 'indoor'"]), value_type=bool)}])
 
     # pos_ctrl publishing desired_attitude is what tips px4_offboard_bridge into OFFBOARD,
     # so starting it here is the handover. att_ctrl stays off: PX4 owns the inner loop.
@@ -425,6 +496,7 @@ def generate_launch_description():
                 float(LaunchConfiguration('camera_rate').perform(context)))),
             include(CTRL_PKG, 'estimation.launch.py',
                     {'initial_estimate_offset': LaunchConfiguration('initial_estimate_offset'),
+                     'z_des': '%.6f' % eso_z_des_of(context),
                      'gamma1_xy': LaunchConfiguration('gamma1_xy'),
                      'gamma2_xy': LaunchConfiguration('gamma2_xy'),
                      'gamma3_xy': LaunchConfiguration('gamma3_xy'),
@@ -460,7 +532,9 @@ def generate_launch_description():
         )))
 
     return LaunchDescription(
-        args + [OpaqueFunction(function=_bag_at_launch)] + simulation
+        args + [OpaqueFunction(function=_normalise_takeoff_alt),
+                OpaqueFunction(function=_bag_at_launch)] + simulation
         + [OpaqueFunction(function=_px4), state_adapter,
+           OpaqueFunction(function=_sim_pilot),
            OpaqueFunction(function=_offboard_bridge), viz,
            estimation, takeoff_gate])

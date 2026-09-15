@@ -1,4 +1,3 @@
-//Including ROS libraries
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include <chrono>
@@ -9,11 +8,9 @@
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <std_msgs/msg/bool.hpp>
-//Including C++ nominal libraries
 #include <iostream>
 #include <math.h>
 #include <vector>
-//Including Eigen library
 #include <eigen3/Eigen/Dense>
 #include <stdexcept>
 
@@ -54,7 +51,10 @@ float beta3 = 0;
 
 float fx = 0;
 float gx_u = 0;
-float quad_mass = 2;
+float quad_mass = 2;   // overridden by the quad_mass parameter; see main()
+// The DESIRED servoing depth, thesis Eq. 5.81's z_d, which sets the input coefficient
+// g_xi = -1/z_d on x/y/z. It has to track pos_ctrl's zD: the thesis' -2.5 m is its own
+// choice of depth, not a constant. Overridden by the z_des parameter; see main().
 float z_des = 2.5;
 
 float yawRate_desired = 0;
@@ -143,42 +143,33 @@ int main(int argc, char *argv[])
 
 	fxteso::SimRate loop_rate(node, 50);	
 
-    // The one gain that has to differ per plant: plant:=px4's inner loop lags 244 ms against
-    // analytic's ~80 ms, so it needs a lower value here to get a truer error_dot out of x2_hat.
-    const float gamma1_xy = node->declare_parameter<double>("gamma1_xy", 18.0);
-
-    // Above zero, replaces the x/y triple with a triple pole at -observer_omega, i.e. thesis
-    // Eq. 4.72's Hurwitz polynomial placed rather than hand-picked. Zero keeps gamma1_xy.
+const float gamma1_xy = node->declare_parameter<double>("gamma1_xy", 18.0);
     const double observer_omega = node->declare_parameter<double>("observer_omega", 0.0);
-
-    // The remaining departures from Table 5.3, exposed so the thesis set can be flown as-is:
-    // thesis has gamma2_xy 10, gamma3_xy 7, gamma3_yaw 7.
     const float gamma2_xy = node->declare_parameter<double>("gamma2_xy", 20.0);
     const float gamma3_xy = node->declare_parameter<double>("gamma3_xy", 4.0);
     const float gamma3_yaw = node->declare_parameter<double>("gamma3_yaw", 3.0);
-    // Yaw's position injection, 5 against x/y's 18. Low gamma1 measured worse on x/y, and the
-    // yaw channel feeds a second integrator in pos_ctrl, so it is exposed to be swept.
     const float gamma1_yaw = node->declare_parameter<double>("gamma1_yaw", 5.0);
     const float gamma2_yaw = node->declare_parameter<double>("gamma2_yaw", 16.0);
-    // Remark 5 tunes alpha and beta FIRST and calls alpha the noise-sensitivity knob; Eq. 4.72
-    // wants alpha just under 1 and gamma4 > L1, measured ~0.05 on yaw against the flown 0.001.
     const float alpha_yaw = node->declare_parameter<double>("alpha_yaw", 0.75);
     const float beta_yaw = node->declare_parameter<double>("beta_yaw", 1.2);
     const float gamma4_yaw = node->declare_parameter<double>("gamma4_yaw", 0.001);
-    // Yaw's g(xi)*u sign. Thesis Eq. 5.81 gives -1 and pos_ctrl's Omega carries -1, but this
-    // channel has always been flown at +1. Default is as-flown so nothing changes silently.
     const float eso_yaw_sign = node->declare_parameter<double>("eso_yaw_sign", 1.0);
 
-    // Added to the observer's initial state estimate, so this vector IS the seeded initial
-    // estimation error. Zeros reproduce the thesis start; sweeping it is how the fixed-time
-    // convergence claim - settling time independent of initial error - gets tested.
     const std::vector<double> x0_offset =
         node->declare_parameter<std::vector<double>>("initial_estimate_offset",
-                                                     {0.0, 0.0, 0.0, 0.0});
+                                                      {0.0, 0.0, 0.0, 0.0});
     if (x0_offset.size() != 4)
         throw std::runtime_error("initial_estimate_offset needs exactly 4 values (qx,qy,qz,qpsi).");
 
-    //ROS publishers and subscribers
+    // Thesis Eq. 5.81: g_xi,x = g_xi,y = g_xi,z = -1/z_d, with z_d "the desired normal distance
+    // between the UAV and its target". It is the same quantity as pos_ctrl's zD and must be set
+    // to it - a mismatch leaves the part of the command the observer cannot explain to be booked
+    // as disturbance, which pos_ctrl then feeds back in. Yaw is exempt: g_xi,psi = -1, no depth.
+    z_des = node->declare_parameter<double>("z_des", z_des);
+    // Thesis value, 8% above the F450 SDF's 1.852 kg. Exposed for the real airframe; the default
+    // changes nothing.
+    quad_mass = node->declare_parameter<double>("quad_mass", quad_mass);
+
     auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);
     auto im_feat_valid_sub = node->create_subscription<std_msgs::msg::Bool>("ImFeat_valid", 1, imFeatValidCallback);
     auto ctrl_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ibvs_control_input", 1, ibvsCtrlCallback);  
@@ -207,13 +198,8 @@ int main(int argc, char *argv[])
     x2_hat_dot << 0, 0, 0, 0;
     x3_hat_dot << 0, 0, 0, 0;
 
-    // //GAINS WITH MODEL UNCERTAINTIES
-   // gamma2/gamma1 on x/y sets how much of x1_hat_dot reaches x2_hat - which pos_ctrl uses
-   // as error_dot, its only damping term; at the thesis' 18/10 the injection took 75% of it.
-   gamma1 << gamma1_xy, gamma1_xy, 16, gamma1_yaw;
+gamma1 << gamma1_xy, gamma1_xy, 16, gamma1_yaw;
    gamma2 << gamma2_xy, gamma2_xy, 14, gamma2_yaw;
-   // Yaw is 3, not the thesis' 7; x/y are 4 for a related reason - ibvs_dist integrates this
-   // gain and pos_ctrl feeds it back in phase, which was 0.5 of the command at the 0.3 Hz mode.
    gamma3 << gamma3_xy, gamma3_xy, 21, gamma3_yaw;
    gamma4 << 0.001, 0.001, 0.001, gamma4_yaw;
 
@@ -223,20 +209,24 @@ int main(int argc, char *argv[])
        gamma2(0) = gamma2(1) = 3 * w * w;
        gamma3(0) = gamma3(1) = w * w * w;
    }
-  
-     /*
-     
-    gamma1 << 16, 16, 16, 12;
-   gamma2 << 14, 14, 14, 14;
-   gamma3 << 6, 6, 21, 3;
-   gamma4 << 0.0001, 0.0001, 0.001, 0.001;
-*/
 
 
     
     mu1 = gamma1;
     mu2 = gamma2;
     mu3 = gamma3;
+
+    // The node logged nothing at all until 2026-09-04, which is how a z_des frozen at 2.5 while
+    // zD moved to 1.2 went unnoticed. A bag records neither, and run_matrix deletes a successful
+    // run's launch log, so this line plus the manifest are the record of what was flown.
+    RCLCPP_INFO(node->get_logger(),
+                "servoing depth z_des = %.3f m, mass = %.3f kg%s", z_des, quad_mass,
+                eso_yaw_sign < 0.0 ? ", yaw g(xi) sign -1 (thesis Eq. 5.81)" : "");
+    RCLCPP_INFO(node->get_logger(),
+                "gains xy (%.3g,%.3g,%.3g) z (%.3g,%.3g,%.3g) yaw (%.3g,%.3g,%.3g) "
+                "gamma4_yaw %.3g alpha %.3g beta %.3g",
+                gamma1(0), gamma2(0), gamma3(0), gamma1(2), gamma2(2), gamma3(2),
+                gamma1(3), gamma2(3), gamma3(3), gamma4(3), alpha_yaw, beta_yaw);
     
 
     im_feat_est_var.x = imFeat_estimate(0);

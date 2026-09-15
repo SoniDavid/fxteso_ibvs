@@ -1,0 +1,54 @@
+# PX4 parameters for the real aircraft: indoor Vicon lab, GPS-denied, safety pilot on RC.
+# QGC format: <sysid> <compid> <name> <value> <type>; type 6 = INT32, 9 = REAL32.
+# NOT derived from the SITL airframe, which a real FC cannot load and which disables failsafes.
+# Every failsafe action below must name a POSITION-FREE mode: PX4 dead-reckons a local position
+# that is kilometres wrong indoors, and will act on it.
+
+# No GNSS aiding at all (7 is PX4's default bitmask).
+1	1	EKF2_GPS_CTRL	0	6
+# Barometric height; indoors it is the only source.
+1	1	EKF2_HGT_REF	0	6
+# PX4's default. The SITL airframe's 0.0 disables the mag-heading observability guard.
+1	1	EKF2_MAG_ACCLIM	0.5	9
+
+# TODO BEFORE FLIGHT: the lab's declination. Without GNSS nothing supplies it, and the default
+# is silently zero. DECL_TYPE 6 clears bit 0 so MAG_DECL is used.
+#1	1	EKF2_DECL_TYPE	6	6
+#1	1	EKF2_MAG_DECL	0.0	9
+
+# RC only. The safety pilot is on a transmitter, not on DDS.
+1	1	COM_RC_IN_MODE	0	6
+
+# Offboard loss -> Altitude. Default 0 (Position) and 5 (Hold) both need horizontal position.
+1	1	COM_OBL_RC_ACT	1	6
+# With the bridge's 0.3 s setpoint timeout this is the 1.3 s authority gap.
+1	1	COM_OF_LOSS_T	1.0	9
+# RC loss -> Land. Default 2 is Return, which needs a home position.
+1	1	NAV_RCL_ACT	3	6
+# Datalink loss disabled; the ground station is not in the control path.
+1	1	NAV_DLL_ACT	0	6
+# No exceptions: bit 2 would exempt offboard from the RC-loss failsafe.
+1	1	COM_RCL_EXCEPT	0	6
+# Geofence off. Default 2 is Hold, reachable indoors via the baro-only vertical fence.
+1	1	GF_ACTION	0	6
+# Warning only; the pilot is on the sticks.
+1	1	COM_ACT_FAIL_ACT	0	6
+# Warning only; 3 and 4 both Return, which is unavailable here.
+1	1	COM_LOW_BAT_ACT	0	6
+
+# TODO BEFORE FLIGHT: measure on a real hover, and pass the same number as hover_thrust:=.
+# The SITL 0.6461 comes from the simulated rotor table.
+1	1	MPC_THR_HOVER	0.60	9
+
+# MC_*RATE_* are deliberately absent. The SITL gains were tuned against Gazebo's rotor model;
+# start from the PX4 F450 defaults or autotune, then record the result here.
+
+# From boot until disarm. Start-up failures never arm, so the default 0 logs nothing.
+1	1	SDLOG_MODE	1	6
+
+# TODO IF USING RC CONSENT: map the handover switch to AUX1, then launch consent_rc_aux:=1.
+# Unmapped, aux1 is NaN, which reads as no consent.
+#1	1	RC_MAP_AUX1	7	6
+
+# No COM_FLTMODE* slot may be Position: PX4 parks user_intended_mode at POSCTL when Position
+# cannot run, locking the loop out of OFFBOARD. Set the slots with the pilot.

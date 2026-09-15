@@ -208,13 +208,21 @@ static void hoverProfile()
 	yawRate = 0;
 }
 
-// Straight line along +x, ramped at `accel` to `speed` and then held. Sweeping `speed` to
-// the point of lock loss measures the b1 of Assumption 7.
-static void lineProfile(float speed, float accel)
+// Straight line ramped at `accel` to `speed` and then held, along a heading measured from +x.
+// Sweeping `speed` to the point of lock loss measures the b1 of Assumption 7.
+//
+// `heading` exists because the camera's footprint is NOT square: at zD 1.2 module3wide_2304
+// covers 2.96 m along the image's long axis and 1.67 m along its short one, and world +x maps to
+// the SHORT one - so a target travelling along +x runs down the tightest direction the sensor
+// has (0.62 m of slack against 1.31 m). heading=90 puts the travel on the wide axis instead,
+// which is the simulation equivalent of mounting the camera rotated 90 degrees. Default 0
+// reproduces every run flown before 2026-09-05.
+static void lineProfile(float speed, float accel, float heading)
 {
 	const float t_ramp = (accel > 0) ? speed / accel : 0;
-	xp = (t < t_ramp) ? accel * t : speed;
-	yp = 0;
+	const float v = (t < t_ramp) ? accel * t : speed;
+	xp = v * cos(heading);
+	yp = v * sin(heading);
 	yawRate = 0;
 }
 
@@ -274,6 +282,15 @@ int main(int argc, char** argv)
 	const float speed = node->declare_parameter<double>("speed", 1.0);
 	const float yaw_rate = node->declare_parameter<double>("yaw_rate", 0.1);
 	const float accel = node->declare_parameter<double>("accel", 0.5);
+	// Direction of travel for `line`, degrees from +x. 0 is the short (tight) image axis and is
+	// what every pre-2026-09-05 run flew; 90 is the wide axis. See lineProfile.
+	const float heading =
+		node->declare_parameter<double>("heading", 0.0) * static_cast<float>(M_PI) / 180.0f;
+	// Hide the target for a window to exercise the lock-loss path. Needs > 1.3 s (bridge
+	// setpoint_timeout 0.3 s + COM_OF_LOSS_T 1.0 s) before PX4 fails safe. 0 disables.
+	const float blackout_at = node->declare_parameter<double>("blackout_at", 0.0);
+	const float blackout_for = node->declare_parameter<double>("blackout_for", 3.0);
+	bool was_blacked_out = false;
 	// The servoing depth /position_error is measured against. Hardcoded at 2.5 it put a
 	// constant (zD - 2.5) bias on the z error of every run flown at another depth.
 	const float zD = node->declare_parameter<double>("zD", 2.5);
@@ -374,7 +391,7 @@ int main(int argc, char** argv)
 		else if (profile == "hover")
 			hoverProfile();
 		else if (profile == "line")
-			lineProfile(speed, accel);
+			lineProfile(speed, accel, heading);
 		else if (profile == "circle")
 			circleProfile(speed, yaw_rate);
 		else
@@ -389,7 +406,20 @@ int main(int argc, char** argv)
 		error(1) = quad_pos(1) - pos_y;
 		error(2) = quad_pos(2) + zD + pos_z;
 
-		tgt_position.x = pos_x;
+		// Only the PUBLISHED value moves; pos_x/pos_y keep integrating, so the target returns
+		// exactly where it would have been.
+		const bool blacked_out =
+			blackout_at > 0.0f && t >= blackout_at && t < blackout_at + blackout_for;
+		if (blacked_out != was_blacked_out)
+		{
+			RCLCPP_WARN(node->get_logger(), blacked_out
+			            ? "BLACKOUT: hiding the target for %.1f s at t=%.1f"
+			            : "blackout over at t=%.1f (%.1f s)",
+			            blacked_out ? blackout_for : t, blacked_out ? t : blackout_for);
+			was_blacked_out = blacked_out;
+		}
+
+		tgt_position.x = pos_x + (blacked_out ? 1000.0f : 0.0f);
 		tgt_position.y = pos_y;
 		tgt_position.z = -pos_z;
 	

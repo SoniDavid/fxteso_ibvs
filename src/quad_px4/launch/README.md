@@ -36,7 +36,7 @@ in another terminal.
     # the same, recorded and without the Gazebo window
     ros2 launch quad_px4 sitl.launch.py headless:=true rosbag:=true
 
-`RUNS.md` at the repository root lists the standing configurations. Run `./cleanup.sh` before
+`RUNNING.md` at the repository root lists the standing configurations. Run `./cleanup.sh` before
 each one - it kills a previous run's processes and waits for the ports to be released.
 
 ## Arguments
@@ -81,7 +81,7 @@ repoints `image_features` at `/quad/camera/image_distorted`; a zero vector leave
 | `target_scale` | `0.5` | Scales the ArUco target; the default is 450 × 375 mm printed. Larger markers buy field-of-view slack and cost decode pixels. `aD` follows automatically. |
 | `marker_dict` | `7x7` | `7x7` (the thesis, and every archived bag) or `4x4`, which decodes at about two thirds the pixel size. Same IDs, so corner ordering is unchanged. |
 | `camera_rate` | `0.0` | Above zero, overrides the sensor's update rate — use it to fly the real mode's fps against the 50 Hz loop instead of the sim's free 50. |
-| `zD` | `1.2` | Servoing depth. `aD`, `MIS_TAKEOFF_ALT` and the takeoff gate are all derived from it, so it is one number, not three. See `RUNS.md` for the 2.5 m configuration. |
+| `zD` | `1.2` | Servoing depth. `aD`, `MIS_TAKEOFF_ALT` and the takeoff gate are all derived from it, so it is one number, not three. See `RUNNING.md` for the 2.5 m configuration. |
 
 ### Disturbance
 
@@ -108,7 +108,7 @@ altitude-dependent sigmas are evaluated at follows `zD` automatically.
 
 | argument | default | what it does |
 | --- | --- | --- |
-| `target_profile` | `hover` | `thesis`, `hover`, `line`, `circle`, `steps`. `thesis` is the archived trajectory: it ends near t = 165 s with hover to ~260 s, and its 0.9 m/s peak wants the 2.5 m geometry — see `RUNS.md`. |
+| `target_profile` | `hover` | `thesis`, `hover`, `line`, `circle`, `steps`. `thesis` is the archived trajectory: it ends near t = 165 s with hover to ~260 s, and its 0.9 m/s peak wants the 2.5 m geometry — see `RUNNING.md`. |
 | `target_speed` | `1.0` | m/s. Used by `line`, `circle`, `steps`. |
 | `target_yaw_rate` | `0.1` | rad/s. Used by `circle`. |
 | `target_accel` | `0.5` | m/s². Used by `line` and `steps`. |
@@ -194,7 +194,7 @@ is larger than the seeded offset and is what the result must be keyed on.
 ## Recipes
 
 The standing configurations — the deployment and thesis conditions, the wind cases, the
-observer ladder — are in `RUNS.md` at the repository root. These are the argument shapes it
+observer ladder — are in `RUNNING.md` at the repository root. These are the argument shapes it
 does not cover:
 
     # separate what the field of view buys from what the assumed barrel profile costs

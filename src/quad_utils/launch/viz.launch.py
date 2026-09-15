@@ -19,6 +19,7 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription, Log
 from launch.launch_description_sources import AnyLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 PKG = 'quad_utils'
 
@@ -36,11 +37,15 @@ def _variants():
 def generate_launch_description():
     args = [DeclareLaunchArgument('foxglove', default_value='false'),
             # Only used to name the layout to import; the preset itself is quad_gz_sim's.
-            DeclareLaunchArgument('camera', default_value='')]
+            DeclareLaunchArgument('camera', default_value=''),
+            # False on hardware, and on a bag replayed without --clock.
+            DeclareLaunchArgument('use_sim_time', default_value='true')]
 
     tf_broadcaster = Node(
         package=PKG, executable='tf_broadcaster', name='tf_broadcaster',
-        output='log', parameters=[{'use_sim_time': True}])
+        output='log',
+        parameters=[{'use_sim_time': ParameterValue(
+            LaunchConfiguration('use_sim_time'), value_type=bool)}])
 
     def _foxglove(context, *a, **k):
         if LaunchConfiguration('foxglove').perform(context).lower() != 'true':

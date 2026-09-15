@@ -1,4 +1,3 @@
-//Including ROS libraries
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include <chrono>
@@ -6,11 +5,9 @@
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/twist.hpp>
-//Including C++ nominal libraries
 #include <iostream>
 #include <math.h>
 #include <vector>
-//Including Eigen library
 #include <eigen3/Eigen/Dense>
 
 float step = 0.02;

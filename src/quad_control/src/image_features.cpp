@@ -1,4 +1,3 @@
-//Including ROS libraries
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include <chrono>
@@ -12,25 +11,23 @@
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/twist.hpp>
-//Including C++ nominal libraries
 #include <iostream>
 #include <map>
 #include <set>
+#include <algorithm>
+#include <chrono>
 #include <math.h>
 #include <cmath>
 #include <string>
 #include <vector>
-//Including opencv libraries
 #include <opencv2/aruco.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
-//Including Eigen library
 #include <eigen3/Eigen/Dense>
 
-//Declaring global variables
 cv::Mat frame;
 
 // float, not int: these feed mu11/mu20/mu02 directly, and truncating each centroid to a
@@ -76,21 +73,47 @@ float a;
 // moves instead. Overridden by launch; this literal is the default camera's value.
 float aD = 0.00000076589;
 
-//Camera intrinsic parameters
 float focal_length = 0.00304;
 
-// Intrinsics, taken from /quad/camera/camera_info once it arrives. Only the ratio
-// pixel_size/focal_length = 1/fx enters the model, so focal_length stays a nominal scale and
-// pixel_size is derived from fx. The literals below are the fallback until the topic is seen.
 bool have_caminfo = false;
-float cam_fx = 693.3f;      // 0.00304 / 4.38462e-6, the value the constants below imply
-float cam_cx = 410.0f;      // 820 / 2
-float cam_cy = 308.0f;      // 616 / 2
+float cam_fx = 693.3f;
+float cam_cx = 410.0f;
+float cam_cy = 308.0f;
 cv::Mat cam_K, cam_D;
-bool cam_distorted = false; // false keeps the undistortion out of the path entirely
+bool cam_distorted = false;
+
+int expect_width = 0;
+int expect_height = 0;
+rclcpp::Time last_image_stamp(0, 0, RCL_ROS_TIME);
+bool have_image_stamp = false;
 
 void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr info)
 {
+    // An all-zero d[] means "not calibrated", not "rectified": keep the parameters.
+    bool any_d = false;
+    for (size_t i = 0; i < info->d.size(); ++i)
+        if (info->d[i] != 0.0)
+            any_d = true;
+    if (!any_d && cam_distorted)
+    {
+        RCLCPP_WARN_ONCE(rclcpp::get_logger("image_features"),
+                         "camera_info carries an all-zero distortion vector while the launch "
+                         "parameters model distortion - ignoring it and keeping the parameters. "
+                         "Publish real coefficients, or clear camera_distortion, to change this.");
+        return;
+    }
+
+    if (expect_width > 0 &&
+        (static_cast<int>(info->width) != expect_width ||
+         static_cast<int>(info->height) != expect_height))
+    {
+        RCLCPP_ERROR_ONCE(rclcpp::get_logger("image_features"),
+                          "camera_info is %ux%u but camera_width/height say %dx%d - ignoring it. "
+                          "Fix the launch parameters to match the driver.",
+                          info->width, info->height, expect_width, expect_height);
+        return;
+    }
+
     cam_fx = info->k[0];
     cam_cx = info->k[2];
     cam_cy = info->k[5];
@@ -112,12 +135,8 @@ void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr info)
                     cam_distorted ? "distortion modelled" : "no distortion");
     have_caminfo = true;
 }
-// Tracks the camera in quad_description/models/F450/model.sdf - change one, change both.
 float pixel_size = 0.00000438462;
 
-/////////////////////////Functions///////////////////////////////
-
-//Matrix R_phi_theta
 Eigen::Matrix3f Rtp(float roll, float pitch)
 {
     Eigen::Matrix3f pitch_mat;
@@ -147,75 +166,81 @@ Eigen::Matrix3f Ryaw(float yaw)
     return yaw_mat;
 }
 
-/////////////////////ROS Subscribers//////////////////////////////////
 void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
+	if (expect_width > 0 &&
+	    (static_cast<int>(msg->width) != expect_width ||
+	     static_cast<int>(msg->height) != expect_height))
+	{
+		frame = cv::Mat();
+		RCLCPP_ERROR_ONCE(rclcpp::get_logger("image_features"),
+		                  "image is %ux%u but camera_width/height say %dx%d - refusing to servo "
+		                  "on it. Pass the size the driver actually publishes.",
+		                  msg->width, msg->height, expect_width, expect_height);
+		return;
+	}
+
 	try
 	{
-		frame = cv_bridge::toCvShare(msg, "bgr8")->image; //Saving the image
+		frame = cv_bridge::toCvShare(msg, "bgr8")->image;
+		last_image_stamp = rclcpp::Time(msg->header.stamp);
+		have_image_stamp = last_image_stamp.nanoseconds() != 0;
 	}
-	
+
 	catch(cv_bridge::Exception& e)
-	{ 
+	{
 		RCLCPP_ERROR(rclcpp::get_logger("image_features"), "Couldn't convert from '%s' to 'bgr8'.", msg->encoding.c_str());
 	}
 }
-
-/*void attitude_callback(const geometry_msgs::msg::Vector3::ConstSharedPtr att)
-{
-	uav_att(0) = att->x;
-	uav_att(1) = att->y;
-	uav_att(2) = att->z;
-}*/
 
 void attEstCallback(const geometry_msgs::msg::Twist::ConstSharedPtr aE)
 {
     uav_att(0) = aE->linear.x;
     uav_att(1) = aE->linear.y;
     uav_att(2) = aE->linear.z;
-    
-    
 }
 
 
-////////////////////Main program//////////////////////////////////////
 int main(int argc, char *argv[])
 {
 	rclcpp::init(argc, argv);
 	auto node = rclcpp::Node::make_shared("image_features");
 
-	fxteso::SimRate loop_rate(node, 50);	
+	const double kLoopHz = 50.0;
+	fxteso::SimRate loop_rate(node, kLoopHz);
     
-    //ROS publishers and subscribers
 	auto im_feat_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("ImFeat_vector",100);
-	// True only when all four markers decoded. ImFeat_vector's (0,0,1,0) no-lock sentinel is
-	// numerically identical to the servo setpoint, so telling the two apart requires this.
 	auto im_feat_valid_pub = node->create_publisher<std_msgs::msg::Bool>("ImFeat_valid",100);
     auto a_value_pub = node->create_publisher<std_msgs::msg::Float64>("a_value",100);
 	auto u_coord_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("u_coordinates",100);
 	auto n_coord_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("n_coordinates",100);
 	
-    auto sub = node->create_subscription<sensor_msgs::msg::Image>("/quad/camera/image_raw", 1, imageCallback); //Gazebo_camera 
-    //auto sub = node->create_subscription<sensor_msgs::msg::Image>("camera/image", 1, imageCallback); //Real camera
-	//auto attitude_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_attitude", 1, attitude_callback);
+	const std::string image_topic =
+		node->declare_parameter<std::string>("image_topic", "/quad/camera/image_raw");
+	const std::string caminfo_topic =
+		node->declare_parameter<std::string>("camera_info_topic", "/quad/camera/camera_info");
+	const bool sensor_qos = node->declare_parameter<bool>("sensor_qos", false);
+	const rclcpp::QoS image_qos =
+		sensor_qos ? rclcpp::QoS(rclcpp::SensorDataQoS()) : rclcpp::QoS(rclcpp::KeepLast(1));
+	RCLCPP_INFO(node->get_logger(), "image: %s (%s), camera_info: %s",
+	            image_topic.c_str(), sensor_qos ? "best-effort" : "reliable",
+	            caminfo_topic.c_str());
+
+	auto sub = node->create_subscription<sensor_msgs::msg::Image>(
+		image_topic, image_qos, imageCallback);
 	auto attitude_sub = node->create_subscription<geometry_msgs::msg::Twist>("attitude_estimates", 1, attEstCallback);
 	auto caminfo_sub = node->create_subscription<sensor_msgs::msg::CameraInfo>(
-		"/quad/camera/camera_info", 1, cameraInfoCallback);
+		caminfo_topic, image_qos, cameraInfoCallback);
 
-	// The image-moment area at the desired depth. It scales as fx^2, so a different
-	// camera needs a different value - hover at zD and read /a_value to measure it.
 	aD = node->declare_parameter<double>("aD", aD);
 
-	// Intrinsics from the camera the world is actually rendering. gz-sim does not publish
-	// camera_info here, so these come from the launch file, which is the same place the SDF
-	// camera block is chosen - one source of truth. camera_info still wins if it ever arrives.
 	const double p_hfov = node->declare_parameter<double>("camera_hfov", 1.085595);
 	const int p_width = node->declare_parameter<int>("camera_width", 820);
 	const int p_height = node->declare_parameter<int>("camera_height", 616);
-	// Brown-Conrady k1,k2,p1,p2,k3. All-zero means no distortion and the undistortion step
-	// is skipped entirely; an empty default cannot be statically typed, hence the zeros.
 	const std::vector<double> p_dist = node->declare_parameter<std::vector<double>>(
 		"camera_distortion", {0.0, 0.0, 0.0, 0.0, 0.0});
+	expect_width = p_width;
+	expect_height = p_height;
 	cam_fx = p_width / (2.0 * tan(p_hfov / 2.0));
 	cam_cx = p_width / 2.0f;
 	cam_cy = p_height / 2.0f;
@@ -234,8 +259,6 @@ int main(int argc, char *argv[])
 	            p_width, p_height, p_hfov, cam_fx,
 	            cam_distorted ? "distortion modelled" : "no distortion");
 	
-	    
-    //Declaring local variables
     geometry_msgs::msg::Quaternion im_feat_vec;
     std_msgs::msg::Bool im_feat_valid;
     std_msgs::msg::Float64 a_val;
@@ -244,8 +267,6 @@ int main(int argc, char *argv[])
 
     e3 << 0,0,1;
     
-	//Loading the dictionary where the aruco markers belong to. 7x7 is the thesis' and every
-	// recorded bag's; 4x4 is 6 modules a side against 9, so it decodes at ~2/3 the pixel size.
 	const std::map<std::string, int> kDicts = {
 		{"4x4", cv::aruco::DICT_4X4_50}, {"5x5", cv::aruco::DICT_5X5_50},
 		{"6x6", cv::aruco::DICT_6X6_50}, {"7x7", cv::aruco::DICT_7X7_50}};
@@ -266,7 +287,6 @@ int main(int argc, char *argv[])
 	qy = 0;
 	qz = 1;
 	qpsi  = 0;
-	//Publishing data via Rostopics
     im_feat_vec.x = qx;
     im_feat_vec.y = qy;
 	im_feat_vec.z = qz;
@@ -277,19 +297,28 @@ int main(int argc, char *argv[])
 	im_feat_valid_pub->publish(im_feat_valid);
 	loop_rate.sleepFor(1.7);
 
+	cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
+
+	double detect_ms_max = 0.0;
+	double detect_ms_sum = 0.0;
+	long detect_n = 0;
+	auto last_timing_report = std::chrono::steady_clock::now();
+
     while (rclcpp::ok())
 	{
-        //Initializing the detector parameters using default values
-		cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
-		//Declaring the 2D vectors that contain the aruco's corners and rejected candidates 
 		std::vector<std::vector<cv::Point2f>> markerCorners, rejectCandidates;
-		//Declaring a vector to save de ID numbers of the detected arucos
 		std::vector<int> markerIds;
-		
+
 		if(!frame.empty())
 		{
+			const auto t0 = std::chrono::steady_clock::now();
 			//Detect the markers in the image
-		cv::aruco::detectMarkers(frame, dictionary, markerCorners, markerIds, parameters, rejectCandidates);
+			cv::aruco::detectMarkers(frame, dictionary, markerCorners, markerIds, parameters, rejectCandidates);
+			const double ms = std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - t0).count();
+			detect_ms_max = std::max(detect_ms_max, ms);
+			detect_ms_sum += ms;
+			++detect_n;
 		}
 		else
 		{
@@ -344,102 +373,87 @@ int main(int argc, char *argv[])
 
 		else
         {
-            //Assignment of Point 1
+            
+			// Assignment of Point 1
 			if (markerIds[0] == 6)
 			{
-				//Corner extraction
 				cv::Point2f p11 = markerCorners[0].at(0);
 				cv::Point2f p21 = markerCorners[0].at(1);
 				cv::Point2f p31 = markerCorners[0].at(2);
 				cv::Point2f p41 = markerCorners[0].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug1 = (p11.x + p21.x + p31.x + p41.x) / 4.0f;
 				ng1 = (p11.y + p21.y + p31.y + p41.y) / 4.0f;
 			}
 			else if (markerIds[1] == 6)
 			{
-				//Corner extraction
 				cv::Point2f p11 = markerCorners[1].at(0);
 				cv::Point2f p21 = markerCorners[1].at(1);
 				cv::Point2f p31 = markerCorners[1].at(2);
 				cv::Point2f p41 = markerCorners[1].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug1 = (p11.x + p21.x + p31.x + p41.x) / 4.0f;
 				ng1 = (p11.y + p21.y + p31.y + p41.y) / 4.0f;
 			}
 			else if (markerIds[2] == 6)
 			{
-				//Corner extraction
 				cv::Point2f p11 = markerCorners[2].at(0);
 				cv::Point2f p21 = markerCorners[2].at(1);
 				cv::Point2f p31 = markerCorners[2].at(2);
 				cv::Point2f p41 = markerCorners[2].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug1 = (p11.x + p21.x + p31.x + p41.x) / 4.0f;
 				ng1 = (p11.y + p21.y + p31.y + p41.y) / 4.0f;
 			}
 			else if (markerIds[3] == 6)
 			{
-				//Corner extraction
 				cv::Point2f p11 = markerCorners[3].at(0);
 				cv::Point2f p21 = markerCorners[3].at(1);
 				cv::Point2f p31 = markerCorners[3].at(2);
 				cv::Point2f p41 = markerCorners[3].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug1 = (p11.x + p21.x + p31.x + p41.x) / 4.0f;
 				ng1 = (p11.y + p21.y + p31.y + p41.y) / 4.0f;
 			}
-			///////////////////////////////////////////////////////////////////////////////////////////////////////////
-			//Assignment of Point 2
+
+			// Assignment of Point 2
 			if (markerIds[0] == 4)
 			{
-				//Corner extraction
 				cv::Point2f p12 = markerCorners[0].at(0);
 				cv::Point2f p22 = markerCorners[0].at(1);
 				cv::Point2f p32 = markerCorners[0].at(2);
 				cv::Point2f p42 = markerCorners[0].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug2 = (p12.x + p22.x + p32.x + p42.x) / 4.0f;
 				ng2 = (p12.y + p22.y + p32.y + p42.y) / 4.0f;
 			}
 			else if (markerIds[1] == 4)
 			{
-				//Corner extraction
 				cv::Point2f p12 = markerCorners[1].at(0);
 				cv::Point2f p22 = markerCorners[1].at(1);
 				cv::Point2f p32 = markerCorners[1].at(2);
 				cv::Point2f p42 = markerCorners[1].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug2 = (p12.x + p22.x + p32.x + p42.x) / 4.0f;
 				ng2 = (p12.y + p22.y + p32.y + p42.y) / 4.0f;
 			}
 			else if (markerIds[2] == 4)
 			{
-				//Corner extraction
 				cv::Point2f p12 = markerCorners[2].at(0);
 				cv::Point2f p22 = markerCorners[2].at(1);
 				cv::Point2f p32 = markerCorners[2].at(2);
 				cv::Point2f p42 = markerCorners[2].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug2 = (p12.x + p22.x + p32.x + p42.x) / 4.0f;
 				ng2 = (p12.y + p22.y + p32.y + p42.y) / 4.0f;
 			}
 			else if (markerIds[3] == 4)
 			{
-				//Corner extraction
-                cv::Point2f p12 = markerCorners[3].at(0);
+				cv::Point2f p12 = markerCorners[3].at(0);
 				cv::Point2f p22 = markerCorners[3].at(1);
 				cv::Point2f p32 = markerCorners[3].at(2);
 				cv::Point2f p42 = markerCorners[3].at(3);
-
-                //Centroid of the aruco
+				// Centroid
 				ug2 = (p12.x + p22.x + p32.x + p42.x) / 4.0f;
 				ng2 = (p12.y + p22.y + p32.y + p42.y) / 4.0f;
 			}
@@ -447,139 +461,98 @@ int main(int argc, char *argv[])
 			//Assignment of Point 3
 			if (markerIds[0] == 8)
 			{
-				//Corner extraction
+				
 				cv::Point2f p13 = markerCorners[0].at(0);
 				cv::Point2f p23 = markerCorners[0].at(1);
-				cv::Point2f p33 = markerCorners[0].at(2);
+cv::Point2f p33 = markerCorners[0].at(2);
 				cv::Point2f p43 = markerCorners[0].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug3 = (p13.x + p23.x + p33.x + p43.x) / 4.0f;
 				ng3 = (p13.y + p23.y + p33.y + p43.y) / 4.0f;
 			}
 			else if (markerIds[1] == 8)
 			{
-				//Corner extraction
 				cv::Point2f p13 = markerCorners[1].at(0);
 				cv::Point2f p23 = markerCorners[1].at(1);
 				cv::Point2f p33 = markerCorners[1].at(2);
 				cv::Point2f p43 = markerCorners[1].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug3 = (p13.x + p23.x + p33.x + p43.x) / 4.0f;
 				ng3 = (p13.y + p23.y + p33.y + p43.y) / 4.0f;
 			}
 			else if (markerIds[2] == 8)
 			{
-				//Corner extraction
 				cv::Point2f p13 = markerCorners[2].at(0);
 				cv::Point2f p23 = markerCorners[2].at(1);
 				cv::Point2f p33 = markerCorners[2].at(2);
 				cv::Point2f p43 = markerCorners[2].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug3 = (p13.x + p23.x + p33.x + p43.x) / 4.0f;
 				ng3 = (p13.y + p23.y + p33.y + p43.y) / 4.0f;
 			}
 			else if (markerIds[3]==8)
 			{
-				//Corner extraction
 				cv::Point2f p13 = markerCorners[3].at(0);
 				cv::Point2f p23 = markerCorners[3].at(1);
 				cv::Point2f p33 = markerCorners[3].at(2);
 				cv::Point2f p43 = markerCorners[3].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug3 = (p13.x + p23.x + p33.x + p43.x) / 4.0f;
 				ng3 = (p13.y + p23.y + p33.y + p43.y) / 4.0f;
 			}
-		////////////////////////////////////////////////////////////////////////////////////7
-			//Assignment of Point 4
+
+			// Assignment of Point 4
 			if (markerIds[0] == 10)
 			{
-				//Corner extraction
-        		cv::Point2f p14 = markerCorners[0].at(0);
+         		cv::Point2f p14 = markerCorners[0].at(0);
 				cv::Point2f p24 = markerCorners[0].at(1);
 				cv::Point2f p34 = markerCorners[0].at(2);
 				cv::Point2f p44 = markerCorners[0].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug4 = (p14.x + p24.x + p34.x + p44.x) / 4.0f;
 				ng4 = (p14.y + p24.y + p34.y + p44.y) / 4.0f;
 			}
 			else if (markerIds[1] == 10)
 			{
-				//Corner extraction
 				cv::Point2f p14 = markerCorners[1].at(0);
 				cv::Point2f p24 = markerCorners[1].at(1);
 				cv::Point2f p34 = markerCorners[1].at(2);
 				cv::Point2f p44 = markerCorners[1].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug4 = (p14.x + p24.x + p34.x + p44.x) / 4.0f;
 				ng4 = (p14.y + p24.y + p34.y + p44.y) / 4.0f;
 			}
 			else if (markerIds[2] == 10)
 			{
-				//Corner extraction
 				cv::Point2f p14 = markerCorners[2].at(0);
 				cv::Point2f p24 = markerCorners[2].at(1);
 				cv::Point2f p34 = markerCorners[2].at(2);
 				cv::Point2f p44 = markerCorners[2].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug4 = (p14.x + p24.x + p34.x + p44.x) / 4.0f;
 				ng4 = (p14.y + p24.y + p34.y + p44.y) / 4.0f;
 			}
 			else if (markerIds[3] == 10)
 			{
-				//Corner extraction
 				cv::Point2f p14 = markerCorners[3].at(0);
 				cv::Point2f p24 = markerCorners[3].at(1);
 				cv::Point2f p34 = markerCorners[3].at(2);
 				cv::Point2f p44 = markerCorners[3].at(3);
-
-				//Centroid of the aruco
+				// Centroid
 				ug4 = (p14.x + p24.x + p34.x + p44.x) / 4.0f;
 				ng4 = (p14.y + p24.y + p34.y + p44.y) / 4.0f;
 			}
-			
-            //Centroid of the target
+
+			// Target centroid
 			ug = (ug1 + ug2 + ug3 + ug4) / 4;
 			ng = (ng1 + ng2 + ng3 + ng4) / 4;
-			
-            /* Indicators
-			cv::circle(frame, cv::Point(ug, ng), 8, cv::Scalar(255, 0, 255));
-			cv::circle(frame, cv::Point(ug1, ng1), 8, cv::Scalar(255, 0, 0));
-			cv::circle(frame, cv::Point(ug2, ng2), 8, cv::Scalar(0, 255, 0));
-			cv::circle(frame, cv::Point(ug3, ng3), 8, cv::Scalar(0, 0, 255));
-			cv::circle(frame, cv::Point(ug4, ng4), 8, cv::Scalar(255, 255, 0));
-			*/
-			
 
-            //Declaring the points required for visual servoing
 			cv::Point2f p1 = cv::Point2f(ug1,ng1);
 			cv::Point2f p2 = cv::Point2f(ug2,ng2);
 			cv::Point2f p3 = cv::Point2f(ug3,ng3);
 			cv::Point2f p4 = cv::Point2f(ug4,ng4);
 
-            //Changing Image coordinates system from the left-top to the center.
-			/*
-											+y	^		
-												|
-												|
-												|
-			      					-x <--------|---------> +x
-					      						|
-			      								|
-			      								|		
-			      								|
-			      								-y		
-					
-			*/
-			// Lens distortion is undone on the four centroids, the way it would be on
-			// hardware. Skipped when the coefficients are zero, so the pinhole path is
-			// bit-for-bit what it was.
+			// Lens distortion undone on centroids; skipped if coefficients are zero
 			std::vector<cv::Point2f> centroids = {
 				cv::Point2f((float)p1.x, (float)p1.y), cv::Point2f((float)p2.x, (float)p2.y),
 				cv::Point2f((float)p3.x, (float)p3.y), cv::Point2f((float)p4.x, (float)p4.y)};
@@ -696,8 +669,26 @@ int main(int argc, char *argv[])
 			
         }
 
+		// Detector cost and frame age. Age is a phantom lateral offset, not just latency.
+		const auto now_wall = std::chrono::steady_clock::now();
+		if (std::chrono::duration<double>(now_wall - last_timing_report).count() >= 10.0)
+		{
+			last_timing_report = now_wall;
+			double age_ms = -1.0;
+			if (have_image_stamp)
+				age_ms = (node->now() - last_image_stamp).seconds() * 1000.0;
+			RCLCPP_INFO(node->get_logger(),
+			            "detectMarkers %.1f ms mean / %.1f ms worst over %ld frames "
+			            "(budget %.1f ms); frame age %.1f ms",
+			            detect_n ? detect_ms_sum / detect_n : 0.0, detect_ms_max, detect_n,
+			            1000.0 / kLoopHz, age_ms);
+			detect_ms_max = 0.0;
+			detect_ms_sum = 0.0;
+			detect_n = 0;
+		}
+
 		loop_rate.sleep();
-	}  
+	}
 
     rclcpp::shutdown();
 

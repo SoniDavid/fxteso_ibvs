@@ -168,6 +168,7 @@ def generate_launch_description():
                 float(LaunchConfiguration('camera_rate').perform(context)))),
             include(CTRL_PKG, 'estimation.launch.py',
                     {'observer_omega': LaunchConfiguration('observer_omega'),
+                     'z_des': LaunchConfiguration('zD'),
                      'gamma1_xy': LaunchConfiguration('gamma1_xy'),
                      'gamma2_xy': LaunchConfiguration('gamma2_xy'),
                      'gamma3_xy': LaunchConfiguration('gamma3_xy'),

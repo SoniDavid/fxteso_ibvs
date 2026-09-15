@@ -1,12 +1,15 @@
 // The setpoint sink for plant:=px4: pos_ctrl's desired attitude and thrust out as OFFBOARD
-// setpoints. WAIT_EKF -> ARM -> TAKEOFF -> (loiter) -> STREAMING -> OFFBOARD.
+// setpoints. auto: WAIT_EKF -> ARM -> TAKEOFF -> STREAMING -> OFFBOARD. pilot: WAIT_EKF ->
+// WAIT_PILOT -> STREAMING -> OFFBOARD, where a human flies it up and this never arms.
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include "quad_px4/px4_topic.hpp"
 
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
+#include <px4_msgs/msg/manual_control_setpoint.hpp>
 #include <px4_msgs/msg/offboard_control_mode.hpp>
 #include <px4_msgs/msg/vehicle_attitude_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
@@ -17,7 +20,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
+using px4_msgs::msg::ManualControlSetpoint;
 using px4_msgs::msg::OffboardControlMode;
 using px4_msgs::msg::VehicleAttitudeSetpoint;
 using px4_msgs::msg::VehicleCommand;
@@ -29,6 +34,7 @@ enum class Phase
 	WaitEkf,     // EKF2 has not converged; do nothing
 	Arm,         // arm command sent, waiting for ARMING_STATE_ARMED
 	Takeoff,     // takeoff commanded, waiting to reach loiter at altitude
+	WaitPilot,   // bringup:=pilot - a human arms and flies it to altitude; we touch nothing
 	Streaming,   // OffboardControlMode flowing, waiting for pos_ctrl
 	Offboard,    // servoing
 };
@@ -40,6 +46,7 @@ static const char *phaseName(Phase p)
 	case Phase::WaitEkf:   return "WaitEkf";
 	case Phase::Arm:       return "Arm";
 	case Phase::Takeoff:   return "Takeoff";
+	case Phase::WaitPilot: return "WaitPilot";
 	case Phase::Streaming: return "Streaming";
 	case Phase::Offboard:  return "Offboard";
 	}
@@ -67,9 +74,38 @@ int main(int argc, char **argv)
 	const double stream_before_switch = node->declare_parameter<double>("stream_before_switch", 1.5);
 	// Retry interval for arm and mode commands, which PX4 may reject while still settling.
 	const double command_retry = node->declare_parameter<double>("command_retry", 1.0);
+	// "auto" arms and commands AUTO_TAKEOFF; "pilot" does neither and waits for the human.
+	// Defaults to the passive one: a bare `ros2 run` must not arm an aircraft.
+	const std::string bringup = node->declare_parameter<std::string>("bringup", "pilot");
+	if (bringup != "auto" && bringup != "pilot")
+	{
+		RCLCPP_FATAL(node->get_logger(), "bringup:=%s must be 'auto' or 'pilot'.", bringup.c_str());
+		return 1;
+	}
+	const bool pilot_bringup = (bringup == "pilot");
+
+	// KNOWN HARMFUL, default false. PX4 recovers on its own; this re-arms OFFBOARD off the
+	// heartbeat alone, while the loop is still blind. Kept only to reproduce E59.
+	const bool offboard_recovery = node->declare_parameter<bool>("offboard_recovery", false);
+	// So an intermittently visible target cannot flap the aircraft between Hold and OFFBOARD.
+	const int max_recoveries = node->declare_parameter<int>("max_recoveries", 5);
+
 	// Must match MIS_TAKEOFF_ALT in the airframe, and so zD in aibvs_pos_ctrl.cpp.
 	const double takeoff_altitude = node->declare_parameter<double>("takeoff_altitude", 2.5);
+	// 0.4 m fires the handover 0.4 m BELOW the target, mid-climb. Callers pass their own.
 	const double altitude_tolerance = node->declare_parameter<double>("altitude_tolerance", 0.4);
+
+	// Altitude alone is not consent: the handover also needs the RC aux switch or ~/handover,
+	// and withdrawing it drops the stream. Defaults true - wait for a person.
+	const bool require_consent = node->declare_parameter<bool>("require_consent", true);
+	// 1..6 selects manual_control_setpoint.auxN; needs RC_MAP_AUXn. 0 = services only.
+	const int consent_aux = node->declare_parameter<int>("consent_rc_aux", 0);
+	const double consent_threshold = node->declare_parameter<double>("consent_rc_threshold", 0.5);
+	if (consent_aux < 0 || consent_aux > 6)
+	{
+		RCLCPP_FATAL(node->get_logger(), "consent_rc_aux:=%d must be 0..6.", consent_aux);
+		return 1;
+	}
 
 	// The mirror of px4_state_adapter's frame_yaw_offset, and MUST be the same number: that one
 	// rotates into the workspace frame, this one rotates back out.
@@ -116,12 +152,23 @@ int main(int argc, char **argv)
 	uint8_t nav_state = 0;
 	uint8_t arming_state = 0;
 	bool have_status = false;
+	// One-way latch: a pilot who has taken over must never have the aircraft grabbed back.
+	bool pilot_has_it = false;
 	auto statusSub = node->create_subscription<VehicleStatus>(
 		px4Topic<VehicleStatus>("/fmu/out/vehicle_status"), px4In,
 		[&](const VehicleStatus::ConstSharedPtr s)
 		{
 			nav_state = s->nav_state;
 			arming_state = s->arming_state;
+			// PX4's own flag. nav_state_user_intention cannot serve: it reads OFFBOARD from the
+			// moment this node commands the mode, so it cannot tell the pilot from us.
+			if (s->failsafe_and_user_took_over && !pilot_has_it)
+			{
+				pilot_has_it = true;
+				RCLCPP_WARN(node->get_logger(),
+				            "the pilot took the aircraft out of a failsafe - offboard recovery "
+				            "is disabled for the rest of this flight.");
+			}
 			have_status = true;
 		});
 
@@ -131,9 +178,58 @@ int main(int argc, char **argv)
 		px4Topic<VehicleLocalPosition>("/fmu/out/vehicle_local_position"), px4In,
 		[&](const VehicleLocalPosition::ConstSharedPtr p)
 		{
-			ekf_ready = p->xy_valid && p->z_valid;
+			// xy_valid needs horizontal aiding, which indoors never arrives; nothing downstream
+			// uses horizontal position.
+			ekf_ready = pilot_bringup ? p->z_valid : (p->xy_valid && p->z_valid);
 			if (p->z_valid)
 				altitude = -p->z;
+		});
+
+	// Two grants, either sufficient, both LIVE: withdrawing one takes the aircraft back.
+	// Only meaningful under bringup:=pilot; auto has no human on the sticks to ask.
+	const bool consent_required = require_consent && pilot_bringup;
+	bool consent_rc = false;
+	bool consent_service = false;
+	auto consentGiven = [&]() { return !consent_required || consent_rc || consent_service; };
+
+	rclcpp::Subscription<ManualControlSetpoint>::SharedPtr manualSub;
+	if (consent_aux > 0)
+	{
+		manualSub = node->create_subscription<ManualControlSetpoint>(
+			px4Topic<ManualControlSetpoint>("/fmu/out/manual_control_setpoint"), px4In,
+			[&](const ManualControlSetpoint::ConstSharedPtr m)
+			{
+				const float aux[6] = {m->aux1, m->aux2, m->aux3, m->aux4, m->aux5, m->aux6};
+				const float v = aux[consent_aux - 1];
+				// An unmapped channel is NaN, which must read as "no".
+				const bool now_rc = m->valid && std::isfinite(v) && v >= consent_threshold;
+				if (now_rc != consent_rc)
+					RCLCPP_WARN(node->get_logger(), "RC consent (aux%d = %.2f): %s",
+					            consent_aux, v, now_rc ? "GRANTED" : "WITHDRAWN");
+				consent_rc = now_rc;
+			});
+	}
+
+	auto handoverSrv = node->create_service<std_srvs::srv::Trigger>(
+		"~/handover",
+		[&](const std_srvs::srv::Trigger::Request::SharedPtr,
+		    std_srvs::srv::Trigger::Response::SharedPtr res)
+		{
+			consent_service = true;
+			RCLCPP_WARN(node->get_logger(), "handover consent GRANTED by service.");
+			res->success = true;
+			res->message = "consent granted";
+		});
+
+	auto abortSrv = node->create_service<std_srvs::srv::Trigger>(
+		"~/abort",
+		[&](const std_srvs::srv::Trigger::Request::SharedPtr,
+		    std_srvs::srv::Trigger::Response::SharedPtr res)
+		{
+			consent_service = false;
+			RCLCPP_WARN(node->get_logger(), "handover consent WITHDRAWN by service.");
+			res->success = true;
+			res->message = "consent withdrawn";
 		});
 
 	// --- helpers --------------------------------------------------------------
@@ -196,6 +292,7 @@ int main(int argc, char **argv)
 
 	// --- state machine --------------------------------------------------------
 	Phase phase = Phase::WaitEkf;
+	int recoveries = 0;   // offboard re-commands spent; see Phase::Offboard
 	bool seen_takeoff = false;
 	rclcpp::Time last_command(0, 0, RCL_ROS_TIME);
 	rclcpp::Time stream_since(0, 0, RCL_ROS_TIME);
@@ -205,6 +302,9 @@ int main(int argc, char **argv)
 		RCLCPP_INFO(node->get_logger(), "%s -> %s", phaseName(phase), phaseName(next));
 		phase = next;
 		last_command = rclcpp::Time(0, 0, RCL_ROS_TIME);
+		// Cleared on every transition: Streaming only initialises it when zero, so a re-entry
+		// would inherit the first timestamp and switch mode before PX4 accepts it.
+		stream_since = rclcpp::Time(0, 0, RCL_ROS_TIME);
 	};
 
 	// True once enough time has passed to retry a command PX4 did not act on.
@@ -218,10 +318,22 @@ int main(int argc, char **argv)
 		return true;
 	};
 
-	RCLCPP_INFO(node->get_logger(),
-	            "Waiting for EKF2. Will arm, take off, then hand over to OFFBOARD on the first "
-	            "desired_attitude. Thrust map: %.2f normalized at %.2f N.",
-	            hover_thrust, weight);
+	if (pilot_bringup)
+		RCLCPP_INFO(node->get_logger(),
+		            "Waiting for EKF2. bringup:=pilot - this will NOT arm or take off. Offboard "
+		            "is requested once the pilot is armed at %.2f m (+/- %.2f) %s. "
+		            "Thrust map: %.2f normalized at %.2f N.",
+		            takeoff_altitude, altitude_tolerance,
+		            consent_required
+		                ? (consent_aux > 0 ? "and consents by RC aux or ~/handover"
+		                                   : "and consents by ~/handover")
+		                : "(CONSENT NOT REQUIRED)",
+		            hover_thrust, weight);
+	else
+		RCLCPP_INFO(node->get_logger(),
+		            "Waiting for EKF2. bringup:=auto - will arm, take off, then hand over to "
+		            "OFFBOARD on the first desired_attitude. Thrust map: %.2f normalized at %.2f N.",
+		            hover_thrust, weight);
 
 	fxteso::SimRate loop_rate(node, rate_hz);
 
@@ -231,11 +343,42 @@ int main(int argc, char **argv)
 		const bool setpoint_fresh =
 			have_setpoint && (now - last_setpoint).seconds() < setpoint_timeout;
 
+		// Withdrawing consent aborts the same way a lock loss does: stop the stream.
+		if ((phase == Phase::Streaming || phase == Phase::Offboard) && !consentGiven())
+		{
+			RCLCPP_ERROR(node->get_logger(),
+			             "consent withdrawn - dropping the offboard stream, PX4 fails safe.");
+			enter(Phase::WaitPilot);
+			loop_rate.sleep();
+			continue;
+		}
+
 		switch (phase)
 		{
 		case Phase::WaitEkf:
 			if (have_status && ekf_ready)
-				enter(Phase::Arm);
+				enter(pilot_bringup ? Phase::WaitPilot : Phase::Arm);
+			break;
+
+		case Phase::WaitPilot:
+			// Passive: no arm, no mode command until the pilot is armed, at height, and
+			// consenting. Streaming will not switch mode until setpoint_fresh anyway.
+			if (arming_state == VehicleStatus::ARMING_STATE_ARMED &&
+			    altitude >= takeoff_altitude - altitude_tolerance &&
+			    consentGiven())
+			{
+				RCLCPP_INFO(node->get_logger(),
+				            "Pilot has it at %.2f m, armed and consenting - requesting offboard.",
+				            altitude);
+				enter(Phase::Streaming);
+			}
+			else if (arming_state == VehicleStatus::ARMING_STATE_ARMED &&
+			         altitude >= takeoff_altitude - altitude_tolerance)
+			{
+				RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
+				                     "At %.2f m and armed, waiting for consent: flip the RC aux "
+				                     "switch or call ~/handover.", altitude);
+			}
 			break;
 
 		case Phase::Arm:
@@ -289,6 +432,34 @@ int main(int argc, char **argv)
 				                     "desired_attitude stale for more than %.2f s - dropping the "
 				                     "offboard stream and letting PX4 fail safe.",
 				                     setpoint_timeout);
+
+				// Still in OFFBOARD means COM_OF_LOSS_T has not expired: nothing to recover from.
+				if (nav_state != VehicleStatus::NAVIGATION_STATE_OFFBOARD)
+				{
+					if (!offboard_recovery)
+						RCLCPP_WARN_THROTTLE(
+							node->get_logger(), *node->get_clock(), 5000,
+							"PX4 has failed safe and offboard_recovery is off - this run is over "
+							"even if the markers come back.");
+					else if (pilot_has_it)
+						RCLCPP_WARN_THROTTLE(
+							node->get_logger(), *node->get_clock(), 5000,
+							"PX4 has failed safe but the pilot has the aircraft - not recovering.");
+					else if (recoveries >= max_recoveries)
+						RCLCPP_WARN_THROTTLE(
+							node->get_logger(), *node->get_clock(), 5000,
+							"PX4 has failed safe and max_recoveries (%d) is spent - not recovering.",
+							max_recoveries);
+					else
+					{
+						++recoveries;
+						RCLCPP_WARN(node->get_logger(),
+						            "PX4 failed safe out of OFFBOARD (nav_state %u). Re-streaming "
+						            "to recover, attempt %d of %d.",
+						            nav_state, recoveries, max_recoveries);
+						enter(Phase::Streaming);
+					}
+				}
 				break;
 			}
 			publishOffboardMode();
