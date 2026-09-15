@@ -25,6 +25,9 @@
   <!-- sitl.launch.py composes the world and estimation layers from these. -->
   <exec_depend>quad_control</exec_depend>
   <exec_depend>quad_gz_sim</exec_depend>
+  <!-- hardware.launch.py: the shared camera presets and the Pi camera driver. -->
+  <exec_depend>quad_description</exec_depend>
+  <exec_depend>quad_cam</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

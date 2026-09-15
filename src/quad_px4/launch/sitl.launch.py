@@ -107,9 +107,10 @@ FRAME_YAW_OFFSET = -math.pi / 2.0
 
 
 def camera_presets():
-    """quad_gz_sim's camera preset resolver - the one implementation of the intrinsics and
+    """quad_description's camera preset resolver - the one implementation of the intrinsics and
     the aD derivation. share/<pkg>/launch is not on sys.path, so it is loaded by path."""
-    path = os.path.join(get_package_share_directory(SIM_PKG), 'launch', 'camera_presets.py')
+    path = os.path.join(get_package_share_directory('quad_description'), 'launch',
+                        'camera_presets.py')
     spec = importlib.util.spec_from_file_location('camera_presets', path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -202,6 +203,21 @@ def generate_launch_description():
         # 0.5 = printed target, 450×375 mm — the sheet that exists, not a tuned value.
         DeclareLaunchArgument('target_scale', default_value='0.5'),
         DeclareLaunchArgument('marker_dict', default_value='7x7'),
+        # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last
+        # detection). aruco3 only applies to opencv.
+        DeclareLaunchArgument('detector_backend', default_value='hybrid'),
+        # aruco_nano tolerances (nano's own 0 / 0 rejects a marker for one mis-read bit).
+        # roi_margin: fraction of the target box.
+        DeclareLaunchArgument('nano_error_correction', default_value='0.3'),
+        DeclareLaunchArgument('nano_border_error_rate', default_value='0.35'),
+        DeclareLaunchArgument('nano_box_filter', default_value='15'),
+        DeclareLaunchArgument('nano_max_revisited', default_value='0.05'),
+        DeclareLaunchArgument('roi_margin', default_value='0.5'),
+        DeclareLaunchArgument('use_aruco3_detection', default_value='false'),
+        # Fraction of the nominal marker size aruco3 must still find.
+        DeclareLaunchArgument('aruco3_margin', default_value='0.7'),
+        # OpenCV threads; at 1 its idle pool stops burning CPU next to nano.
+        DeclareLaunchArgument('cv_num_threads', default_value='1'),
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
         # Degrees from +x. 0 = tight FOV axis; 90 = wide axis (~2× field budget).
         DeclareLaunchArgument('target_heading', default_value='0.0'),
@@ -514,6 +530,18 @@ def generate_launch_description():
                      'camera_distortion': str(cam['distortion']),
                      'aD': '%.12g' % cam['aD'],
                      'marker_dict': LaunchConfiguration('marker_dict'),
+                     'detector_backend': LaunchConfiguration('detector_backend'),
+                     'nano_error_correction': LaunchConfiguration('nano_error_correction'),
+                     'nano_border_error_rate': LaunchConfiguration('nano_border_error_rate'),
+                     'nano_box_filter': LaunchConfiguration('nano_box_filter'),
+                     'nano_max_revisited': LaunchConfiguration('nano_max_revisited'),
+                     'roi_margin': LaunchConfiguration('roi_margin'),
+                     'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
+                     'cv_num_threads': LaunchConfiguration('cv_num_threads'),
+                     'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
+                         cam, float(LaunchConfiguration('target_scale').perform(context)),
+                         float(LaunchConfiguration('zD').perform(context)),
+                         float(LaunchConfiguration('aruco3_margin').perform(context))),
                      'camera_topic': ('/quad/camera/image_distorted'
                                       if any(cam['distortion'])
                                       else '/quad/camera/image_raw')}),

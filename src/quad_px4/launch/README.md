@@ -56,7 +56,7 @@ each one - it kills a previous run's processes and waits for the ports to be rel
 ### Camera and target geometry
 
 `camera` selects a Raspberry Pi module **and a sensor mode** from
-`quad_gz_sim/config/cameras.yaml` — one table that feeds both the `<camera>` block gz-sim
+`quad_description/config/cameras.yaml` — one table that feeds both the `<camera>` block gz-sim
 renders and `image_features`' feature model, so the two cannot disagree. Modes are separate
 presets because not every module reaches the 50 Hz loop at full field of view.
 
@@ -80,6 +80,8 @@ repoints `image_features` at `/quad/camera/image_distorted`; a zero vector leave
 | `camera` | `module3wide_2304` | Preset from the table above. An unknown name fails at launch with the valid list. |
 | `target_scale` | `0.5` | Scales the ArUco target; the default is 450 × 375 mm printed. Larger markers buy field-of-view slack and cost decode pixels. `aD` follows automatically. |
 | `marker_dict` | `7x7` | `7x7` (the thesis, and every archived bag) or `4x4`, which decodes at about two thirds the pixel size. Same IDs, so corner ordering is unchanged. |
+| `detector_backend` | `hybrid` | `hybrid` runs tuned aruco_nano while the target is locked and `cv::aruco::ArucoDetector` on nano's misses and while searching; `nano` and `opencv` run one detector alone. `image_features` logs `detectMarkers (<backend>)` timing every 10 s. |
+| `use_aruco3_detection` | `false` | `opencv` arm only: candidate search on a downscaled image, down to `aruco3_margin` (0.7) of the nominal marker size derived from `camera`, `target_scale` and `zD`. |
 | `camera_rate` | `0.0` | Above zero, overrides the sensor's update rate — use it to fly the real mode's fps against the 50 Hz loop instead of the sim's free 50. |
 | `zD` | `1.2` | Servoing depth. `aD`, `MIS_TAKEOFF_ALT` and the takeoff gate are all derived from it, so it is one number, not three. See `RUNNING.md` for the 2.5 m configuration. |
 
