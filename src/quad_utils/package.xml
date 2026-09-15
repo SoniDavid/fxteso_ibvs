@@ -23,6 +23,7 @@
   <depend>quad_common</depend>
 
   <!-- The layers sim.launch.py composes -->
+  <exec_depend>quad_description</exec_depend>
   <exec_depend>quad_gz_sim</exec_depend>
   <exec_depend>quad_control</exec_depend>
 

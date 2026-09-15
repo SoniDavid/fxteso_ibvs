@@ -40,9 +40,10 @@ def include(pkg, name, launch_arguments=None):
 
 
 def camera_presets():
-    """quad_gz_sim's camera preset resolver - the one implementation of the intrinsics and
+    """quad_description's camera preset resolver - the one implementation of the intrinsics and
     the aD derivation. share/<pkg>/launch is not on sys.path, so it is loaded by path."""
-    path = os.path.join(get_package_share_directory(SIM_PKG), 'launch', 'camera_presets.py')
+    path = os.path.join(get_package_share_directory('quad_description'), 'launch',
+                        'camera_presets.py')
     spec = importlib.util.spec_from_file_location('camera_presets', path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

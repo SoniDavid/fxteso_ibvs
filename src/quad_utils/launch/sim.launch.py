@@ -42,9 +42,10 @@ CTRL_PKG = 'quad_control'
 
 
 def camera_presets():
-    """quad_gz_sim's camera preset resolver - the one implementation of the intrinsics and
+    """quad_description's camera preset resolver - the one implementation of the intrinsics and
     the aD derivation. share/<pkg>/launch is not on sys.path, so it is loaded by path."""
-    path = os.path.join(get_package_share_directory(SIM_PKG), 'launch', 'camera_presets.py')
+    path = os.path.join(get_package_share_directory('quad_description'), 'launch',
+                        'camera_presets.py')
     spec = importlib.util.spec_from_file_location('camera_presets', path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -112,7 +113,7 @@ def generate_launch_description():
         DeclareLaunchArgument('alpha_yaw', default_value='0.75'),
         DeclareLaunchArgument('beta_yaw', default_value='1.2'),
         DeclareLaunchArgument('gamma4_yaw', default_value='0.001'),
-        # Camera module and sensor mode; see quad_gz_sim/config/cameras.yaml. The preset feeds
+        # Camera module and sensor mode; see quad_description/config/cameras.yaml. The preset feeds
         # both the rendered <camera> block and image_features' intrinsics, from one table.
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
         DeclareLaunchArgument('target_scale', default_value='1.0'),
