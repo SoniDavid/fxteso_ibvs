@@ -26,6 +26,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
+#include "quad_control/third_party/aruco_nano.h"
 #include <eigen3/Eigen/Dense>
 
 cv::Mat frame;
@@ -182,7 +183,8 @@ void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr msg)
 
 	try
 	{
-		frame = cv_bridge::toCvShare(msg, "bgr8")->image;
+		// Copy, not share: a bgr8 driver's buffer is only borrowed, and frame outlives the callback.
+		frame = cv_bridge::toCvCopy(msg, "bgr8")->image;
 		last_image_stamp = rclcpp::Time(msg->header.stamp);
 		have_image_stamp = last_image_stamp.nanoseconds() != 0;
 	}
@@ -281,7 +283,65 @@ int main(int argc, char *argv[])
 	RCLCPP_INFO(node->get_logger(), "marker dictionary: DICT_%s_50",
 	            dict_name == "4x4" ? "4X4" : dict_name == "5x5" ? "5X5" :
 	            dict_name == "6x6" ? "6X6" : "7X7");
-	cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(dict_it->second);
+	cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(dict_it->second);
+
+	// nano: aruco_nano. opencv: cv::aruco. hybrid: nano while the last frame held the target, opencv on a
+	// nano miss and whenever unlocked. roi: opencv on a crop around the last full detection first.
+	const std::string detector_backend =
+		node->declare_parameter<std::string>("detector_backend", "hybrid");
+	// nano_roi: nano on the same crop, full-frame nano on a miss.
+	if (detector_backend != "opencv" && detector_backend != "nano" && detector_backend != "hybrid" &&
+	    detector_backend != "roi" && detector_backend != "nano_roi")
+	{
+		RCLCPP_FATAL(node->get_logger(),
+		             "detector_backend:=%s is not one of nano, opencv, hybrid, roi, nano_roi.",
+		             detector_backend.c_str());
+		return 1;
+	}
+	const bool use_nano = (detector_backend == "nano" || detector_backend == "hybrid" ||
+	                       detector_backend == "nano_roi");
+	const bool use_roi = (detector_backend == "roi" || detector_backend == "nano_roi");
+	// The (dict, params) constructor APPENDS to a default MIP_36h12 list, doubling the cost; clear it.
+	aruco_nano::DetectorParameters nano_params;
+	nano_params.dicts.clear();
+	nano_params.errorCorrectionRate = node->declare_parameter<double>("nano_error_correction", 0.3);
+	nano_params.maxErroneousBitsInBorderRate =
+		node->declare_parameter<double>("nano_border_error_rate", 0.35);
+	nano_params.boxFilterSize = static_cast<int>(node->declare_parameter<int>("nano_box_filter", 15));
+	nano_params.maxTimesRevisited =
+		static_cast<float>(node->declare_parameter<double>("nano_max_revisited", 0.05));
+	aruco_nano::ArucoDetector nano_detector(dictionary, nano_params);
+	// roi: margin added on each side of the last target bounding box, as a fraction of its size.
+	const double roi_margin = node->declare_parameter<double>("roi_margin", 0.5);
+	RCLCPP_INFO(node->get_logger(),
+	            "aruco backend %s | nano error correction %.2f, border errors %.2f, box %d, revisit %.2f | roi margin %.2f",
+	            detector_backend.c_str(), nano_params.errorCorrectionRate,
+	            nano_params.maxErroneousBitsInBorderRate, nano_params.boxFilterSize,
+	            nano_params.maxTimesRevisited, roi_margin);
+
+	// opencv arm only: aruco3 searches candidates on a downscaled image, down to this marker/side ratio.
+	const bool use_aruco3 = node->declare_parameter<bool>("use_aruco3_detection", false);
+	const double min_marker_ratio =
+		node->declare_parameter<double>("min_marker_length_ratio", 0.0);
+	// 0 leaves OpenCV's thread count alone; at 1 its idle pool stops burning CPU next to nano.
+	const int cv_num_threads = node->declare_parameter<int>("cv_num_threads", 1);
+	if (cv_num_threads > 0)
+		cv::setNumThreads(cv_num_threads);
+
+	cv::aruco::DetectorParameters parameters;
+	parameters.useAruco3Detection = use_aruco3;
+	parameters.minMarkerLengthRatioOriginalImg = static_cast<float>(min_marker_ratio);
+	cv::aruco::ArucoDetector detector(dictionary, parameters);
+	if (!use_nano || detector_backend == "hybrid")
+		RCLCPP_INFO(node->get_logger(), "aruco detector: opencv, aruco3 %s (ratio %.4f)",
+		            use_aruco3 ? "on" : "off", min_marker_ratio);
+	const auto exact_target = [](const std::vector<int> &ids) {
+		return ids.size() == 4 && std::set<int>(ids.begin(), ids.end()) == std::set<int>{4, 6, 8, 10};
+	};
+	cv::Rect roi_box;
+	bool have_roi = false;
+	bool prev_exact = false;
+	long fallback_n = 0;
 
 	qx = 0;
 	qy = 0;
@@ -297,8 +357,6 @@ int main(int argc, char *argv[])
 	im_feat_valid_pub->publish(im_feat_valid);
 	loop_rate.sleepFor(1.7);
 
-	cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
-
 	double detect_ms_max = 0.0;
 	double detect_ms_sum = 0.0;
 	long detect_n = 0;
@@ -306,14 +364,67 @@ int main(int argc, char *argv[])
 
     while (rclcpp::ok())
 	{
-		std::vector<std::vector<cv::Point2f>> markerCorners, rejectCandidates;
+		std::vector<std::vector<cv::Point2f>> markerCorners;
 		std::vector<int> markerIds;
 
 		if(!frame.empty())
 		{
 			const auto t0 = std::chrono::steady_clock::now();
 			//Detect the markers in the image
-			cv::aruco::detectMarkers(frame, dictionary, markerCorners, markerIds, parameters, rejectCandidates);
+			bool found = false;
+			if (use_roi && have_roi)
+			{
+				// Same detector on a crop; corners shifted back, so the feature math is unchanged.
+				const int mx = std::max(40, static_cast<int>(roi_box.width * roi_margin));
+				const int my = std::max(40, static_cast<int>(roi_box.height * roi_margin));
+				const cv::Rect crop = cv::Rect(roi_box.x - mx, roi_box.y - my,
+				                               roi_box.width + 2 * mx, roi_box.height + 2 * my) &
+				                      cv::Rect(0, 0, frame.cols, frame.rows);
+				if (use_nano)
+					nano_detector.detectMarkers(frame(crop).clone(), markerCorners, markerIds);
+				else
+					detector.detectMarkers(frame(crop), markerCorners, markerIds);
+				for (auto &marker : markerCorners)
+					for (auto &p : marker)
+					{
+						p.x += crop.x;
+						p.y += crop.y;
+					}
+				found = exact_target(markerIds);
+			}
+			if (!found)
+			{
+				markerCorners.clear();
+				markerIds.clear();
+				// hybrid skips nano while unlocked, so searching costs opencv alone rather than both.
+				const bool nano_now = use_nano && (detector_backend != "hybrid" || prev_exact);
+				if (nano_now)
+					nano_detector.detectMarkers(frame, markerCorners, markerIds);
+				else
+					detector.detectMarkers(frame, markerCorners, markerIds);
+				bool ran_opencv = !nano_now;
+				if (detector_backend == "hybrid" && nano_now && !exact_target(markerIds))
+				{
+					markerCorners.clear();
+					markerIds.clear();
+					detector.detectMarkers(frame, markerCorners, markerIds);
+					ran_opencv = true;
+				}
+				if (detector_backend == "hybrid" && ran_opencv)
+					++fallback_n;
+			}
+			prev_exact = exact_target(markerIds);
+			if (use_roi)
+			{
+				have_roi = exact_target(markerIds);
+				if (have_roi)
+				{
+					std::vector<cv::Point2f> all;
+					for (const auto &marker : markerCorners)
+						all.insert(all.end(), marker.begin(), marker.end());
+					roi_box = cv::boundingRect(all);
+				}
+			}
 			const double ms = std::chrono::duration<double, std::milli>(
 				std::chrono::steady_clock::now() - t0).count();
 			detect_ms_max = std::max(detect_ms_max, ms);
@@ -678,13 +789,14 @@ cv::Point2f p33 = markerCorners[0].at(2);
 			if (have_image_stamp)
 				age_ms = (node->now() - last_image_stamp).seconds() * 1000.0;
 			RCLCPP_INFO(node->get_logger(),
-			            "detectMarkers %.1f ms mean / %.1f ms worst over %ld frames "
-			            "(budget %.1f ms); frame age %.1f ms",
-			            detect_n ? detect_ms_sum / detect_n : 0.0, detect_ms_max, detect_n,
-			            1000.0 / kLoopHz, age_ms);
+			            "detectMarkers (%s) %.1f ms mean / %.1f ms worst over %ld frames "
+			            "(budget %.1f ms); frame age %.1f ms; opencv fallback on %ld frames",
+			            detector_backend.c_str(), detect_n ? detect_ms_sum / detect_n : 0.0, detect_ms_max, detect_n,
+			            1000.0 / kLoopHz, age_ms, fallback_n);
 			detect_ms_max = 0.0;
 			detect_ms_sum = 0.0;
 			detect_n = 0;
+			fallback_n = 0;
 		}
 
 		loop_rate.sleep();

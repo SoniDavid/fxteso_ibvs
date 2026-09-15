@@ -4,14 +4,14 @@ Safe to run without the controllers - that is the open-loop observer test. Each 
 staggers its own start on sim time, so nothing here needs a launch delay.
 
 The camera arguments are plain numbers on purpose. quad_control carries no simulation
-dependency, so it must not read quad_gz_sim's camera preset table; the caller resolves the
-preset once and passes the same values here and to gz_sim.launch.py. Their defaults are the
+dependency and does not read the camera preset table; the caller resolves the preset once and
+passes the same values here and to whatever renders or drives the camera. Their defaults are the
 Camera Module 2 geometry image_features had hardcoded, so an unadorned launch is unchanged.
 """
 from typing import List
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -71,9 +71,8 @@ def generate_launch_description():
         DeclareLaunchArgument('aD', default_value='0.00000076589'),
         DeclareLaunchArgument('marker_dict', default_value='7x7',
                               description='must match the textures gz_sim.launch.py selected'),
-        # The camera topic image_features reads. A remapping, so a distortion-applying node can
-        # be inserted upstream without image_features knowing - and so a real camera driver can
-        # be pointed at it without touching the source.
+        # The camera topic image_features reads, so a distortion node or a real driver can sit
+        # upstream without touching the source.
         DeclareLaunchArgument('camera_topic', default_value='/quad/camera/image_raw'),
         # Its CameraInfo, which image_features prefers over the parameters above whenever one
         # arrives - how a calibrated real lens reaches the feature model without a rebuild.
@@ -85,6 +84,24 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         # Airframe mass as flown. fixed_eso and pos_ctrl must get the same number.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
+        # Benchmark only: e.g. '_probe' moves the feature outputs aside so a feeder drives the chain.
+        DeclareLaunchArgument('vision_out_suffix', default_value=''),
+        # Pin image_features, the heaviest node, to a core, e.g. '3'. Empty leaves it unpinned.
+        DeclareLaunchArgument('image_features_cpu', default_value=''),
+        # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last detection).
+        DeclareLaunchArgument('detector_backend', default_value='hybrid'),
+        # opencv arm only: candidate search on a downscaled image. The ratio is inert without it.
+        DeclareLaunchArgument('use_aruco3_detection', default_value='false'),
+        DeclareLaunchArgument('min_marker_length_ratio', default_value='0.0'),
+        # 0 leaves OpenCV's thread count alone; at 1 its idle pool stops burning CPU next to nano.
+        DeclareLaunchArgument('cv_num_threads', default_value='1'),
+        # aruco_nano tolerances; nano's own 0 / 0 rejects a marker for one mis-read bit.
+        DeclareLaunchArgument('nano_error_correction', default_value='0.3'),
+        DeclareLaunchArgument('nano_border_error_rate', default_value='0.35'),
+        DeclareLaunchArgument('nano_box_filter', default_value='15'),
+        DeclareLaunchArgument('nano_max_revisited', default_value='0.05'),
+        # roi backend: margin on each side of the last target box, as a fraction of its size.
+        DeclareLaunchArgument('roi_margin', default_value='0.5'),
     ]
 
     def params(exe):
@@ -111,6 +128,18 @@ def generate_launch_description():
                 LaunchConfiguration('camera_info_topic'), value_type=str)
             p['sensor_qos'] = ParameterValue(
                 LaunchConfiguration('sensor_qos'), value_type=bool)
+            p['detector_backend'] = ParameterValue(
+                LaunchConfiguration('detector_backend'), value_type=str)
+            p['use_aruco3_detection'] = ParameterValue(
+                LaunchConfiguration('use_aruco3_detection'), value_type=bool)
+            p['min_marker_length_ratio'] = ParameterValue(
+                LaunchConfiguration('min_marker_length_ratio'), value_type=float)
+            p['cv_num_threads'] = ParameterValue(
+                LaunchConfiguration('cv_num_threads'), value_type=int)
+            for name, kind in (('nano_error_correction', float), ('nano_border_error_rate', float),
+                               ('nano_box_filter', int), ('nano_max_revisited', float),
+                               ('roi_margin', float)):
+                p[name] = ParameterValue(LaunchConfiguration(name), value_type=kind)
         if exe == 'fixed_eso':
             p['gamma1_xy'] = ParameterValue(LaunchConfiguration('gamma1_xy'), value_type=float)
             p['observer_omega'] = ParameterValue(
@@ -124,10 +153,27 @@ def generate_launch_description():
                 LaunchConfiguration('initial_estimate_offset'), value_type=List[float])
         return [p]
 
-    # No remaps: image_features takes both camera topics as parameters.
-    return LaunchDescription(args + [
-        Node(package=PKG, executable=exe, name=exe,
-             output='screen' if verbose else 'log',
-             parameters=params(exe))
-        for exe, verbose in NODES
-    ])
+    def remaps(exe):
+        # Outputs only, and the identity while vision_out_suffix is empty.
+        if exe != 'image_features':
+            return []
+        suffix = LaunchConfiguration('vision_out_suffix')
+        return [(t, [t, suffix]) for t in ('ImFeat_vector', 'ImFeat_valid', 'a_value')]
+
+    def prefix(exe, context):
+        if exe != 'image_features':
+            return {}
+        cpu = LaunchConfiguration('image_features_cpu').perform(context)
+        return {'prefix': 'taskset -c ' + cpu} if cpu else {}
+
+    def nodes(context, *a, **k):
+        return [
+            Node(package=PKG, executable=exe, name=exe,
+                 output='screen' if verbose else 'log',
+                 remappings=remaps(exe),
+                 parameters=params(exe),
+                 **prefix(exe, context))
+            for exe, verbose in NODES
+        ]
+
+    return LaunchDescription(args + [OpaqueFunction(function=nodes)])
