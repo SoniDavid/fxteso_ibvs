@@ -9,7 +9,7 @@ plant starts no node here; it selects how the world is derived. See _world_for()
 camera, target_scale and marker_dict do the same for the models: _models_for() writes derived
 copies of F450_base and aruco_target into a scratch tree that is prepended to
 GZ_SIM_RESOURCE_PATH, so model:// still resolves and the originals are never touched. The
-camera presets live in config/cameras.yaml, which the offline footprint calculator reads too -
+camera presets live in quad_description/config/cameras.yaml, which the offline footprint calculator reads too -
 one table, so the rendered geometry and the calculator cannot disagree.
 
 The matching intrinsics have to reach image_features as well, or the feature model is computed
@@ -42,9 +42,10 @@ MARKER_DICTS = {'7x7': 'meshes', '4x4': 'meshes_4x4'}
 
 
 def _presets():
-    """camera_presets.py, which lives beside this file. share/<pkg>/launch is not on
-    sys.path, so it is loaded by path rather than imported."""
-    path = os.path.join(get_package_share_directory(PKG), 'launch', 'camera_presets.py')
+    """quad_description's camera_presets.py. share/<pkg>/launch is not on sys.path, so it is
+    loaded by path rather than imported."""
+    path = os.path.join(get_package_share_directory('quad_description'), 'launch',
+                        'camera_presets.py')
     spec = importlib.util.spec_from_file_location('camera_presets', path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -65,7 +66,7 @@ def generate_launch_description():
         # analytic = the paper's ROS-side integrator; gazebo = DART; px4 = DART with PX4
         # SITL owning allocation and the inner loop.
         DeclareLaunchArgument('plant', default_value='analytic'),
-        # Camera module AND sensor mode; see config/cameras.yaml. Not every module reaches the
+        # Camera module AND sensor mode; see quad_description/config/cameras.yaml. Not every module reaches the
         # 50 Hz image_features loop at full field of view, which is why modes are separate
         # presets rather than a resolution argument.
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
