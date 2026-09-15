@@ -1,36 +1,89 @@
 # Running the FxTESO-IBVS project
 
+The same vision and control code runs in two places: against **PX4 SITL** on the dev desktop, and
+on the **companion computer** (Raspberry Pi 5) of the real UAV. Simulation and hardware differ only
+in their launch file: `sitl.launch.py` or `hardware.launch.py` and in what feeds the camera topic. This file covers what both machines share; for the rest see:
+
+- [**RUNNING_SIM.md**](RUNNING_SIM.md) — dev desktop, PX4 SITL, disturbances, the observer alone.
+- [**RUNNING_HW.md**](RUNNING_HW.md) — the Raspberry Pi, the real UAV, bench testing.
+
 ## Setup the environment
 
-The project currently uses dependancies such as:
+Both machines need:
 - ROS2 Jazzy Jalisco
-- Gazebo Sim 8.11 - Harmonic
-- PX4 Autopilot fork
+- OpenCV ≥ 4.7 and `cv_bridge` built against it (Noble's apt OpenCV 4.6 is too old for
+  `image_features`' ArUco detectors)
 
-Be sure to have them installed before trying to build and run the project
+The desktop additionally needs Gazebo Sim 8.11 - Harmonic and the PX4 Autopilot fork; see
+[RUNNING_SIM.md](RUNNING_SIM.md#dev-desktop-sitl). 
+The Pi additionally needs the camera stack and MicroXRCEAgent; see [RUNNING_HW.md](RUNNING_HW.md#companion-computer-raspberry-pi-5-ubuntu-2404).
 
+### OpenCV ≥ 4.7 and cv_bridge from source (both machines)
+
+`image_features` detects markers with `aruco_nano` (a header in `quad_control`) or OpenCV's
+`cv::aruco::ArucoDetector`; both need the OpenCV 4.7+ API. OpenCV is rebuilt system-wide, not
+vendored;same convention as `tools/setup_pi5_ubuntu_camera.sh`.
 
 ```sh
-# Cloning the repository 
-git clone https://github.com/SoniDavid/fxteso_ibvs
-git submodule update --init --recursive
+# --recurse-submodules matters: without it 3rdparty/quirc is missing and configure fails
+git clone --branch 4.14.0 --depth 1 --recurse-submodules --shallow-submodules \
+    https://github.com/opencv/opencv.git
+git clone --branch 4.14.0 --depth 1 https://github.com/opencv/opencv_contrib.git
 
-# Building
-colcon build --symlink-install
+# Raspberry Pi 5 (Cortex-A76): the dispatch targets apt's generic aarch64 build lacks
+CPU_FLAGS="-D CPU_BASELINE=NEON,FP16 -D CPU_DISPATCH=NEON_DOTPROD,NEON_FP16,NEON_BF16 -D WITH_QT=5 -D WITH_GTK=OFF"
+# Dev desktop: OpenCV's own x86 defaults
+CPU_FLAGS=""
 
-# Sourcing
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy/install/setup.bash
-source ~/[path_to_project]}/fxteso_ibvs/install/setup.bash
+cmake -S opencv -B build -G Ninja \
+    -D CMAKE_BUILD_TYPE=Release \
+    -D CMAKE_INSTALL_PREFIX=/usr/local \
+    -D CMAKE_INSTALL_LIBDIR=lib/$(gcc -print-multiarch) \
+    -D OPENCV_EXTRA_MODULES_PATH="$(pwd)/opencv_contrib/modules" \
+    -D WITH_TBB=ON \
+    -D BUILD_TESTS=OFF -D BUILD_PERF_TESTS=OFF -D BUILD_EXAMPLES=OFF -D BUILD_DOCS=OFF \
+    -D BUILD_opencv_python2=OFF -D BUILD_opencv_python3=OFF \
+    $CPU_FLAGS
+
+cmake --build build -j$(nproc)          # ~25-30 min on the Pi, real thermal load
+sudo cmake --install build && sudo ldconfig
+```
+
+`CMAKE_INSTALL_LIBDIR=lib/<multiarch>` is load-bearing: `/etc/ld.so.conf.d/<multiarch>.conf` gives
+shadow priority only to `/usr/local/lib/<multiarch>`, not to plain `/usr/local/lib`. Check the
+shadow took before trusting anything built against it — the `/usr/local` copy must be listed first:
+
+```sh
+ldconfig -p | grep libopencv_core
+```
+
+`cv_bridge` must then be rebuilt from source against it. apt's prebuilt `cv_bridge` links the old
+SONAME, and a process using both loads **two** OpenCV versions at once. 4.1.0 matches the installed
+`ros-jazzy-cv-bridge`, so it is a pure recompile. `src/vision_opencv` is gitignored.
+
+```sh
+cd ~/[path_to_project]/fxteso_ibvs/src
+git clone --branch 4.1.0 --depth 1 https://github.com/ros-perception/vision_opencv.git
+cd .. && colcon build --packages-select cv_bridge image_geometry --allow-overriding cv_bridge image_geometry
+```
+
+After any OpenCV version bump, `ldd` every OpenCV-linking binary in the workspace, not just the
+one being worked on. Both SONAMEs in one binary is the bug:
+
+```sh
+ldd install/quad_control/lib/quad_control/image_features | grep libopencv_core   # .so.414 only, never .so.406
 ```
 
 ## Launch Arguments Reference
 
-You can configure the runs by appending these arguments to the `ros2 launch` commands. Below is an exhaustive list of all arguments available in `sitl.launch.py` (and a few from `hardware.launch.py` or `sim.launch.py`).
+You can configure the runs by appending these arguments to the `ros2 launch` commands. Below is an
+exhaustive list of all arguments available in `sitl.launch.py`, which `hardware.launch.py` and
+`bench.launch.py` both build on — their own additional arguments are documented in
+[RUNNING_HW.md](RUNNING_HW.md#launch-arguments-reference).
 
 ### Display & Recording
 - `headless:=<bool>` — Drop the Gazebo window (default: `false`).
-- `rosbag:=<bool>` — Record a bag of the run (default: `false`).
+- `rosbag:=<bool>` — Record a bag of the run (default: `false`; `true` in `hardware.launch.py`).
 - `foxglove:=<bool>` — Open Foxglove to watch the run over ROS — shows what the aircraft sees (default: `false`).
 - `record_from:=<handover|launch>` — When to start recording the rosbag (default: `handover`).
 
@@ -51,15 +104,25 @@ You can configure the runs by appending these arguments to the `ros2 launch` com
 - `target_yaw_rate:=<float>` — Target yaw rate (default: `0.1`).
 - `target_accel:=<float>` — Target acceleration (default: `0.5`).
 - `target_heading:=<float>` — Target direction of travel in degrees (default: `0.0`).
-- `target_scale:=<float>` — Visual scale of the target (default: `0.5`).
+- `target_scale:=<float>` — Size of the target; `0.5` is the printed 450 × 375 mm plate (default: `0.5`).
 - `marker_dict:=<str>` — ArUco marker dictionary (default: `7x7`).
 - `blackout_at:=<float>` — Time in seconds to hide the target (default: `0.0`).
 - `blackout_for:=<float>` — Duration in seconds to hide the target (default: `3.0`).
 
+### Vision
+- `detector_backend:=<nano|opencv|hybrid|roi|nano_roi>` — `nano` is `aruco_nano`; `opencv` is `cv::aruco::ArucoDetector`; `hybrid` runs nano while the previous frame held the full target and falls back to OpenCV on a miss; while unlocked it runs OpenCV alone; `roi` / `nano_roi` search a crop around the last full detection first (corners in full-frame coordinates, so the measurements are identical). In SITL `hybrid` matched OpenCV's reliability at ~40% of its detect time (default: `hybrid`).
+- `nano_error_correction:=<float>`, `nano_border_error_rate:=<float>` — aruco_nano's bit and border error tolerance. Its own defaults (`0.0`, `0.0`) reject a marker for a single mis-read bit, the main cause of nano losing lock under motion; `0.3` / `0.35` restore OpenCV's recall at ~0.3× its cost (defaults: `0.3`, `0.35`).
+- `nano_box_filter:=<int>`, `nano_max_revisited:=<float>` — aruco_nano's threshold window and contour tracer (defaults: `15`, `0.05`).
+- `roi_margin:=<float>` — `roi` backends: margin around the last target box, as a fraction of its size (default: `0.5`).
+- `use_aruco3_detection:=<bool>` — `opencv` only: search marker candidates on a downscaled image (default: `false`). **Broken at this geometry:** with the derived ratio it decoded no markers on OpenCV 4.6 or 4.14 (0/3 locked in SITL), and decoding is gone once the ratio passes ~0.015. Leave it off.
+- `aruco3_margin:=<float>` — Fraction of the nominal marker size aruco3 must still find; the ratio itself is derived from `camera`, `target_scale` and `zD` (default: `0.7`).
+- `cv_num_threads:=<int>` — OpenCV thread count, `0` leaves it alone. At `0` OpenCV's idle pool burns ~0.9 cores next to the hybrid; `1` removes that, but single-threaded fallback frames are slower (worst ~19 ms of the 20 ms budget in SITL), so check the Pi's worst frame with `bench.sh --cv-threads 1` and `2` (default: `1`).
+- `image_features_cpu:=<core>` — Pin `image_features` to a core, empty leaves it unpinned (default: empty; hardware and bench only).
+
 ### Flight Geometry & Observer
 - `zD:=<float>` — Servoing depth (default: `1.2`).
 - `takeoff_alt:=<float|zD>` — Takeoff altitude. Pass literal `zD` to launch directly at the servoing depth (default: `1.5`).
-- `takeoff_tolerance:=<float>` — Required proximity to `takeoff_alt` before gate opens (default: `0.10`).
+- `takeoff_tolerance:=<float>` — Required proximity to `takeoff_alt` before gate opens (default: `0.10`; `0.20` on hardware, barometer-only height).
 - `eso_z_des:=<float>` — Observer's desired servoing depth (defaults to tracking `zD`).
 - `observer_omega:=<float>` — If > 0, sets fixed_eso's x/y gains as a triple pole at this rate (default: `0.0`).
 - `gamma1_xy`...`gamma4_yaw` — Various observer gains. Defaults: `gamma1_xy=18.0`, `gamma2_xy=20.0`, `gamma3_xy=4.0`, `gamma1_yaw=5.0`, `gamma2_yaw=16.0`, `gamma3_yaw=3.0`, `gamma4_yaw=0.001`, `alpha_yaw=0.75`, `beta_yaw=1.2`.
@@ -70,7 +133,7 @@ You can configure the runs by appending these arguments to the `ros2 launch` com
 - `gate_timeout:=<float>` — Timeout for the gate (default: `120.0`).
 - `controllers:=<bool>` — Enable or disable controllers (default: `true`).
 
-### Hardware & Plant Configurations
+### Plant Configurations
 - `plant:=<analytic|gazebo>` — Plant model used in simulation (for `sim.launch.py`).
 - `camera:=<preset>` — Camera config preset (e.g., `module2_1640`, `module3wide_2304`).
 - `camera_rate:=<float>` — Camera rate (default: `0.0`).
@@ -80,117 +143,15 @@ You can configure the runs by appending these arguments to the `ros2 launch` com
 - `offboard_recovery:=<bool>` — Attempt offboard recovery on lock-loss (default: `false`).
 - `px4_dir:=<path>` — Path to the PX4 fork submodule.
 - `xrce_agent:=<path>` — Path to the MicroXRCEAgent binary.
-- `quad_mass:=<float>`, `camera_topic:=<str>`, `camera_info_topic:=<str>`, `bringup:=pilot`, `require_consent:=true`, `consent_rc_aux:=1` — (Used by `hardware.launch.py`).
-
-## Running the Simulation 
-Although the repository considers using _Gazebo's DART_ physics and _euler integrated analytical physics_, the **default sim environment** is _PX4 Software in the Loop (SITL)_ due to its higher fidelity to real world conditions. Furthermore, default deployment geometry considers **1.5 m takeoff, 1.2 m servoing**
-
-Conditions where chose based on RSCL-ITESM (Robotics System Control Laboratory) real 450 UAV deployment constraints
-
-```sh
-# stationary target, calm air
-ros2 launch quad_px4 sitl.launch.py
-
-# constant-velocity target
-ros2 launch quad_px4 sitl.launch.py target_profile:=line target_speed:=0.7
-
-# steady wind, stationary target
-ros2 launch quad_px4 sitl.launch.py disturbance:=wind wind_scale:=3.0
-
-# the scheduled mean wind, no turbulence on it
-ros2 launch quad_px4 sitl.launch.py disturbance:=table52 turbulence_scale:=0.0
-
-# the same wind against a moving target
-ros2 launch quad_px4 sitl.launch.py disturbance:=table52 turbulence_scale:=0.0 \
-    target_profile:=thesis
-
-# the full profile, turbulence included
-ros2 launch quad_px4 sitl.launch.py disturbance:=table52
-```
-
-### Venue Indoor and Outdoor argument
-
-The `venue` argument toggles the simulation to mirror either a GPS-denied lab or an open outdoor environment:
-
-* **`venue:=indoor` (Default)**: Simulates an indoor lab where GPS signals are unavailable.
-  * **Sensors**: Relies entirely on the barometer for height; no GNSS aiding. 
-  * **Takeoff Flow**: `sim_pilot` arms -> Altitude Mode -> Climbs to `takeoff_alt` -> Offboard Mode (autonomous servoing).
-  * *Note: SITL uses MAVLink RC for `sim_pilot`, but real hardware requires an RC transmitter (`COM_RC_IN_MODE=0`).*
-
-* **`venue:=outdoor`**: Simulates an outdoor environment with clear skies for full GPS availability.
-  * **Sensors**: Fuses GNSS for full 3D position and heading hold.
-  * **Takeoff Flow**: Auto-arms -> Auto-takeoff (Position Mode) -> Climbs to `takeoff_alt` -> Offboard Mode (autonomous servoing).
-
-```sh
-ros2 launch quad_px4 sitl.launch.py venue:=indoor
-```
-
-## Running IRL (Still in development)
-
-`sitl.launch.py` is not it. Use `hardware.launch.py` — the eleven-node flight subset, nothing
-simulated:
-
-```sh
-ros2 launch quad_px4 hardware.launch.py \
-    quad_mass:=<weighed, battery in> hover_thrust:=<measured MPC_THR_HOVER> \
-    camera_topic:=/camera/image_raw camera_info_topic:=/camera/camera_info \
-    consent_rc_aux:=1
-```
-
-Four differences from SITL, all silent if wrong:
-
-- `use_sim_time` is **false** — with no `/clock` the stack hangs rather than slows.
-- `frame_yaw_offset` is **0**, not the sim's `-pi/2`.
-- The camera runs at **native** resolution and subscribes BEST_EFFORT.
-- The handover needs a **person**: `bringup:=pilot` and `require_consent:=true`, granted by the
-  RC aux switch or `~/handover` and withdrawable.
-
-Load `params/hardware.params` onto the aircraft first. It is **not** derived from the SITL
-airframe, which a real flight controller cannot load and which disables failsafes.
-
-Build without the simulated pilot — it arms the aircraft and flies on Gazebo ground truth:
-
-```sh
-colcon build --packages-select quad_px4 --cmake-args -DBUILD_SIM_PILOT=OFF
-```
-
-## Running only the Extended State Observer
-
-`controllers:=false` so nothing acts on the estimate and what is measured is a property of the
-observer alone. `record_from:=launch` because `fixed_eso` starts at the takeoff gate and
-converges in about a second — a recorder started at handover misses the transient entirely.
-
-```sh
-ros2 launch quad_px4 sitl.launch.py controllers:=false record_from:=launch rosbag:=true \
-    initial_estimate_offset:="[0.0, 0.0, -0.5, 0.0]"
-
-# open loop on the analytic plant, no PX4 — much faster to iterate against
-ros2 launch quad_utils observer_only.launch.py plant:=analytic \
-    initial_estimate_offset:="[0.0, 0.0, -0.5, 0.0]"
-```
-
-## Other plants, and visualisation
-
-```sh
-ros2 launch quad_utils sim.launch.py plant:=analytic
-ros2 launch quad_utils sim.launch.py plant:=gazebo
-```
-
-Visualisation against a recorded bag. Pass the camera preset: the layout to import depends on
-which image topic `image_features` consumes, and the launch logs the path of the right one.
-
-```sh
-ros2 bag play bags/px4_20260826_120000 --clock
-ros2 launch quad_utils viz.launch.py foxglove:=true camera:=module3wide_2304
-```
 
 ## Camera Presets
 
 A `camera:=` preset is a Raspberry Pi module **and a sensor mode**, from
-`quad_gz_sim/config/cameras.yaml`. Not every module reaches the 50 Hz `image_features` loop at
-full field of view. One preset rewrites the `<camera>` block in the SDF **and** feeds
-`image_features` the same intrinsics — the rendered camera and the feature model cannot drift
-apart. `zD:=` likewise drives `aD` and PX4's `MIS_TAKEOFF_ALT` together:
+`quad_description/config/cameras.yaml`. Not every module reaches the 50 Hz `image_features` loop
+at full field of view. In simulation one preset rewrites the `<camera>` block in the SDF **and**
+feeds `image_features` the same intrinsics. On the UAV the same preset sizes the picamera2 driver's
+output **and** `image_features`. Either way, what is seen and what is modelled cannot drift apart.
+`zD:=` likewise drives `aD` and PX4's `MIS_TAKEOFF_ALT` together:
 
 ```
 aD = 0.5625 * target_scale^2 * (0.00304 / zD)^2
@@ -198,29 +159,11 @@ aD = 0.5625 * target_scale^2 * (0.00304 / zD)^2
 
 It is `aD`, not `zD`, that decides where the aircraft settles.
 
-**`sitl.launch.py` defaults**: `module3wide_2304`, takeoff 1.5 m, `zD` 1.2, `target_scale` 0.5,
-`target_profile` hover — a bare launch takes off, descends onto a stationary target and holds.
+**`sitl.launch.py` and `hardware.launch.py` defaults**: `module3wide_2304` (1152 × 648), takeoff
+1.5 m, `zD` 1.2, `target_scale` 0.5, `detector_backend` hybrid. A bare SITL launch takes off,
+descends onto a stationary target and holds.
 
 **`sim.launch.py` / `observer_only.launch.py` defaults**: `zD` 2.5, `target_scale` 1.0 — neither
 plant takes off so `takeoff_alt` is unused.
+    quad_mass:=<weighed, battery in> hover_thrust:=<measured MPC_THR_HOVER \ consent_rc_aux:=1
 
-## Disturbance Profiles
-
-`disturbance:=` selects one or more profiles; they compose (`disturbance:=wind,step`):
-
-| Profile | What it injects |
-| --- | --- |
-| `none` | nothing |
-| `step` | rectangular force pulse over a fixed interval |
-| `gust` | Ornstein-Uhlenbeck force with correlation time `gust_tau` |
-| `wind` | wind velocity through the quadratic drag law, optionally with turbulence |
-| `table52` | scheduled mean wind with Von Karman turbulence on top |
-| `csv` | recorded profile replayed, one `x,y,z` row per 10 ms |
-
-Magnitudes live in `quad_gz_sim/config/disturbances.yaml`; `gust_scale` and `wind_scale`
-multiply them so a sweep is one number on the launch line. The force is held at zero until after
-controller handover, so it lands on a servoing aircraft, not on a takeoff.
-
-`table52` is a four-interval mean schedule with direction reversals and a downdraft. Von Karman
-turbulence is layered on top through shaping filters. `turbulence_scale:=0.0` flies the mean
-schedule alone.
