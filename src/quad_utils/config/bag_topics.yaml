@@ -24,6 +24,14 @@ plant_and_target:
   - /fmu/out/vehicle_status_v4
   # plant:=px4 only. An EKF2 reset steps quad_position; the td_linear spike is not motion.
   - /quad_estimator_reset
+  # venue:=vicon only. Independent 6-DoF ground truth, and - via aiding_active - exactly when
+  # Vicon was feeding EKF2. Without the second, the resume transients cannot be excluded and a
+  # scored window cannot be shown to have been unaided.
+  - /vicon/quad/quad
+  - /vicon_px4_bridge/aiding_active
+  # plant:=px4 only. cs_ev_pos is how a run proves the EV stream was actually fused rather than
+  # merely published; cs_fake_pos is EKF2 admitting it has no horizontal aiding.
+  - /fmu/out/estimator_status_flags
   # plant:=px4 only. WHY a mode became unavailable: local_position_invalid,
   # offboard_control_signal_lost, and the mode_req_* masks that say what each mode needs.
   # nav_state alone shows the fallback, never its cause.

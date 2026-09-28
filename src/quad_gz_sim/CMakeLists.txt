@@ -45,6 +45,12 @@ target_compile_features(gz_state_adapter PUBLIC cxx_std_17)
 ament_target_dependencies(gz_state_adapter rclcpp geometry_msgs nav_msgs tf2 tf2_geometry_msgs
   quad_common)
 
+# Stands in for the Vicon receiver under venue:=vicon, so the bridge exercised in SITL is the
+# one that flies. Lives here, not in quad_px4, because the Pi does not build quad_gz_sim.
+add_executable(vicon_sim src/vicon_sim.cpp)
+target_compile_features(vicon_sim PUBLIC cxx_std_17)
+ament_target_dependencies(vicon_sim rclcpp geometry_msgs nav_msgs tf2 tf2_geometry_msgs)
+
 # --- Gazebo Harmonic plumbing -------------------------------------------------
 # Talks gz-transport directly: set_pose_vector has no ROS message equivalent.
 # On Jazzy, Harmonic comes from ros_gz's vendor packages, not a system gz install.
@@ -75,7 +81,7 @@ target_link_libraries(gz_pose_broadcaster
   gz-msgs::core)
 ament_target_dependencies(gz_pose_broadcaster rclcpp std_msgs geometry_msgs tf2 quad_common)
 
-install(TARGETS ${SIM_NODES} gz_state_adapter gz_pose_broadcaster camera_distort
+install(TARGETS ${SIM_NODES} gz_state_adapter gz_pose_broadcaster camera_distort vicon_sim
   DESTINATION lib/${PROJECT_NAME})
 
 # Plain lib/, not lib/${PROJECT_NAME}: gz_sim.launch.py points

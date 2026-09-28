@@ -1,4 +1,6 @@
 # PX4 parameters for the real aircraft: indoor Vicon lab, GPS-denied, safety pilot on RC.
+# Vicon aids EKF2 only while the loop does NOT have the aircraft (vicon_px4_bridge,
+# aiding_policy:=gated), so the scored window is still unaided. See RUNNING_HW.md.
 # QGC format: <sysid> <compid> <name> <value> <type>; type 6 = INT32, 9 = REAL32.
 # NOT derived from the SITL airframe, which a real FC cannot load and which disables failsafes.
 # Every failsafe action below must name a POSITION-FREE mode: PX4 dead-reckons a local position
@@ -6,20 +8,66 @@
 
 # No GNSS aiding at all (7 is PX4's default bitmask).
 1	1	EKF2_GPS_CTRL	0	6
-# Barometric height; indoors it is the only source.
+# Barometric height. Deliberately NOT 3 (Vision): the Vicon stream is cut at the handover, and
+# the height reference must not vanish at 1.2 m. Horizontal and yaw are the only EV contributions.
 1	1	EKF2_HGT_REF	0	6
+
+# --- Vicon external vision ------------------------------------------------------------------
+# bit0 horizontal position ONLY. Vertical (bit1) is off so the cut at the handover cannot remove
+# the height reference; velocity (bit2) is off because a differentiated mocap velocity is noise
+# EKF2 cannot gate.
+#
+# Yaw (bit3, which would make this 9) is deliberately NOT fused. Fusing it makes EKF2's heading
+# datum whatever the Vicon frame says, so a frame error becomes unfalsifiable from inside the
+# estimator - a self-consistent wrong frame re-anchors the filter and reports zero innovation.
+# With yaw off, EKF2's magnetometer heading stays an INDEPENDENT witness, which is exactly what
+# vicon_px4_bridge's frame check compares against before it will publish anything. 9 is only safe
+# once the Vicon datum has been measured against magnetic north on site.
+#
+# EKF2 stops EV fusion 400 ms after the last sample (2 x EV_MAX_INTERVAL), which is how
+# vicon_px4_bridge cuts aiding without touching a parameter in flight.
+1	1	EKF2_EV_CTRL	1	6
+# 1 = take the noise from the parameters below. The bridge reports a fixed variance, so there is
+# nothing better in the message.
+1	1	EKF2_EV_NOISE_MD	1	6
+# Vicon is millimetric; 2 cm is deliberately conservative, and it is a LOWER bound on trust.
+1	1	EKF2_EVP_NOISE	0.02	9
+# Inert while EKF2_EV_CTRL is 1 (no attitude fusion); kept so the yaw arm needs no new value.
+1	1	EKF2_EVA_NOISE	0.05	9
+# TODO BEFORE FLIGHT: the Vicon marker centroid relative to the CoG, metres, body FRD.
+1	1	EKF2_EV_POS_X	0.0	9
+1	1	EKF2_EV_POS_Y	0.0	9
+1	1	EKF2_EV_POS_Z	0.0	9
+# TODO BEFORE FLIGHT: set from the bridge's reported age mean. REBOOT REQUIRED to take effect.
+1	1	EKF2_EV_DELAY	0.0	9
 # PX4's default. The SITL airframe's 0.0 disables the mag-heading observability guard.
 1	1	EKF2_MAG_ACCLIM	0.5	9
 
 # TODO BEFORE FLIGHT: the lab's declination. Without GNSS nothing supplies it, and the default
-# is silently zero. DECL_TYPE 6 clears bit 0 so MAG_DECL is used.
+# is silently zero. DECL_TYPE 6 clears bit 0 so MAG_DECL is used. Moot WHILE Vicon is aiding -
+# EV yaw makes the heading relative to the Vicon frame, not True North - but it binds again after
+# the cut, when the heading dead-reckons from the Vicon datum.
 #1	1	EKF2_DECL_TYPE	6	6
 #1	1	EKF2_MAG_DECL	0.0	9
 
+# The Pi's XRCE-DDS link. TODO BEFORE FLIGHT: confirm the Pi's UART is wired to TELEM2.
+1	1	UXRCE_DDS_CFG	102	6
+1	1	SER_TEL2_BAUD	921600	6
+
 # RC only. The safety pilot is on a transmitter, not on DDS.
 1	1	COM_RC_IN_MODE	0	6
+# PX4's default, set deliberately - and it must NEVER be the SITL value (-1, override disabled).
+# Any stick movement while the loop owns the aircraft hands it back, and indoors it never returns:
+# commander reassigns the mode intent to POSCTL unconditionally. The trap is wider than OFFBOARD -
+# during a lock-loss failsafe nav_state is already Altitude while the intent is still OFFBOARD, and
+# a correction there is still an override. The pilot lets go after granting consent, and stays off
+# through a transient failsafe unless taking the aircraft for good.
+1	1	MAN_OVERRIDE_SPD	1.0	9
 
 # Offboard loss -> Altitude. Default 0 (Position) and 5 (Hold) both need horizontal position.
+# Gated aiding makes 5 (Hold) tempting, because Vicon returns the moment OFFBOARD is lost - but
+# EKF2 needs at least 400 ms to re-acquire, and Hold on a momentarily-bad position is worse than
+# Altitude. Revisit only once the resume latency has been measured in the lab.
 1	1	COM_OBL_RC_ACT	1	6
 # With the bridge's 0.3 s setpoint timeout this is the 1.3 s authority gap.
 1	1	COM_OF_LOSS_T	1.0	9
@@ -36,8 +84,11 @@
 # Warning only; 3 and 4 both Return, which is unavailable here.
 1	1	COM_LOW_BAT_ACT	0	6
 
+# The aircraft flies a 3S pack (T5000 3S).
+1	1	BAT1_N_CELLS	3	6
+
 # TODO BEFORE FLIGHT: measure on a real hover, and pass the same number as hover_thrust:=.
-# The SITL 0.6461 comes from the simulated rotor table.
+# SITL derives 0.69 for 3S at the 1.30 kg parts-list mass; a reading far from that means the mass is off.
 1	1	MPC_THR_HOVER	0.60	9
 
 # MC_*RATE_* are deliberately absent. The SITL gains were tuned against Gazebo's rotor model;
@@ -46,9 +97,21 @@
 # From boot until disarm. Start-up failures never arm, so the default 0 logs nothing.
 1	1	SDLOG_MODE	1	6
 
-# TODO IF USING RC CONSENT: map the handover switch to AUX1, then launch consent_rc_aux:=1.
-# Unmapped, aux1 is NaN, which reads as no consent.
+# TODO BEFORE FLIGHT, with the pilot at the transmitter; the channel numbers are placeholders.
+# Consent: map the handover switch to AUX1, then launch consent_rc_aux:=1. Unmapped reads as no consent.
 #1	1	RC_MAP_AUX1	7	6
-
-# No COM_FLTMODE* slot may be Position: PX4 parks user_intended_mode at POSCTL when Position
-# cannot run, locking the loop out of OFFBOARD. Set the slots with the pilot.
+# Mode slots: 8 Stabilized or 1 Altitude only. Position (2) parks PX4's intended mode at POSCTL
+# when it cannot run, locking the loop out of OFFBOARD.
+#
+# PILOT-BRIEF DECISION, not yet taken: under gated aiding POSCTL *can* run, because Vicon is
+# feeding EKF2 whenever the loop does not have the aircraft. A Position slot would then be a real
+# safety gain - Altitude has no horizontal hold at all, which is the condition that drifted 300 m.
+# It is only safe because commanding OFFBOARD sets the intent to OFFBOARD, and because the pilot
+# is already briefed to let go of the sticks. Enable it deliberately, with the pilot, or not at all.
+#1	1	COM_FLTMODE2	2	6
+#1	1	RC_MAP_FLTMODE	5	6
+#1	1	COM_FLTMODE1	8	6
+#1	1	COM_FLTMODE4	1	6
+#1	1	COM_FLTMODE6	1	6
+# Kill switch.
+#1	1	RC_MAP_KILL_SW	6	6

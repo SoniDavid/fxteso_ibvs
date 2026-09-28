@@ -49,7 +49,7 @@ ros2 launch quad_px4 sitl.launch.py detector_backend:=opencv
 
 `image_features` logs `detectMarkers (<backend>) <mean> ms mean / <worst> ms worst` every 10 s, and every 50 Hz loop logs a `loop: target ... | achieved ...` line — at WARN when it overran since the last one.
 
-### Venue Indoor and Outdoor argument
+### Venue Indoor, Outdoor and Vicon argument
 
 The `venue` argument toggles the simulation to mirror either a GPS-denied lab or an open outdoor environment:
 
@@ -62,9 +62,34 @@ The `venue` argument toggles the simulation to mirror either a GPS-denied lab or
   * **Sensors**: Fuses GNSS for full 3D position and heading hold.
   * **Takeoff Flow**: Auto-arms -> Auto-takeoff (Position Mode) -> Climbs to `takeoff_alt` -> Offboard Mode (autonomous servoing).
 
+* **`venue:=vicon`**: The indoor lab **with a Vicon volume aiding EKF2**. Everything `indoor` does,
+  plus `EKF2_EV_CTRL=9` (horizontal position and yaw; height stays on the barometer), `vicon_sim`
+  standing in for the mocap system, and `vicon_px4_bridge` — the same node that flies on hardware.
+  * **Aiding is gated on OFFBOARD.** EKF2 is aided while the pilot has the aircraft and cut the
+    moment `px4_offboard_bridge` asks for OFFBOARD, so the scored window is unaided and no ground
+    truth is inside the loop under test. `aiding_policy:=always` removes the gate, which is the
+    A/B that asks whether the indoor blocker is the estimator.
+  * `vicon_latency`, `vicon_noise_sd` and `vicon_dropout_probability` shape what `vicon_sim`
+    imitates. The defaults are deliberately non-zero: a bridge only ever tested on a clean feed
+    proves nothing about the one that meets a lab.
+  * `EKF2_EV_CTRL` is set explicitly on **all three** branches, `0` for `indoor` and `outdoor`.
+    PX4 persists parameters into `parameters.bson`, so a stale `9` would silently aid an indoor
+    run that is supposed to be unaided.
+
 ```sh
 ros2 launch quad_px4 sitl.launch.py venue:=indoor
+ros2 launch quad_px4 sitl.launch.py venue:=vicon                       # gated, the flight config
+ros2 launch quad_px4 sitl.launch.py venue:=vicon aiding_policy:=always # the A/B arm
 ```
+
+Whether the stream was actually **fused** is not visible from the ROS side — a published but
+rejected stream looks identical. Check `cs_ev_pos` in `/fmu/out/estimator_status_flags`
+(`cs_ev_yaw` stays false: yaw is deliberately not fused), or in the ulog.
+
+Worse, a stream in the **wrong frame** looks identical from inside EKF2 too — without GNSS it
+re-anchors to whatever it is handed, so a 90° rotation reads as zero innovation. That is what
+`vicon_px4_bridge`'s frame check catches: it refuses to publish until the converted Vicon attitude
+agrees with EKF2's own to within 30°, and names the likely wrong knob.
 
 ## Running only the Extended State Observer
 

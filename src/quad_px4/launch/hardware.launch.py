@@ -136,8 +136,32 @@ def generate_launch_description():
         # Barometer-only height. The SITL barometer is 300x quieter than PX4's own model.
         DeclareLaunchArgument('takeoff_tolerance', default_value='0.20'),
 
+        # --- Vicon external-vision aiding ---------------------------------------
+        # The receiver runs on the LAPTOP - the Vicon SDK is x86-64 only - and must be started
+        # with FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA, or nothing here receives it.
+        DeclareLaunchArgument('vicon', default_value='false',
+                              description='feed Vicon to EKF2 as external vision'),
+        DeclareLaunchArgument('vicon_topic', default_value='/vicon/quad/quad',
+                              description='PoseStamped from the Vicon receiver'),
+        # gated: aided iff the loop does not have the aircraft, so the scored window is unaided.
+        # always: bring-up and shadow flights. oneshot: until the first handover. manual: service.
+        DeclareLaunchArgument('aiding_policy', default_value='gated',
+                              choices=['gated', 'always', 'oneshot', 'manual']),
+        # The Vicon global frame from the wand calibration, and the object template's body axes.
+        # Both are guesses until step 2 of the bring-up ladder confirms them.
+        DeclareLaunchArgument('vicon_frame', default_value='enu', choices=['enu', 'ned']),
+        DeclareLaunchArgument('body_frame', default_value='flu', choices=['flu', 'frd']),
+        # Rotates the Vicon world onto the workspace datum. Measured on site, like frame_yaw_offset.
+        DeclareLaunchArgument('vicon_yaw_offset', default_value='0.0'),
+        # header needs chrony between the laptop and the Pi; receipt carries the latency in
+        # EKF2_EV_DELAY instead.
+        DeclareLaunchArgument('stamp_source', default_value='header',
+                              choices=['header', 'receipt']),
+
         # --- the workspace datum ------------------------------------------------
-        # Zero, unlike SITL's -pi/2: that encodes the Gazebo world's ENU convention.
+        # Zero, unlike SITL's -pi/2: that encodes the Gazebo world's ENU convention. Stays zero
+        # under vicon:=true as well - EV yaw makes EKF2's heading relative to what the bridge feeds,
+        # so the datum is applied there as vicon_yaw_offset instead.
         DeclareLaunchArgument('frame_yaw_offset', default_value='0.0'),
 
         # --- recording ----------------------------------------------------------
@@ -182,6 +206,25 @@ def generate_launch_description():
             'lens_position': LaunchConfiguration('lens_position'),
             'cpu_affinity': LaunchConfiguration('camera_cpu'),
         })]
+
+    def _vicon(context, *a, **k):
+        if LaunchConfiguration('vicon').perform(context).lower() != 'true':
+            return []
+        return [
+            LogInfo(msg='vicon: EKF2 external-vision aiding ON, policy %s. Load the EKF2_EV_* '
+                        'block from params/hardware.params and REBOOT the FC first.'
+                        % LaunchConfiguration('aiding_policy').perform(context)),
+            Node(package=PKG, executable='vicon_px4_bridge', name='vicon_px4_bridge',
+                 output='screen',
+                 parameters=[{'use_sim_time': False,
+                              'vicon_topic': LaunchConfiguration('vicon_topic'),
+                              'aiding_policy': LaunchConfiguration('aiding_policy'),
+                              'vicon_frame': LaunchConfiguration('vicon_frame'),
+                              'body_frame': LaunchConfiguration('body_frame'),
+                              'yaw_offset': ParameterValue(
+                                  LaunchConfiguration('vicon_yaw_offset'), value_type=float),
+                              'stamp_source': LaunchConfiguration('stamp_source')}]),
+        ]
 
     def _agent(context, *a, **k):
         if LaunchConfiguration('agent').perform(context).lower() != 'true':
@@ -332,6 +375,9 @@ def generate_launch_description():
         SetEnvironmentVariable('FASTDDS_BUILTIN_TRANSPORTS', 'LARGE_DATA'),
         OpaqueFunction(function=_camera_driver),
         OpaqueFunction(function=_agent),
+        # Before the state adapter and the bridge: EKF2 should be aided by the time anything
+        # downstream reads its estimate.
+        OpaqueFunction(function=_vicon),
         state_adapter,
         OpaqueFunction(function=_bridge),
         takeoff_gate,
