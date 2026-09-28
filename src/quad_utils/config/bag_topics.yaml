@@ -67,9 +67,7 @@ differentiators:
   - /attitude_des_td_error
   - /position_td_error
 
-# Foxglove 3D panel
+# Foxglove 3D panel. The Paths and markers are published but NOT recorded: the Paths are
+# cumulative - 80% of a bag - and quad_position/tgt_position already carry the same poses.
 visualisation:
   - /tf
-  - /quad_path
-  - /tgt_path
-  - /ibvs_markers
