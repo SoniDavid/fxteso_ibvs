@@ -156,6 +156,13 @@ def generate_launch_description():
         # 4S, not 3S: 9545 on 3S needs 91% throttle to hover at 2.0 kg, leaving attitude loop nothing.
         DeclareLaunchArgument('battery_cells', default_value='4'),
         DeclareLaunchArgument('prop', default_value='9545'),
+        # Which velocity feeds pos_ctrl's Coriolis term - the ONE place EKF2 reaches the
+        # control output. td (default) is what every recorded bag was flown with; indoors it
+        # carries EKF2's dead-reckoned position differentiated, 66x true speed (e83.md).
+        # pos_ctrl's per-cycle error print; off by default so the WARNs stay readable.
+        DeclareLaunchArgument('print_error', default_value='false'),
+        DeclareLaunchArgument('velocity_source', default_value='td',
+                              choices=['td', 'ekf2', 'vision', 'off']),
         # Table 5.3 thesis values: gamma2_xy=10, gamma3_xy=7, gamma3_yaw=7.
         DeclareLaunchArgument('gamma1_xy', default_value='18.0'),
         DeclareLaunchArgument('gamma2_xy', default_value='20.0'),
@@ -489,7 +496,9 @@ def generate_launch_description():
         target_action=gate,
         on_exit=lambda event, context: (
             ([include(CTRL_PKG, 'control.launch.py',
-                      {'attitude_controller': 'false', 'zD': LaunchConfiguration('zD')})]
+                      {'attitude_controller': 'false', 'zD': LaunchConfiguration('zD'),
+                       'velocity_source': LaunchConfiguration('velocity_source'),
+                       'print_error': LaunchConfiguration('print_error')})]
              if LaunchConfiguration('controllers').perform(context).lower() == 'true'
              else [LogInfo(msg='controllers:=false - the aircraft will loiter after takeoff.')])
             + ([OpaqueFunction(function=_bag)]

@@ -25,6 +25,10 @@ Eigen::Vector4f error(0,0,0,0);
 Eigen::Vector4f error_dot(0,0,0,0);
 Eigen::Vector3f quad_att(0,0,0);
 Eigen::Vector3f quad_vel_BF(0,0,0);
+// EKF2's own velocity STATE, not a derivative of its diverging position. Published by
+// px4_state_adapter and unused until now; the `ekf2` velocity_source arm selects it.
+Eigen::Vector3f quad_vel_BF_ekf2(0,0,0);
+std::string velocity_source = "td";
 Eigen::Vector3f quad_vel_VF(0,0,0);
 Eigen::Vector3f quad_attVel(0,0,0);
 Eigen::Vector3f yawVel_e3(0,0,0);
@@ -196,6 +200,13 @@ void quadVelBFCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr quadVel
     quad_vel_BF(2) = quadVel->z;
 }
 
+void quadVelBFEkf2Callback(const geometry_msgs::msg::Vector3::ConstSharedPtr quadVel)
+{
+	quad_vel_BF_ekf2(0) = quadVel->x;
+    quad_vel_BF_ekf2(1) = quadVel->y;
+    quad_vel_BF_ekf2(2) = quadVel->z;
+}
+
 void quadAttVelCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr quadAttVel)
 {
 	quad_attVel(0) = quadAttVel->x;
@@ -242,7 +253,31 @@ int main(int argc, char *argv[])
 	// default is the simulated F450; a real one must be weighed as flown, battery included.
 	quad_mass = node->declare_parameter<double>("quad_mass", quad_mass);
 	thrust = quad_mass * gravity;
-RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg", zD, quad_mass);
+	// Which velocity feeds the ONE term that consumes it - the Coriolis m*(r x v) below.
+	// td: lin_vel_BF_estimates, td_linear's derivative of EKF2 position. Unaided indoors that
+	//     position dead-reckons to km, so this reads 66x true speed (e83.md). The default,
+	//     bit-identical to every run flown so far.
+	// ekf2: quad_velocity_BF, EKF2's velocity STATE - one integration order less corrupted.
+	// vision: invert the Omega interaction matrix on the observer's feature rates. No EKF2
+	//     position or velocity in the path (attitude is still EKF2's, via Rtp).
+	// off: zero it. The term is worth 0.007 deg of true tilt in hover and 0.45-10 deg of
+	//     spurious; zeroing the vector makes skew(yawVel_e3)*v vanish without touching the
+	//     control line itself. DROPS a thesis term - a deviation, not a default.
+	velocity_source = node->declare_parameter<std::string>("velocity_source", velocity_source);
+	if (velocity_source != "td" && velocity_source != "ekf2" &&
+	    velocity_source != "vision" && velocity_source != "off")
+	{
+		RCLCPP_FATAL(node->get_logger(),
+		             "velocity_source:=%s is not one of td, ekf2, vision, off.",
+		             velocity_source.c_str());
+		return 1;
+	}
+	// Off by default: this printed a 4-vector every cycle at 50 Hz, and the WARNs that matter -
+	// the lock loss, the handover, PX4 failing safe - scrolled past unreadably behind it.
+	// /error_visual_servoing carries the same numbers into the bag.
+	const bool print_error = node->declare_parameter<bool>("print_error", false);
+RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg, velocity_source = %s",
+            zD, quad_mass, velocity_source.c_str());
     
 	auto error_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_visual_servoing",100);
     auto error_dot_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_dot_visual_servoing",100);
@@ -277,6 +312,9 @@ RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg", zD
    
 
     auto quad_vel_BF_sub = node->create_subscription<geometry_msgs::msg::Vector3>("lin_vel_BF_estimates", 1, quadVelBFCallback);
+    // Subscribed unconditionally so the arms differ only in which value is USED, never in
+    // what the graph looks like; an unused subscription costs a copy of a Vector3.
+    auto quad_vel_BF_ekf2_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_velocity_BF", 1, quadVelBFEkf2Callback);
     auto attitude_est_sub = node->create_subscription<geometry_msgs::msg::Twist>("attitude_estimates", 1, quadAttEstCallback);
     auto quad_attVel_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_attitude_velocity", 1, quadAttVelCallback);
     auto quad_att_sub = node->create_subscription<geometry_msgs::msg::Vector3>("quad_attitude", 1, quadAttCallback);
@@ -395,7 +433,26 @@ imgFeat_des << 0,0,1,0;
 ////////////////////// FOR COMPARISON ONLY//////////////////////////////////////////////////
         imgFeatLinear << imgFeat(0),imgFeat(1),imgFeat(2); 
         tgt_vel_VF = (Ryaw(attitudeEstimates(2)).transpose()) * tgt_vel;
-        quad_vel_VF_real = Rtp(attitudeEstimates(0),attitudeEstimates(1)) * quad_vel_BF;
+        // The single point where EKF2 reaches the control output; see velocity_source above.
+        // Every arm ends in quad_vel_VF_real, so line "quad_linear_forces_VF = ..." below is
+        // untouched - the control law itself is the object of study.
+        if (velocity_source == "ekf2")
+            quad_vel_VF_real = Rtp(attitudeEstimates(0),attitudeEstimates(1)) * quad_vel_BF_ekf2;
+        else if (velocity_source == "off")
+            quad_vel_VF_real << 0,0,0;
+        else if (velocity_source == "vision")
+        {
+            // Omega (built below for telemetry) is upper-triangular with diagonal
+            // (-1/zD,-1/zD,-1/zD,-1), so err_dot = Omega*v + kappa inverts in closed form.
+            // Solved against the rows as written: w_z = tgt_YR - xi_dot_psi, then
+            // v = -zD*xi_dot (+/- the yaw cross terms) + tgt_vel_VF.
+            const float w_z = tgt_YR - imgFeat_dot_est(3);
+            quad_vel_VF_real(0) = -zD*imgFeat_dot_est(0) + zD*imgFeat(1)*w_z + tgt_vel_VF(0);
+            quad_vel_VF_real(1) = -zD*imgFeat_dot_est(1) - zD*imgFeat(0)*w_z + tgt_vel_VF(1);
+            quad_vel_VF_real(2) = -zD*imgFeat_dot_est(2) + tgt_vel_VF(2);
+        }
+        else
+            quad_vel_VF_real = Rtp(attitudeEstimates(0),attitudeEstimates(1)) * quad_vel_BF;
         yawVel_e3 << 0,0,attitudeVelEstimates(2);
         imgFeatLinear_dot = -skewMatrix(yawVel_e3) * imgFeatLinear - (1/zD) * quad_vel_VF_real + (1/zD) * tgt_vel_VF;
         
@@ -551,8 +608,8 @@ err_dot = Omega*v_imgFeat + kappa;
 
         ctrl_pub->publish(ctrl_input_var);
 
-        std::cout << "error: " << error << std::endl;
-        //std::cout << "pitch_des " << attitude_desired(1) << std::endl;
+        if (print_error)
+            std::cout << "error: " << error << std::endl;
 
 		loop_rate.sleep();
     }

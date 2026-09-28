@@ -66,6 +66,9 @@ differentiators:
   - /attitude_estimates
   - /attitude_desired_estimates
   - /lin_vel_BF_estimates
+  # What pos_ctrl's Coriolis term ACTUALLY used, whichever velocity_source arm was flown.
+  # Without it the arms are indistinguishable offline.
+  - /quad_vel_virtual_real
   - /position_estimates
   - /attitude_td_error
   - /attitude_des_td_error
