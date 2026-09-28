@@ -24,6 +24,13 @@ plant_and_target:
   - /fmu/out/vehicle_status_v4
   # plant:=px4 only. An EKF2 reset steps quad_position; the td_linear spike is not motion.
   - /quad_estimator_reset
+  # plant:=px4 only. WHY a mode became unavailable: local_position_invalid,
+  # offboard_control_signal_lost, and the mode_req_* masks that say what each mode needs.
+  # nav_state alone shows the fallback, never its cause.
+  - /fmu/out/failsafe_flags
+  # plant:=px4 only. The stick trace. A stick override ends a run permanently by reassigning the
+  # mode intent, and without this the only record of it is PX4's own ulog.
+  - /fmu/out/manual_control_setpoint
 
 # thesis Figs 5.10d, 5.11a, 5.12
 vision_and_observer:

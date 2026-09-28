@@ -243,6 +243,10 @@ def generate_launch_description():
         # Hides target to exercise lock-loss path. 0 disables.
         DeclareLaunchArgument('blackout_at', default_value='0.0'),
         DeclareLaunchArgument('blackout_for', default_value='3.0'),
+        # Indoor stand-in pilot lets go in OFFBOARD; false flies through it and trips PX4's override.
+        DeclareLaunchArgument('pilot_hands_off', default_value='true'),
+        # Seconds its hands stay still after PX4 leaves OFFBOARD.
+        DeclareLaunchArgument('pilot_reaction', default_value='0.0'),
         # aD and MIS_TAKEOFF_ALT are both derived from zD — one number drives three things.
         DeclareLaunchArgument('zD', default_value='1.2'),
         # 1.5 > zD 1.2: take off high, descend onto target. Pass 'zD' to start at servo depth.
@@ -389,6 +393,13 @@ def generate_launch_description():
         # 4 ignores every stick source; 1 is MAVLink only, so PX4 accepts sim_pilot's stream.
         # On the real aircraft this must be 0 (RC only) - the pilot is on a transmitter.
         env['PX4_PARAM_COM_RC_IN_MODE'] = '1' if indoor else '4'
+        # Negative disables the stick override entirely (manual_control_params.yaml). In SITL the
+        # "pilot" is a node, so nobody needs to grab the aircraft, and the override is pure hazard:
+        # commander hands the aircraft back by setting the mode intent to POSCTL unconditionally,
+        # which GPS-denied never returns. sim_pilot freezes its sticks as well; this is the backstop.
+        # HARDWARE KEEPS THE DEFAULT 1.0 - there the override is a safety feature. Explicit on both
+        # branches for the parameters.bson reason above.
+        env['PX4_PARAM_MAN_OVERRIDE_SPD'] = '-1.0'
         # From boot until disarm, not the default "while armed": the start-up failures worth
         # diagnosing are exactly the runs that never arm, which would log nothing.
         env['PX4_PARAM_SDLOG_MODE'] = '1'
@@ -441,7 +452,11 @@ def generate_launch_description():
             parameters=[{'use_sim_time': True,
                          # Same resolver as the bridge's, or the pilot stops climbing below the
                          # height the bridge is waiting for and the handover never happens.
-                         'takeoff_altitude': takeoff_alt_of(context)}])]
+                         'takeoff_altitude': takeoff_alt_of(context),
+                         'hands_off_in_offboard': ParameterValue(
+                             LaunchConfiguration('pilot_hands_off'), value_type=bool),
+                         'pilot_reaction': ParameterValue(
+                             LaunchConfiguration('pilot_reaction'), value_type=float)}])]
 
     def _offboard_bridge(context, *a, **k):
         # Must come from the SAME resolver as MIS_TAKEOFF_ALT and the takeoff gate: left at the
