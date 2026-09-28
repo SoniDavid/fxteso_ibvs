@@ -54,7 +54,7 @@ PX4 attaches in standalone mode (`PX4_GZ_STANDALONE`, `PX4_GZ_MODEL_NAME`) so th
 
 Notable PX4-specific details (each commented where it lives):
 
-- **`MPC_THR_HOVER`**: Measured per battery/prop combination on a real hover — the vehicle now flies 3S, not the 4S `sitl.launch.py`'s default (`battery_cells`, `hover_thrust`) assumes. The affine rotor-velocity map means the nominal x500 value (0.60) would silently mis-scale every command regardless of cell count.
+- **`MPC_THR_HOVER`**: Measured per battery/prop combination on a real hover. `sitl.launch.py` derives it from `prop`, `battery_cells` and `quad_mass` (default 3S at 1.30 kg → 0.69). The affine rotor-velocity map means the nominal x500 value (0.60) would silently mis-scale every command regardless of cell count.
 - **`frame_yaw_offset`**: Appears twice, opposite signs — the world is ENU, the workspace calls Gazebo +x North.
 - **Estimator startup**: `px4_takeoff_gate` gates the estimators; starting earlier books the climb as disturbance.
 - **Sensor plugins**: `worlds/ibvs.sdf` carries PX4's plugins itself — gz-sim ignores `server.config` once any `<plugin>` is declared.

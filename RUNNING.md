@@ -1,4 +1,4 @@
-# Running the FxTESO-IBVS project
+# Running the project
 
 The same vision and control code runs in two places: against **PX4 SITL** on the dev desktop, and
 on the **companion computer** (Raspberry Pi 5) of the real UAV. Simulation and hardware differ only
@@ -138,8 +138,9 @@ exhaustive list of all arguments available in `sitl.launch.py`, which `hardware.
 - `camera:=<preset>` — Camera config preset (e.g., `module2_1640`, `module3wide_2304`).
 - `camera_rate:=<float>` — Camera rate (default: `0.0`).
 - `prop:=<str>` — Rotor model (default: `9545`).
-- `battery_cells:=<int>` — Battery cell count (default: `4`).
-- `hover_thrust:=<float>` — Measured `MPC_THR_HOVER` (default: `0.6461`).
+- `battery_cells:=<int>` — Battery cell count (default: `3`).
+- `quad_mass:=<float>` — Airframe mass, battery in; a parts-list estimate until weighed (default: `1.30`). The thesis plant is `quad_mass:=2.0 battery_cells:=4`.
+- `hover_thrust:=<float>` — `MPC_THR_HOVER`; empty derives it from `prop`, `battery_cells` and `quad_mass`, and an explicit value must agree (default: empty).
 - `offboard_recovery:=<bool>` — Attempt offboard recovery on lock-loss (default: `false`).
 - `px4_dir:=<path>` — Path to the PX4 fork submodule.
 - `xrce_agent:=<path>` — Path to the MicroXRCEAgent binary.

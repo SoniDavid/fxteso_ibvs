@@ -3,6 +3,7 @@
   ros2 launch quad_gz_sim gz_sim.launch.py [headless:=true] [plant:=analytic|gazebo]
                                            [camera:=module2_1640] [target_scale:=1.0]
                                            [marker_dict:=7x7] [camera_rate:=0.0]
+                                           [quad_mass:=2.0]
 
 plant starts no node here; it selects how the world is derived. See _world_for().
 
@@ -79,6 +80,8 @@ def generate_launch_description():
         # Above zero, overrides the camera sensor's update_rate. Use it to fly the real sensor
         # mode's frame rate against the 50 Hz loop instead of the sim's free 50 fps.
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
+        # Composite airframe mass; rewrites F450_base's inertial. 2.0 is the thesis vehicle.
+        DeclareLaunchArgument('quad_mass', default_value='2.0'),
     ]
 
     models = os.path.join(get_package_share_directory('quad_description'), 'models')
@@ -186,8 +189,8 @@ def generate_launch_description():
                                'quad_description/scripts/make_markers.py.' % meshes)
         os.symlink(meshes, os.path.join(dst, 'meshes'))
 
-    def _models_for(camera, target_scale, marker_dict, camera_rate):
-        """Derive F450_base (camera preset) and aruco_target (scale, marker dictionary)."""
+    def _models_for(camera, target_scale, marker_dict, camera_rate, quad_mass):
+        """Derive F450_base (camera preset, mass) and aruco_target (scale, marker dictionary)."""
         if camera not in cameras:
             raise RuntimeError('camera:=%s is not one of %s.'
                                % (camera, ', '.join(cameras)))
@@ -228,6 +231,29 @@ def generate_launch_description():
                                 '<update_rate>%g</update_rate>' % camera_rate, 'update_rate')
             return sdf[:m.start()] + blk + sdf[m.end():]
 
+        def mass_block(sdf):
+            # base_link absorbs the change and its inertia scales with mass at fixed geometry -
+            # an approximation until the real airframe's inertia is measured.
+            total = sum(float(v) for v in re.findall(r'<mass>([^<]*)</mass>', sdf))
+            if abs(quad_mass - total) < 1e-6:
+                return sdf
+            m = re.search(r"<link name='base_link'>.*?</inertial>", sdf, re.DOTALL)
+            if m is None:
+                raise RuntimeError("F450_base/model.sdf has no base_link <inertial>; "
+                                   'gz_sim.launch.py cannot apply quad_mass:=%g.' % quad_mass)
+            blk = m.group(0)
+            base = float(re.search(r'<mass>([^<]*)</mass>', blk).group(1))
+            if quad_mass <= total - base:
+                raise RuntimeError('quad_mass:=%g is not heavier than the rotors alone.'
+                                   % quad_mass)
+            blk = _sub_once(blk, r'<mass>[^<]*</mass>',
+                            '<mass>%.6f</mass>' % (quad_mass - (total - base)), 'base <mass>')
+            for tag in ('ixx', 'iyy', 'izz'):
+                old = float(re.search(r'<%s>([^<]*)</%s>' % (tag, tag), blk).group(1))
+                blk = _sub_once(blk, r'<%s>[^<]*</%s>' % (tag, tag),
+                                '<%s>%.9g</%s>' % (tag, old * quad_mass / total, tag), tag)
+            return sdf[:m.start()] + blk + sdf[m.end():]
+
         def target_block(sdf):
             if target_scale == 1.0:
                 return sdf
@@ -238,7 +264,7 @@ def generate_launch_description():
                              '<size>%g %g 0.001</size>'
                              % (0.90 * target_scale, 0.75 * target_scale), 'collision <size>')
 
-        _derive_model('F450_base', camera_block)
+        _derive_model('F450_base', lambda sdf: mass_block(camera_block(sdf)))
         _derive_model('aruco_target', target_block, MARKER_DICTS[marker_dict])
 
     def _world_for(plant):
@@ -271,7 +297,8 @@ def generate_launch_description():
         _models_for(camera,
                     float(LaunchConfiguration('target_scale').perform(context)),
                     LaunchConfiguration('marker_dict').perform(context),
-                    float(LaunchConfiguration('camera_rate').perform(context)))
+                    float(LaunchConfiguration('camera_rate').perform(context)),
+                    float(LaunchConfiguration('quad_mass').perform(context)))
         cam = cameras[camera]
         # Logged because the sensor mode is a hardware constraint the sim otherwise hides:
         # Module 2's full-FOV mode runs at 41.85 fps against a 50 Hz loop.
@@ -332,6 +359,8 @@ def generate_launch_description():
             package=PKG, executable='gz_pose_broadcaster', name='gz_pose_broadcaster',
             output='screen', parameters=[{'world': LaunchConfiguration('world'),
                                           'teleport_quad': not gazebo,
+                                          'rotor_hover_thrust': 9.81 * float(
+                                              LaunchConfiguration('quad_mass').perform(context)),
                                           'use_sim_time': True}],
         )]
 

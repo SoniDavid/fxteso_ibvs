@@ -75,7 +75,7 @@ def generate_launch_description():
                               description='printed plate size relative to the reference target'),
 
         # --- the airframe -------------------------------------------------------
-        # Weighed as flown, battery included. The 2.0 default is the simulated F450's.
+        # Weighed as flown, battery included. 2.0 is the thesis vehicle's; the 3S build is ~1.3 kg.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
         # Must equal MPC_THR_HOVER on the aircraft; read it off a real hover.
         DeclareLaunchArgument('hover_thrust', default_value='0.60'),

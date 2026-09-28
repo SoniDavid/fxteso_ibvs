@@ -72,23 +72,30 @@ SYS_AUTOSTART = '22100'
 PROPS = {
     '9545': (8.566e-06, 702.7),   # measured
 }
-MASS, GRAVITY = 2.0, 9.81
+GRAVITY = 9.81
 ROTOR_MIN = 150.0                 # SIM_GZ_EC_MIN, the ESC idle floor
+# MPC_THR_HOVER's documented maximum; PositionControl clamps hover thrust at 0.9 regardless.
+THR_HOVER_MAX = 0.8
 
 
-def rotor_setup(prop, cells):
-    """Rotor velocity ceiling and hover throttle for a prop and cell count.
+def rotor_setup(prop, cells, mass):
+    """Rotor velocity ceiling, hover throttle and T/W for a prop, cell count and mass.
 
     PX4 maps its normalised output linearly onto [SIM_GZ_EC_MIN, SIM_GZ_EC_MAX] rotor velocity
     while thrust goes as omega^2, so hover throttle is not mg/T_max. This expression reproduced
     the previously measured MPC_THR_HOVER of 0.716 to 0.001.
     """
     c_t, kv_loaded = PROPS[prop]
+    weight = mass * GRAVITY
     w_max = kv_loaded * cells * 3.7 * 2.0 * math.pi / 60.0
-    w_hover = math.sqrt((MASS * GRAVITY / 4.0) / c_t)
-    if w_hover >= w_max:
-        raise RuntimeError('%s on %dS cannot hover %.1f kg.' % (prop, cells, MASS))
-    return w_max, (w_hover - ROTOR_MIN) / (w_max - ROTOR_MIN)
+    w_hover = math.sqrt((weight / 4.0) / c_t)
+    thr_hover = (w_hover - ROTOR_MIN) / (w_max - ROTOR_MIN)
+    t_w = 4.0 * c_t * w_max * w_max / weight
+    if thr_hover > THR_HOVER_MAX:
+        raise RuntimeError(
+            '%s on %dS hovers %.2f kg at %.2f throttle (T/W %.2f); PX4 allows at most %.1f. '
+            'Check quad_mass, or add cells.' % (prop, cells, mass, thr_hover, t_w, THR_HOVER_MAX))
+    return w_max, thr_hover, t_w
 
 
 # Spawn pose from worlds/ibvs.sdf, in NED (the world is ENU, so y and z are negated). EKF2
@@ -153,9 +160,12 @@ def generate_launch_description():
         DeclareLaunchArgument('target_accel', default_value='0.5'),
         # Above zero, places fixed_eso's x/y gains as a triple pole at this rate.
         DeclareLaunchArgument('observer_omega', default_value='0.0'),
-        # 4S, not 3S: 9545 on 3S needs 91% throttle to hover at 2.0 kg, leaving attitude loop nothing.
-        DeclareLaunchArgument('battery_cells', default_value='4'),
+        # The 3S build. The thesis plant (2.0 kg) needs 4S: on 3S it hovers at 91% and is refused.
+        DeclareLaunchArgument('battery_cells', default_value='3'),
         DeclareLaunchArgument('prop', default_value='9545'),
+        # Parts-list estimate for the 3S build (1.19-1.37 kg), not yet weighed. Sets the SDF,
+        # PX4, bridge and controllers. Thesis plant: quad_mass:=2.0 battery_cells:=4.
+        DeclareLaunchArgument('quad_mass', default_value='1.30'),
         # Which velocity feeds pos_ctrl's Coriolis term - the ONE place EKF2 reaches the
         # control output. td (default) is what every recorded bag was flown with; indoors it
         # carries EKF2's dead-reckoned position differentiated, 66x true speed (e83.md).
@@ -203,8 +213,8 @@ def generate_launch_description():
             default_value=os.path.expanduser(
                 '~/Robotics/Micro-XRCE-DDS-Agent/build/MicroXRCEAgent'),
             description='MicroXRCEAgent binary. It is not normally on PATH.'),
-        # Must equal MPC_THR_HOVER in the airframe — a drift silently mis-scales every command.
-        DeclareLaunchArgument('hover_thrust', default_value='0.6461'),
+        # Empty = derived from prop, battery_cells and quad_mass. A value given must agree with it.
+        DeclareLaunchArgument('hover_thrust', default_value=''),
         # Feeds both the rendered <camera> block and image_features' intrinsics from one table.
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
         # 0.5 = printed target, 450×375 mm — the sheet that exists, not a tuned value.
@@ -266,6 +276,29 @@ def generate_launch_description():
         raw = LaunchConfiguration('eso_z_des').perform(context).strip()
         return float(raw) if raw else float(LaunchConfiguration('zD').perform(context))
 
+    def rotor_of(context):
+        """(w_max, hover throttle, T/W) - one resolver, so PX4 and the bridge cannot disagree."""
+        return rotor_setup(LaunchConfiguration('prop').perform(context),
+                           int(LaunchConfiguration('battery_cells').perform(context)),
+                           float(LaunchConfiguration('quad_mass').perform(context)))
+
+    def _check_plant(context, *a, **k):
+        """Refuse an unflyable plant or a stale hover_thrust before Gazebo starts, not after."""
+        w_max, thr_hover, t_w = rotor_of(context)
+        prop = LaunchConfiguration('prop').perform(context)
+        cells = int(LaunchConfiguration('battery_cells').perform(context))
+        mass = float(LaunchConfiguration('quad_mass').perform(context))
+        # The bridge maps newtons through hover_thrust; one off MPC_THR_HOVER mis-scales every
+        # command. An explicit value may only confirm the derivation.
+        declared = LaunchConfiguration('hover_thrust').perform(context).strip()
+        if declared and abs(float(declared) - thr_hover) > 0.005:
+            raise RuntimeError(
+                'hover_thrust:=%s but %s on %dS at %.2f kg derives %.4f. Omit hover_thrust to '
+                'use the derived value.' % (declared, prop, cells, mass, thr_hover))
+        return [LogInfo(msg='plant: %s on %dS at %.2f kg - rotor ceiling %.0f rad/s, '
+                            'MPC_THR_HOVER %.4f, T/W %.2f'
+                            % (prop, cells, mass, w_max, thr_hover, t_w))]
+
     def _indoor(context):
         """venue:=indoor. One resolver, for the same reason takeoff_alt_of is one."""
         return LaunchConfiguration('venue').perform(context).strip().lower() == 'indoor'
@@ -278,7 +311,8 @@ def generate_launch_description():
                  'camera': LaunchConfiguration('camera'),
                  'target_scale': LaunchConfiguration('target_scale'),
                  'marker_dict': LaunchConfiguration('marker_dict'),
-                 'camera_rate': LaunchConfiguration('camera_rate')}),
+                 'camera_rate': LaunchConfiguration('camera_rate'),
+                 'quad_mass': LaunchConfiguration('quad_mass')}),
         include(SIM_PKG, 'scenario.launch.py',
                 {'disturbance': LaunchConfiguration('disturbance'),
                  'disturbance_seed': LaunchConfiguration('disturbance_seed'),
@@ -327,12 +361,13 @@ def generate_launch_description():
 
         # Rotor ceiling and hover anchor are one derivation; PX4 must not carry a second copy.
         # Keep model.sdf's maxRotVelocity above these or the motor model clamps silently.
-        prop = LaunchConfiguration('prop').perform(context)
         cells = int(LaunchConfiguration('battery_cells').perform(context))
-        w_max, thr_hover = rotor_setup(prop, cells)
+        w_max, thr_hover, _ = rotor_of(context)
         for i in (1, 2, 3, 4):
             env['PX4_PARAM_SIM_GZ_EC_MAX%d' % i] = '%d' % round(w_max)
         env['PX4_PARAM_MPC_THR_HOVER'] = '%.4f' % thr_hover
+        # rcS defaults it to 4; PX4's simulated battery scales its pack voltage by it.
+        env['PX4_PARAM_BAT1_N_CELLS'] = '%d' % cells
 
         # Loss of marker lock stops the setpoint stream. The default 0 = Position expects RC
         # that SITL has not, so the aircraft descends; 5 = Hold is the only recoverable mode.
@@ -365,14 +400,6 @@ def generate_launch_description():
 
         env['PX4_PARAM_EKF2_MAG_ACCLIM'] = '%.3f' % float(
             LaunchConfiguration('mag_acclim').perform(context))
-
-        # px4_offboard_bridge maps newtons to normalised thrust with its own hover_thrust, so a
-        # drift between the two silently mis-scales every command. Fail loudly instead.
-        declared = float(LaunchConfiguration('hover_thrust').perform(context))
-        if abs(declared - thr_hover) > 0.005:
-            raise RuntimeError(
-                'hover_thrust:=%.4f but %s on %dS derives %.4f. Pass hover_thrust:=%.4f.'
-                % (declared, prop, cells, thr_hover, thr_hover))
 
         px4_proc = ExecuteProcess(cmd=[binary], cwd=rootfs, env=env,
                                   name='px4_sitl', output='screen')
@@ -423,7 +450,8 @@ def generate_launch_description():
             package=PKG, executable='px4_offboard_bridge', name='px4_offboard_bridge',
             output='screen',
             parameters=[{'use_sim_time': True,
-                         'hover_thrust': LaunchConfiguration('hover_thrust'),
+                         'hover_thrust': rotor_of(context)[1],
+                         'mass': float(LaunchConfiguration('quad_mass').perform(context)),
                          'takeoff_altitude': takeoff_alt_of(context),
                          'bringup': ('pilot' if _indoor(context) else 'auto'),
                          # sim_pilot has no consent input and never will - it is not a person.
@@ -497,6 +525,7 @@ def generate_launch_description():
         on_exit=lambda event, context: (
             ([include(CTRL_PKG, 'control.launch.py',
                       {'attitude_controller': 'false', 'zD': LaunchConfiguration('zD'),
+                       'quad_mass': LaunchConfiguration('quad_mass'),
                        'velocity_source': LaunchConfiguration('velocity_source'),
                        'print_error': LaunchConfiguration('print_error')})]
              if LaunchConfiguration('controllers').perform(context).lower() == 'true'
@@ -521,6 +550,7 @@ def generate_launch_description():
                 float(LaunchConfiguration('camera_rate').perform(context)))),
             include(CTRL_PKG, 'estimation.launch.py',
                     {'initial_estimate_offset': LaunchConfiguration('initial_estimate_offset'),
+                     'quad_mass': LaunchConfiguration('quad_mass'),
                      'z_des': '%.6f' % eso_z_des_of(context),
                      'gamma1_xy': LaunchConfiguration('gamma1_xy'),
                      'gamma2_xy': LaunchConfiguration('gamma2_xy'),
@@ -569,7 +599,8 @@ def generate_launch_description():
         )))
 
     return LaunchDescription(
-        args + [OpaqueFunction(function=_normalise_takeoff_alt),
+        args + [OpaqueFunction(function=_check_plant),
+                OpaqueFunction(function=_normalise_takeoff_alt),
                 OpaqueFunction(function=_bag_at_launch)] + simulation
         + [OpaqueFunction(function=_px4), state_adapter,
            OpaqueFunction(function=_sim_pilot),
