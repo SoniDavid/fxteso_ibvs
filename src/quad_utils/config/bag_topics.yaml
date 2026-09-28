@@ -28,6 +28,10 @@ plant_and_target:
 # thesis Figs 5.10d, 5.11a, 5.12
 vision_and_observer:
   - /ImFeat_vector
+  # How many of the four markers were actually MEASURED this frame. Separates a geometry failure
+  # (target leaving the frame) from a decode failure, which lock% cannot do - and marks any frame
+  # whose centroids were reconstructed rather than seen, so a scored lock% can exclude them.
+  - /ImFeat_sources
   # false while fewer than four markers decode. ImFeat_vector's no-lock sentinel is
   # numerically identical to the servo setpoint, so this is the only way to tell a genuine
   # divergence from an open-loop coast.
