@@ -32,7 +32,8 @@ set(PX4_NODES
 # ground truth and it ARMS the aircraft, so the hardware build excludes it.
 option(BUILD_SIM_PILOT "Build sim_pilot, the SITL stand-in safety pilot" ON)
 if(BUILD_SIM_PILOT)
-  list(APPEND PX4_NODES sim_pilot)
+  # attitude_oracle feeds ground-truth tilt to the loop for the E94 diagnostic; SITL only.
+  list(APPEND PX4_NODES sim_pilot attitude_oracle)
 else()
   message(STATUS "quad_px4: sim_pilot excluded (BUILD_SIM_PILOT=OFF)")
 endif()

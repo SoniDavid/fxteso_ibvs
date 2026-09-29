@@ -88,6 +88,9 @@ def generate_launch_description():
         DeclareLaunchArgument('vision_out_suffix', default_value=''),
         # Pin image_features, the heaviest node, to a core, e.g. '3'. Empty leaves it unpinned.
         DeclareLaunchArgument('image_features_cpu', default_value=''),
+        # The attitude image_features de-rotates by. SITL diagnostics point it at a ground-truth
+        # reference (sitl.launch.py attitude_oracle); everything else leaves it on the estimate.
+        DeclareLaunchArgument('attitude_topic', default_value='attitude_estimates'),
         # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last detection).
         DeclareLaunchArgument('detector_backend', default_value='hybrid'),
         # opencv arm only: candidate search on a downscaled image. The ratio is inert without it.
@@ -154,11 +157,13 @@ def generate_launch_description():
         return [p]
 
     def remaps(exe):
-        # Outputs only, and the identity while vision_out_suffix is empty.
+        # Outputs are the identity while vision_out_suffix is empty; so is the attitude input
+        # while attitude_topic is left at its default.
         if exe != 'image_features':
             return []
         suffix = LaunchConfiguration('vision_out_suffix')
-        return [(t, [t, suffix]) for t in ('ImFeat_vector', 'ImFeat_valid', 'a_value')]
+        return ([(t, [t, suffix]) for t in ('ImFeat_vector', 'ImFeat_valid', 'a_value')]
+                + [('attitude_estimates', LaunchConfiguration('attitude_topic'))])
 
     def prefix(exe, context):
         if exe != 'image_features':

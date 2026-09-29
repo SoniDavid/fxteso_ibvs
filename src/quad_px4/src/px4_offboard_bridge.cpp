@@ -15,6 +15,7 @@
 #include <px4_msgs/msg/vehicle_attitude_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 
 #include <tf2/LinearMath/Quaternion.hpp>
@@ -28,6 +29,7 @@ using px4_msgs::msg::OffboardControlMode;
 using px4_msgs::msg::VehicleAttitudeSetpoint;
 using px4_msgs::msg::VehicleCommand;
 using px4_msgs::msg::VehicleLocalPosition;
+using px4_msgs::msg::VehicleOdometry;
 using px4_msgs::msg::VehicleStatus;
 
 enum class Phase
@@ -160,6 +162,39 @@ int main(int argc, char **argv)
 			have_setpoint = true;
 		});
 
+	// SITL diagnostic (E94): PX4 flies EKF2's attitude, so the TRUE attitude is the command minus
+	// EKF2's error. Pre-multiplying by E = q_ekf * q_ref^-1 makes the true attitude the command.
+	const bool ref_correction = node->declare_parameter<bool>("reference_attitude_correction", false);
+	tf2::Quaternion qRef, qEkf;
+	rclcpp::Time last_ref(0, 0, RCL_ROS_TIME), last_ekf(0, 0, RCL_ROS_TIME);
+	rclcpp::Subscription<geometry_msgs::msg::Quaternion>::SharedPtr refSub;
+	rclcpp::Subscription<VehicleOdometry>::SharedPtr ekfSub;
+	auto refActivePub = node->create_publisher<std_msgs::msg::Bool>(
+		"~/reference_correction_active", rclcpp::QoS(1).transient_local());
+	bool ref_active = false;
+	if (ref_correction)
+	{
+		refSub = node->create_subscription<geometry_msgs::msg::Quaternion>(
+			"attitude_reference", 10,
+			[&](const geometry_msgs::msg::Quaternion::ConstSharedPtr q)
+			{
+				qRef = tf2::Quaternion(q->x, q->y, q->z, q->w);
+				last_ref = node->now();
+			});
+		ekfSub = node->create_subscription<VehicleOdometry>(
+			px4Topic<VehicleOdometry>("/fmu/out/vehicle_odometry"),
+			rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile(),
+			[&](const VehicleOdometry::ConstSharedPtr o)
+			{
+				if (!std::isfinite(o->q[0]))
+					return;
+				qEkf = tf2::Quaternion(o->q[1], o->q[2], o->q[3], o->q[0]);
+				last_ekf = node->now();
+			});
+		RCLCPP_WARN(node->get_logger(), "reference_attitude_correction ON: setpoints are corrected "
+		            "by (EKF2 - attitude_reference). SITL diagnostic only.");
+	}
+
 	auto thrustSub = node->create_subscription<std_msgs::msg::Float64>(
 		"quad_thrust", 1,
 		[&](const std_msgs::msg::Float64::ConstSharedPtr t) { thrust_n = t->data; });
@@ -288,7 +323,26 @@ int main(int argc, char **argv)
 		// pos_ctrl's Euler triple is in the workspace frame; rotate it back into PX4's.
 		tf2::Quaternion qWs;
 		qWs.setRPY(roll_d, pitch_d, yaw_d);
-		const tf2::Quaternion q = qFrameInv * qWs;
+		tf2::Quaternion q = qFrameInv * qWs;
+		if (ref_correction)
+		{
+			const rclcpp::Time now = node->now();
+			const bool fresh = last_ref.nanoseconds() > 0 && last_ekf.nanoseconds() > 0 &&
+				(now - last_ref).seconds() < 0.1 && (now - last_ekf).seconds() < 0.1;
+			if (fresh)
+				q = (qEkf * qRef.inverse()) * q;
+			else
+				RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 2000,
+				                     "attitude_reference or EKF2 odometry stale - setpoint sent "
+				                     "UNCORRECTED.");
+			if (fresh != ref_active)
+			{
+				ref_active = fresh;
+				std_msgs::msg::Bool b;
+				b.data = fresh;
+				refActivePub->publish(b);
+			}
+		}
 		msg.q_d[0] = static_cast<float>(q.w());
 		msg.q_d[1] = static_cast<float>(q.x());
 		msg.q_d[2] = static_cast<float>(q.y());

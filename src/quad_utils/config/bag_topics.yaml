@@ -39,6 +39,15 @@ plant_and_target:
   # plant:=px4 only. The stick trace. A stick override ends a run permanently by reassigning the
   # mode intent, and without this the only record of it is PX4's own ulog.
   - /fmu/out/manual_control_setpoint
+  # attitude_oracle:=... only (E94 diagnostic). Which attitude the loop was fed, whether the
+  # oracle passed its frame check, and whether the bridge was correcting setpoints.
+  - /attitude_reference
+  - /quad_attitude_reference
+  - /attitude_estimates_reference
+  - /attitude_oracle/verified
+  - /px4_offboard_bridge/reference_correction_active
+  # target_release:=settled only: when the target started moving.
+  - /target_position/released
 
 # thesis Figs 5.10d, 5.11a, 5.12
 vision_and_observer:

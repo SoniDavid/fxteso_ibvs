@@ -274,6 +274,13 @@ def generate_launch_description():
         # 'launch' needed for observer experiments: fixed_eso converges in ~1 s post-gate.
         DeclareLaunchArgument('record_from', default_value='handover',
                               description='handover | launch'),
+        # DIAGNOSTIC (E94). Feeds GROUND-TRUTH tilt into the loop: derotation (image_features),
+        # setpoint (bridge corrects by EKF2 - truth), both, or replay (truth + a recorded error).
+        # Never a scored or deployable configuration.
+        DeclareLaunchArgument('attitude_oracle', default_value='none',
+                              description='none | derotation | setpoint | both | replay'),
+        # replay only: CSV of (t, roll_err, pitch_err) in radians, t = 0 at the handover.
+        DeclareLaunchArgument('oracle_replay_csv', default_value=''),
     ]
 
     def takeoff_alt_of(context):
@@ -539,6 +546,40 @@ def generate_launch_description():
                               'stamp_source': 'header'}]),
         ]
 
+    def _oracle(context):
+        mode = LaunchConfiguration('attitude_oracle').perform(context).strip().lower()
+        if mode not in ('none', 'derotation', 'setpoint', 'both', 'replay'):
+            raise RuntimeError('attitude_oracle:=%s is not one of none, derotation, setpoint, '
+                               'both, replay.' % mode)
+        if mode == 'replay' and not LaunchConfiguration('oracle_replay_csv').perform(context):
+            raise RuntimeError('attitude_oracle:=replay needs oracle_replay_csv.')
+        return mode
+
+    def _oracle_nodes(context, *a, **k):
+        mode = _oracle(context)
+        if mode == 'none':
+            return []
+        nodes = [
+            LogInfo(msg='attitude_oracle:=%s - GROUND TRUTH is inside the loop. Diagnostic only.'
+                        % mode),
+            Node(package=PKG, executable='attitude_oracle', name='attitude_oracle',
+                 output='screen',
+                 parameters=[{'use_sim_time': True,
+                              # A frame error is >= 90 deg; aided EKF2 at rest has read 1.6.
+                              'max_tilt_disagreement': 5.0,
+                              'replay_csv': (LaunchConfiguration('oracle_replay_csv')
+                                             .perform(context) if mode == 'replay' else '')}])]
+        if mode in ('derotation', 'both', 'replay'):
+            # The unmodified tracking differentiator, fed the reference instead of EKF2, so the
+            # derotation input differs from the flown one in its source and nothing else.
+            nodes.append(Node(package=CTRL_PKG, executable='td_attitude',
+                              name='td_attitude_reference', output='log',
+                              parameters=[{'use_sim_time': True}],
+                              remappings=[('quad_attitude', 'quad_attitude_reference'),
+                                          ('attitude_estimates', 'attitude_estimates_reference'),
+                                          ('attitude_td_error', 'attitude_td_error_reference')]))
+        return nodes
+
     def _offboard_bridge(context, *a, **k):
         # Must come from the SAME resolver as MIS_TAKEOFF_ALT and the takeoff gate: left at the
         # node's own default the bridge never streams below it, and records loiter as servoing.
@@ -557,7 +598,9 @@ def generate_launch_description():
                              LaunchConfiguration('offboard_recovery'), value_type=bool),
                          # Same value as the adapter's: one rotates into the workspace frame,
                          # the other rotates back out of it.
-                         'frame_yaw_offset': FRAME_YAW_OFFSET}])]
+                         'frame_yaw_offset': FRAME_YAW_OFFSET,
+                         'reference_attitude_correction':
+                             _oracle(context) in ('setpoint', 'both', 'replay')}])]
 
     viz = include(UTILS_PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove'),
                                                'camera': LaunchConfiguration('camera')})
@@ -677,6 +720,9 @@ def generate_launch_description():
                          cam, float(LaunchConfiguration('target_scale').perform(context)),
                          float(LaunchConfiguration('zD').perform(context)),
                          float(LaunchConfiguration('aruco3_margin').perform(context))),
+                     'attitude_topic': ('attitude_estimates_reference'
+                                        if _oracle(context) in ('derotation', 'both', 'replay')
+                                        else 'attitude_estimates'),
                      'camera_topic': ('/quad/camera/image_distorted'
                                       if any(cam['distortion'])
                                       else '/quad/camera/image_raw')}),
@@ -702,5 +748,6 @@ def generate_launch_description():
            # Before the pilot: EKF2 should be aided before anything tries to arm.
            OpaqueFunction(function=_vicon_nodes),
            OpaqueFunction(function=_sim_pilot),
-           OpaqueFunction(function=_offboard_bridge), viz,
+           OpaqueFunction(function=_offboard_bridge), OpaqueFunction(function=_oracle_nodes),
+           viz,
            estimation, takeoff_gate])
