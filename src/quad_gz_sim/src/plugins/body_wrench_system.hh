@@ -58,6 +58,7 @@ private:
   double thrust{0.0};
   gz::math::Vector3d torque{0, 0, 0};
   gz::math::Vector3d disturbance{0, 0, 0};
+  gz::math::Vector3d comInLink{0, 0, 0};
 
   double maxForce{1.0e4};
   double maxTorque{1.0e4};

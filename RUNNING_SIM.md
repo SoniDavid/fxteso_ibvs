@@ -106,7 +106,15 @@ ros2 launch quad_utils observer_only.launch.py plant:=analytic \
 
 ## Other plants, and visualisation
 
-One launch file per plant. `analytic` integrates the aircraft in `uav_dynamics` with Gazebo as a camera only; `gazebo` lets DART integrate it. Both take `sitl.launch.py`'s arguments wherever the argument means the same thing — camera and detector, target trajectory, disturbance, observer and controller gains, gates, recording — with the same deployment defaults (zD 1.2, 0.5-scale target, `hover`, the target held until the loop takes over). `analytic` flies the 1.30 kg 3S build; `gazebo` stays at 2.0 kg for now, because at 1.30 kg about 30% of its starts spin from world load and never pass `ibvs_gate`.
+One launch file per plant, and one body for all three. `quad_description/launch/airframe.py` derives the F450's composite mass, centre of mass and inertia from `quad_mass`, and every plant integrates that body:
+
+| plant | actuation | integrator | what it is for |
+| --- | --- | --- | --- |
+| `analytic` | ideal thrust + torque at the centre of mass | Euler, 100 Hz (`uav_dynamics`); Gazebo only renders | the thesis equations as written |
+| `gazebo` | the same ideal wrench (BodyWrench), rotors welded | DART, 1 kHz | the same model in a real physics engine, in SITL's world and camera |
+| `px4` | PX4 allocation → spinning rotors (MulticopterMotorModel) | DART, 1 kHz | the platform that transfers to hardware |
+
+Both take `sitl.launch.py`'s arguments wherever the argument means the same thing — camera and detector, target trajectory, disturbance, observer and controller gains, gates, recording — with its deployment defaults: zD 1.2, the 0.5-scale target on `hover`, held until the loop takes over, and the 1.30 kg 3S build.
 
 ```sh
 ros2 launch quad_utils analytic.launch.py
@@ -116,9 +124,11 @@ ros2 launch quad_utils gazebo.launch.py target_profile:=line target_heading:=90 
 ros2 launch quad_utils sim.launch.py plant:=analytic
 ```
 
-Plant-specific: `start_altitude` (default 1.5) replaces the takeoff — the aircraft starts over the target at that height and descends onto zD; `quad_mass` sets the plant's mass and scales its inertia; `unwrap_attitude` is gazebo only. PX4-only, and not declared here: `venue`, `vicon_*`, `aiding_policy`, `ev_velocity`, `imu_ctrl`, `mag_acclim`, `prop`, `battery_cells`, `hover_thrust`, `takeoff_*`, `offboard_recovery`, `pilot_*`, `attitude_oracle`. `velocity_source:=ekf2` on these plants reads the plant's own velocity, which is truth.
+**Gazebo's native wind is not used.** gz-sim 8's WindEffects applies a linear drag and noise to the airframe even at zero wind, so it is kept out of `gazebo`. Every disturbance comes through `disturbance:=`, as in `analytic`. It is still present under `px4`.
 
-`att_ctrl`'s inertia is the thesis vehicle's, so at any `quad_mass` other than 2.0 it flies a plant it does not model exactly — the same mismatch `gazebo` has always had with a rewritten SDF.
+Plant-specific arguments: `start_altitude` (default 1.5) replaces the takeoff — the aircraft starts over the target at that height and descends onto zD; `unwrap_attitude` is gazebo only. PX4-only, and not declared here: `venue`, `vicon_*`, `aiding_policy`, `ev_velocity`, `imu_ctrl`, `mag_acclim`, `prop`, `battery_cells`, `hover_thrust`, `takeoff_*`, `offboard_recovery`, `pilot_*`, `attitude_oracle`. `velocity_source:=ekf2` on these plants reads the plant's own velocity, which is truth.
+
+`att_ctrl`'s inertia is the thesis vehicle's, so at any `quad_mass` other than 2.0 it flies a body it does not model exactly (0.69× the inertia at 1.30 kg). That mismatch belongs to the control law, which is left as it is.
 
 Visualisation against a recorded bag. Pass the camera preset: the layout to import depends on which image topic `image_features` consumes, and the launch logs the path of the right one.
 

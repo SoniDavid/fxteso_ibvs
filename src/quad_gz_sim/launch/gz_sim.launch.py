@@ -42,20 +42,26 @@ PLANTS = ('analytic', 'gazebo', 'px4')
 MARKER_DICTS = {'7x7': 'meshes', '4x4': 'meshes_4x4'}
 
 
-def _presets():
-    """quad_description's camera_presets.py. share/<pkg>/launch is not on sys.path, so it is
-    loaded by path rather than imported."""
+def _load(name):
+    """A quad_description launch module. share/<pkg>/launch is not on sys.path, so it is loaded
+    by path rather than imported."""
     path = os.path.join(get_package_share_directory('quad_description'), 'launch',
-                        'camera_presets.py')
-    spec = importlib.util.spec_from_file_location('camera_presets', path)
+                        name + '.py')
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
+def _presets():
+    """quad_description's camera_presets.py."""
+    return _load('camera_presets')
+
+
 def generate_launch_description():
     share = get_package_share_directory(PKG)
     presets = _presets()
+    airframe = _load('airframe')
     world_file = os.path.join(share, 'worlds', 'ibvs.sdf')
     ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
@@ -185,14 +191,17 @@ def generate_launch_description():
         with open(os.path.join(dst, 'model.sdf'), 'w') as fh:
             fh.write(rewrite(sdf))
         shutil.copy(os.path.join(src, 'model.config'), dst)
+        if meshes_from is False:
+            return
         meshes = os.path.join(src, meshes_from or 'meshes')
         if not os.path.isdir(meshes):
             raise RuntimeError('%s does not exist. Generate it with '
                                'quad_description/scripts/make_markers.py.' % meshes)
         os.symlink(meshes, os.path.join(dst, 'meshes'))
 
-    def _models_for(camera, target_scale, marker_dict, camera_rate, quad_mass):
-        """Derive F450_base (camera preset, mass) and aruco_target (scale, marker dictionary)."""
+    def _models_for(plant, camera, target_scale, marker_dict, camera_rate, quad_mass):
+        """Derive F450_base (camera preset, mass, welded rotors under gazebo), F450 (no rotor
+        spin under gazebo) and aruco_target (scale, marker dictionary)."""
         if camera not in cameras:
             raise RuntimeError('camera:=%s is not one of %s.'
                                % (camera, ', '.join(cameras)))
@@ -233,29 +242,6 @@ def generate_launch_description():
                                 '<update_rate>%g</update_rate>' % camera_rate, 'update_rate')
             return sdf[:m.start()] + blk + sdf[m.end():]
 
-        def mass_block(sdf):
-            # base_link absorbs the change and its inertia scales with mass at fixed geometry -
-            # an approximation until the real airframe's inertia is measured.
-            total = sum(float(v) for v in re.findall(r'<mass>([^<]*)</mass>', sdf))
-            if abs(quad_mass - total) < 1e-6:
-                return sdf
-            m = re.search(r"<link name='base_link'>.*?</inertial>", sdf, re.DOTALL)
-            if m is None:
-                raise RuntimeError("F450_base/model.sdf has no base_link <inertial>; "
-                                   'gz_sim.launch.py cannot apply quad_mass:=%g.' % quad_mass)
-            blk = m.group(0)
-            base = float(re.search(r'<mass>([^<]*)</mass>', blk).group(1))
-            if quad_mass <= total - base:
-                raise RuntimeError('quad_mass:=%g is not heavier than the rotors alone.'
-                                   % quad_mass)
-            blk = _sub_once(blk, r'<mass>[^<]*</mass>',
-                            '<mass>%.6f</mass>' % (quad_mass - (total - base)), 'base <mass>')
-            for tag in ('ixx', 'iyy', 'izz'):
-                old = float(re.search(r'<%s>([^<]*)</%s>' % (tag, tag), blk).group(1))
-                blk = _sub_once(blk, r'<%s>[^<]*</%s>' % (tag, tag),
-                                '<%s>%.9g</%s>' % (tag, old * quad_mass / total, tag), tag)
-            return sdf[:m.start()] + blk + sdf[m.end():]
-
         def target_block(sdf):
             if target_scale == 1.0:
                 return sdf
@@ -266,7 +252,14 @@ def generate_launch_description():
                              '<size>%g %g 0.001</size>'
                              % (0.90 * target_scale, 0.75 * target_scale), 'collision <size>')
 
-        _derive_model('F450_base', lambda sdf: mass_block(camera_block(sdf)))
+        # gazebo is SITL's body driven by an ideal wrench: the rotors keep their mass and inertia
+        # but are welded, since a DART joint velocity command is a real torque on the airframe.
+        # Derived for every plant, so a gazebo copy never shadows the original afterwards.
+        gazebo = plant == 'gazebo'
+        weld = airframe.weld_rotors if gazebo else (lambda x: x)
+        _derive_model('F450_base', lambda sdf: weld(
+            airframe.rewrite_mass(camera_block(sdf), quad_mass)))
+        _derive_model('F450', airframe.strip_rotor_spin if gazebo else (lambda x: x), False)
         _derive_model('aruco_target', target_block, MARKER_DICTS[marker_dict])
 
     def _world_for(plant, start_altitude=4.0, quad_mass=2.0):
@@ -284,7 +277,8 @@ def generate_launch_description():
             # The plant and its echo must agree, or a lighter airframe climbs on the thesis
             # 19.62 N until pos_ctrl takes over and the echo misreads the wrench.
             out, n = re.subn(r'<initial_thrust>(?!0<)[^<]*</initial_thrust>',
-                             '<initial_thrust>%g</initial_thrust>' % (quad_mass * 9.81), out)
+                             '<initial_thrust>%g</initial_thrust>'
+                             % (quad_mass * airframe.GRAVITY), out)
             if n != 2:
                 raise RuntimeError(
                     'worlds/ibvs.sdf has %d non-zero BodyWrench <initial_thrust> tags for '
@@ -310,7 +304,7 @@ def generate_launch_description():
         if plant not in PLANTS:
             raise RuntimeError('plant:=%s is not one of %s.' % (plant, ', '.join(PLANTS)))
         camera = LaunchConfiguration('camera').perform(context)
-        _models_for(camera,
+        _models_for(plant, camera,
                     float(LaunchConfiguration('target_scale').perform(context)),
                     LaunchConfiguration('marker_dict').perform(context),
                     float(LaunchConfiguration('camera_rate').perform(context)),
@@ -373,14 +367,15 @@ def generate_launch_description():
     def _broadcaster(context, *a, **k):
         # Under plant:=gazebo physics owns the quad's pose; the broadcaster keeps the target
         # and the cosmetic rotor spin.
-        gazebo = LaunchConfiguration('plant').perform(context).lower() != 'analytic'
+        plant = LaunchConfiguration('plant').perform(context).lower()
+        params = {'world': LaunchConfiguration('world'),
+                  'teleport_quad': plant == 'analytic',
+                  'rotor_hover_thrust': airframe.GRAVITY * float(
+                      LaunchConfiguration('quad_mass').perform(context)),
+                  'use_sim_time': True}
         return [Node(
             package=PKG, executable='gz_pose_broadcaster', name='gz_pose_broadcaster',
-            output='screen', parameters=[{'world': LaunchConfiguration('world'),
-                                          'teleport_quad': not gazebo,
-                                          'rotor_hover_thrust': 9.81 * float(
-                                              LaunchConfiguration('quad_mass').perform(context)),
-                                          'use_sim_time': True}],
+            output='screen', parameters=[params],
         )]
 
     return LaunchDescription(args + egl_vendor + [

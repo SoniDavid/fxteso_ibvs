@@ -5,6 +5,8 @@
 #include <gz/sim/Link.hh>
 #include <gz/sim/Util.hh>
 #include <gz/sim/components/ExternalWorldWrenchCmd.hh>
+#include <gz/sim/components/Inertial.hh>
+#include <gz/sim/components/Pose.hh>
 #include <gz/sim/components/Model.hh>
 #include <gz/sim/components/Name.hh>
 #include <gz/msgs/double.pb.h>
@@ -118,7 +120,29 @@ bool BodyWrench::Resolve(gz::sim::EntityComponentManager &ecm)
   }
 
   gz::sim::Link(this->linkEntity).EnableVelocityChecks(ecm, true);
-  gzmsg << "BodyWrench: attached to [" << this->modelName << "/" << this->linkName << "]\n";
+
+  // Composite centre of mass in this link's frame. gz-physics applies the wrench at the link
+  // origin; the thesis model applies it at the centre of mass. Constant: the rotors are welded.
+  const auto *own = ecm.Component<gz::sim::components::Pose>(this->linkEntity);
+  const gz::math::Pose3d linkInModel = own ? own->Data() : gz::math::Pose3d::Zero;
+  double mass = 0.0;
+  gz::math::Vector3d moment{0, 0, 0};
+  for (const auto l : gz::sim::Model(modelEntity).Links(ecm))
+  {
+    const auto *inertial = ecm.Component<gz::sim::components::Inertial>(l);
+    const auto *lpose = ecm.Component<gz::sim::components::Pose>(l);
+    if (inertial == nullptr || lpose == nullptr)
+      continue;
+    const double m = inertial->Data().MassMatrix().Mass();
+    const gz::math::Vector3d c = (lpose->Data() * inertial->Data().Pose()).Pos();
+    mass += m;
+    moment += m * c;
+  }
+  if (mass > 0.0)
+    this->comInLink = linkInModel.Rot().RotateVectorReverse(moment / mass - linkInModel.Pos());
+
+  gzmsg << "BodyWrench: attached to [" << this->modelName << "/" << this->linkName << "], "
+        << mass << " kg, centre of mass [" << this->comInLink << "] from the link origin\n";
   return true;
 }
 
@@ -167,8 +191,10 @@ void BodyWrench::PreUpdate(const gz::sim::UpdateInfo &info,
   // uav_dynamics applies "-R^T d", i.e. an inertial -d; NED -> world flips y and z.
   force += gz::math::Vector3d(-dist.X(), dist.Y(), dist.Z());
 
+  // (c - o) x F moves the force from the link origin, where gz-physics applies it, to c.
   const gz::math::Vector3d torqueWorld =
-      R.RotateVector(gz::math::Vector3d(tau.X(), -tau.Y(), -tau.Z()));
+      R.RotateVector(gz::math::Vector3d(tau.X(), -tau.Y(), -tau.Z()))
+      + R.RotateVector(this->comInLink).Cross(force);
 
   auto *comp = ecm.Component<gz::sim::components::ExternalWorldWrenchCmd>(this->linkEntity);
   if (comp == nullptr)

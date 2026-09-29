@@ -10,13 +10,13 @@ BodyWrench, and gz_state_adapter converts its odometry to NED.
         +---> fixed_eso ---> pos_ctrl ---> att_ctrl ---> quad_torques/quad_thrust
 
 Takes sitl.launch.py's arguments wherever they mean the same thing, with its defaults: zD 1.2,
-the 0.5-scale target holding station. Mass stays the thesis 2.0 kg for now: with the 1.30 kg
-rewrite, about 30% of starts spin from world load and never pass ibvs_gate. Arguments: sim_stack.py.
+the 0.5-scale target holding station, the 1.30 kg 3S build. The body is SITL's F450 with the
+rotors welded: rotor physics belongs to the px4 plant. Arguments: sim_stack.py.
 
   ros2 launch quad_utils gazebo.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
                                           [camera:=...] [target_profile:=hover|line|...]
                                           [disturbance:=none|step|gust|wind|table52|csv]
-                                          [quad_mass:=2.0] [start_altitude:=1.5]
+                                          [quad_mass:=1.30] [start_altitude:=1.5]
 """
 import importlib.util
 import os
@@ -33,4 +33,4 @@ def _stack():
 
 
 def generate_launch_description():
-    return _stack().build(plant='gazebo', defaults={'quad_mass': '2.0'}, bag_prefix='gazebo_')
+    return _stack().build(plant='gazebo', bag_prefix='gazebo_')

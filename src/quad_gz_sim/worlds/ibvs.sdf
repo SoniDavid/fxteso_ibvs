@@ -83,9 +83,9 @@
     </plugin>
     <!-- ONLY END -->
 
-    <!-- ONLY:gazebo,px4 BEGIN -->
-    <!-- Ambient wind, off by default. MUST come after BodyWrench or thrust is discarded.
-         ~0.072 N per m/s; needs enable_wind:true on the topic. -->
+    <!-- ONLY:px4 BEGIN -->
+    <!-- Always on: m*0.1*(v_wind - v_link) plus this noise on every enable_wind link, even at zero
+         wind. Kept out of gazebo, whose only disturbance is /disturbances. After BodyWrench. -->
     <wind>
       <linear_velocity>0 0 0</linear_velocity>
     </wind>
