@@ -168,7 +168,7 @@ def generate_launch_description():
         DeclareLaunchArgument('quad_mass', default_value='1.30'),
         # Which velocity feeds pos_ctrl's Coriolis term - the ONE place EKF2 reaches the
         # control output. td (default) is what every recorded bag was flown with; indoors it
-        # carries EKF2's dead-reckoned position differentiated, 66x true speed (e83.md).
+        # carries EKF2's dead-reckoned position differentiated, 66x true speed.
         # pos_ctrl's per-cycle error print; off by default so the WARNs stay readable.
         DeclareLaunchArgument('print_error', default_value='false'),
         DeclareLaunchArgument('velocity_source', default_value='td',
@@ -214,6 +214,11 @@ def generate_launch_description():
         # hardware is bought. Every result showing aiding works (E85, E88) used mocap POSITION.
         DeclareLaunchArgument('ev_velocity', default_value='false',
                               choices=['true', 'false']),
+        # EKF2_IMU_CTRL bitmask: 0 gyro bias, 1 accel bias, 2 gravity fusion. 7 is PX4's default
+        # and leaves behaviour unchanged. Unaided, a tilt and a horizontal accel bias are
+        # unobservable as a pair, so EKF2 trades them and both wander  (2.13 deg tilt error
+        # indoors against 0.29 aided). 5 inhibits the accel-bias half of that trade.
+        DeclareLaunchArgument('imu_ctrl', default_value='7'),
         # 0.0 keeps heading aided through station-keeping (PX4 default is 0.5).
         DeclareLaunchArgument('mag_acclim', default_value='0.0'),
         DeclareLaunchArgument(
@@ -404,6 +409,8 @@ def generate_launch_description():
         env['PX4_PARAM_EKF2_GPS_CTRL'] = '0' if indoor else '7'
         # 0 barometric, 1 GPS. Indoors the barometer is the ONLY height source there is.
         env['PX4_PARAM_EKF2_HGT_REF'] = '0' if indoor else '1'
+        # See the imu_ctrl argument. Default 7 is PX4's own, so this is inert unless asked for.
+        env['PX4_PARAM_EKF2_IMU_CTRL'] = LaunchConfiguration('imu_ctrl').perform(context).strip()
         # Vicon external vision. 1 = horizontal position only. Height is not fused (EKF2_HGT_REF
         # stays 0) so the cut at the handover cannot remove the height reference, and YAW is not
         # fused so EKF2's mag heading stays an independent witness for the bridge's frame check -
