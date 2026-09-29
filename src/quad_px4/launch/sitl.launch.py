@@ -256,6 +256,10 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
         # Degrees from +x. 0 = tight FOV axis; 90 = wide axis (~2× field budget).
         DeclareLaunchArgument('target_heading', default_value='0.0'),
+        # control: the target moves on the loop's first command (every run before E96).
+        # settled: it waits until the loop holds it centred at zD, as the lab pushes the cart.
+        DeclareLaunchArgument('target_release', default_value='control',
+                              description='control | settled'),
         # m/s per axis, scaled by wind_scale. Default points down the camera's tight axis.
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # Hides target to exercise lock-loss path. 0 disables.
@@ -357,6 +361,7 @@ def generate_launch_description():
                  # Arming and takeoff cost sim time the other plants do not spend; without
                  # this the target leaves the camera footprint before ibvs_gate can lock.
                  'hold_target': 'true',
+                 'target_release': LaunchConfiguration('target_release'),
                  'target_profile': LaunchConfiguration('target_profile'),
                  'target_speed': LaunchConfiguration('target_speed'),
                  'target_yaw_rate': LaunchConfiguration('target_yaw_rate'),

@@ -13,7 +13,7 @@ from typing import List
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -39,6 +39,11 @@ def generate_launch_description():
         # true holds the target on its start pose until pos_ctrl publishes. plant:=px4 needs
         # it, because arming and taking off cost sim time the other plants do not spend.
         DeclareLaunchArgument('hold_target', default_value='false'),
+        # hold_target only. 'control' starts the target on pos_ctrl's first command; 'settled'
+        # waits until the loop holds it centred at servo depth - the cart pushed after the
+        # aircraft holds station.
+        DeclareLaunchArgument('target_release', default_value='control',
+                              description='control | settled'),
         # Target trajectory. 'thesis' is what every recorded bag was flown on; the rest sweep
         # the Assumption 7 bounds. The target_ prefix keeps these clear of the disturbances
         # node's own 'profile' parameter, which is a different thing fed by 'disturbance'.
@@ -101,6 +106,9 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True,
                      'hold_until_control': ParameterValue(
                          LaunchConfiguration('hold_target'), value_type=bool),
+                     'release_when_settled': ParameterValue(
+                         PythonExpression(["'", LaunchConfiguration('target_release'),
+                                           "' == 'settled'"]), value_type=bool),
                      'profile': ParameterValue(
                          LaunchConfiguration('target_profile'), value_type=str),
                      'speed': ParameterValue(
