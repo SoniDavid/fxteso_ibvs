@@ -114,10 +114,17 @@ int main(int argc, char **argv)
 	auto quad_vel_BF_pub = node->create_publisher<geometry_msgs::msg::Vector3>("quad_velocity_BF",100);
 	
 	
+	// Inertia scales with mass at fixed geometry, as gz_sim.launch.py does to the F450 SDF.
+	const double thesis_mass = quad_mass;
+	quad_mass = node->declare_parameter<double>("quad_mass", thesis_mass);
+	thrust = quad_mass*gravity;
 	J << 0.0411, 0, 0,
 		 0, 0.0478, 0,
 		 0, 0, 0.0599;
-	
+	J *= quad_mass / thesis_mass;
+	RCLCPP_INFO(node->get_logger(), "mass = %.3f kg, inertia x%.3f of the thesis vehicle",
+	            quad_mass, quad_mass / thesis_mass);
+
 	// x,y start over the target, which target_position.cpp initialises at (-10,-10).
 	// z = -4 is the paper's initial condition.
 	const double start_alt = node->declare_parameter<double>("start_altitude", 4.0);

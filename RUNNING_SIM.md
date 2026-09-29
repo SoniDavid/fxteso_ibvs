@@ -106,10 +106,19 @@ ros2 launch quad_utils observer_only.launch.py plant:=analytic \
 
 ## Other plants, and visualisation
 
+One launch file per plant. `analytic` integrates the aircraft in `uav_dynamics` with Gazebo as a camera only; `gazebo` lets DART integrate it. Both take `sitl.launch.py`'s arguments wherever the argument means the same thing — camera and detector, target trajectory, disturbance, observer and controller gains, gates, recording — with the same deployment defaults (zD 1.2, 0.5-scale target, `hover`, the target held until the loop takes over). `analytic` flies the 1.30 kg 3S build; `gazebo` stays at 2.0 kg for now, because at 1.30 kg about 30% of its starts spin from world load and never pass `ibvs_gate`.
+
 ```sh
+ros2 launch quad_utils analytic.launch.py
+ros2 launch quad_utils gazebo.launch.py target_profile:=line target_heading:=90 disturbance:=wind
+
+# the thesis conditions; sim.launch.py keeps them as its defaults for the archived specs
 ros2 launch quad_utils sim.launch.py plant:=analytic
-ros2 launch quad_utils sim.launch.py plant:=gazebo
 ```
+
+Plant-specific: `start_altitude` (default 1.5) replaces the takeoff — the aircraft starts over the target at that height and descends onto zD; `quad_mass` sets the plant's mass and scales its inertia; `unwrap_attitude` is gazebo only. PX4-only, and not declared here: `venue`, `vicon_*`, `aiding_policy`, `ev_velocity`, `imu_ctrl`, `mag_acclim`, `prop`, `battery_cells`, `hover_thrust`, `takeoff_*`, `offboard_recovery`, `pilot_*`, `attitude_oracle`. `velocity_source:=ekf2` on these plants reads the plant's own velocity, which is truth.
+
+`att_ctrl`'s inertia is the thesis vehicle's, so at any `quad_mass` other than 2.0 it flies a plant it does not model exactly — the same mismatch `gazebo` has always had with a rewritten SDF.
 
 Visualisation against a recorded bag. Pass the camera preset: the layout to import depends on which image topic `image_features` consumes, and the launch logs the path of the right one.
 

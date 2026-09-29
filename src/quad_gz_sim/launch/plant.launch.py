@@ -24,6 +24,9 @@ def generate_launch_description():
         # analytic only. 4.0 is the thesis' start; 2.5 matches zD, and so matches the small
         # initial estimation error that px4's takeoff gate produces.
         DeclareLaunchArgument('start_altitude', default_value='4.0'),
+        # analytic only; gazebo takes its mass from the SDF gz_sim.launch.py derives. 2.0 is
+        # the thesis vehicle.
+        DeclareLaunchArgument('quad_mass', default_value='2.0'),
     ]
 
     def _plant_node(context, *a, **k):
@@ -36,6 +39,9 @@ def generate_launch_description():
                          parameters=[{'use_sim_time': True,
                                       'start_altitude': ParameterValue(
                                           LaunchConfiguration('start_altitude'),
+                                          value_type=float),
+                                      'quad_mass': ParameterValue(
+                                          LaunchConfiguration('quad_mass'),
                                           value_type=float)}])]
         return [Node(
             package=PKG, executable='gz_state_adapter', name='gz_state_adapter',

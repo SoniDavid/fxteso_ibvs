@@ -3,7 +3,7 @@
   ros2 launch quad_gz_sim gz_sim.launch.py [headless:=true] [plant:=analytic|gazebo]
                                            [camera:=module2_1640] [target_scale:=1.0]
                                            [marker_dict:=7x7] [camera_rate:=0.0]
-                                           [quad_mass:=2.0]
+                                           [quad_mass:=2.0] [start_altitude:=4.0]
 
 plant starts no node here; it selects how the world is derived. See _world_for().
 
@@ -82,6 +82,8 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
         # Composite airframe mass; rewrites F450_base's inertial. 2.0 is the thesis vehicle.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
+        # analytic and gazebo: the F450's spawn height. px4 spawns on the ground and takes off.
+        DeclareLaunchArgument('start_altitude', default_value='4.0'),
     ]
 
     models = os.path.join(get_package_share_directory('quad_description'), 'models')
@@ -267,12 +269,26 @@ def generate_launch_description():
         _derive_model('F450_base', lambda sdf: mass_block(camera_block(sdf)))
         _derive_model('aruco_target', target_block, MARKER_DICTS[marker_dict])
 
-    def _world_for(plant):
-        """Derive the world for `plant`: filter ONLY blocks, and zero gravity for analytic."""
+    def _world_for(plant, start_altitude=4.0, quad_mass=2.0):
+        """Derive the world for `plant`: filter ONLY blocks, zero gravity for analytic, and
+        place the analytic/gazebo F450 at start_altitude with BodyWrench holding its weight."""
         with open(world_file) as fh:
             sdf = fh.read()
 
         out = _select(sdf, plant, 'worlds/ibvs.sdf')
+        if plant in ('analytic', 'gazebo'):
+            out = _sub_once(out, r'(<uri>model://F450</uri>\s*<name>F450</name>\s*'
+                                 r'<pose>\S+ \S+ )\S+',
+                            r'\g<1>%g' % start_altitude, 'the F450 spawn <pose>')
+        if plant == 'gazebo':
+            # The plant and its echo must agree, or a lighter airframe climbs on the thesis
+            # 19.62 N until pos_ctrl takes over and the echo misreads the wrench.
+            out, n = re.subn(r'<initial_thrust>(?!0<)[^<]*</initial_thrust>',
+                             '<initial_thrust>%g</initial_thrust>' % (quad_mass * 9.81), out)
+            if n != 2:
+                raise RuntimeError(
+                    'worlds/ibvs.sdf has %d non-zero BodyWrench <initial_thrust> tags for '
+                    'plant:=gazebo, expected 2 (plant and echo). Fix one or the other.' % n)
         if plant == 'analytic':
             gravity_off = out.replace('<gravity>0 0 -9.81</gravity>',
                                       '<gravity>0 0 0</gravity>')
@@ -314,7 +330,10 @@ def generate_launch_description():
             IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(ros_gz_sim, 'launch', 'gz_sim.launch.py')),
-            launch_arguments={'gz_args': flags + _world_for(plant),
+            launch_arguments={'gz_args': flags + _world_for(
+                plant,
+                float(LaunchConfiguration('start_altitude').perform(context)),
+                float(LaunchConfiguration('quad_mass').perform(context))),
                               'gz_version': '8'}.items(),
             )]
 
