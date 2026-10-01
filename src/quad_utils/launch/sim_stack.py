@@ -109,6 +109,8 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
             arg('controllers', 'true'),
             # launch: record the observer's transient too; handover: start at the gate.
             arg('record_from', 'handover', choices=['handover', 'launch']),
+            # PX4's offboard-loss Hold, which these plants otherwise lack; false for A/B only.
+            arg('sim_hold', 'true', choices=['true', 'false']),
         ]
 
     args += [
@@ -269,6 +271,14 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
     def _bag_at_launch(context, *a, **k):
         return _bag(context) if from_launch(context) else []
 
+    def _sim_hold(context, *a, **k):
+        if LaunchConfiguration('sim_hold').perform(context).lower() != 'true':
+            return []
+        return [Node(package=SIM_PKG, executable='sim_hold', name='sim_hold', output='screen',
+                     parameters=[{'use_sim_time': True,
+                                  'quad_mass': ParameterValue(
+                                      LaunchConfiguration('quad_mass'), value_type=float)}])]
+
     # Exits 0 once closed-loop servoing is possible, non-zero if it never is. A Node, not an
     # include: the event handler below has to hold the action object.
     gate = Node(package=CTRL_PKG, executable='ibvs_gate', name='ibvs_gate',
@@ -295,4 +305,5 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
         )))
 
     return LaunchDescription(
-        args + [OpaqueFunction(function=_bag_at_launch)] + common + [control, gate])
+        args + [OpaqueFunction(function=_bag_at_launch)] + common
+        + [OpaqueFunction(function=_sim_hold), control, gate])

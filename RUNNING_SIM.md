@@ -124,6 +124,8 @@ ros2 launch quad_utils gazebo.launch.py target_profile:=line target_heading:=90 
 ros2 launch quad_utils sim.launch.py plant:=analytic
 ```
 
+**Lock loss.** `pos_ctrl` stops on lock loss and leaves the aircraft to PX4. On these plants `sim_hold` stands in for it, with SITL's timing: after 0.3 s without `pos_ctrl` plus `COM_OF_LOSS_T` (1.0 s) of the last command, it holds position with PX4's position cascade and the fork's default gains, and it hands back the moment `pos_ctrl` publishes again. `/sim_hold/active` is bagged, so these runs score on authority gaps exactly as SITL does. `sim_hold:=false` restores the old behaviour, for A/B only.
+
 **Gazebo's native wind is not used.** gz-sim 8's WindEffects applies a linear drag and noise to the airframe even at zero wind, so it is kept out of `gazebo`. Every disturbance comes through `disturbance:=`, as in `analytic`. It is still present under `px4`.
 
 Plant-specific arguments: `start_altitude` (default 1.5) replaces the takeoff — the aircraft starts over the target at that height and descends onto zD; `unwrap_attitude` is gazebo only. PX4-only, and not declared here: `venue`, `vicon_*`, `aiding_policy`, `ev_velocity`, `imu_ctrl`, `mag_acclim`, `prop`, `battery_cells`, `hover_thrust`, `takeoff_*`, `offboard_recovery`, `pilot_*`, `attitude_oracle`. `velocity_source:=ekf2` on these plants reads the plant's own velocity, which is truth.

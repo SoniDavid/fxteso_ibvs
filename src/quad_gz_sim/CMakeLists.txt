@@ -24,6 +24,7 @@ set(SIM_NODES
   uav_dynamics
   disturbances
   target_position
+  sim_hold
 )
 
 foreach(node ${SIM_NODES})
