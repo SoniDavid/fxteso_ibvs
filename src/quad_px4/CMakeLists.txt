@@ -20,17 +20,20 @@ find_package(quad_common REQUIRED)
 # px4_state_adapter is the PX4 counterpart of quad_gz_sim's gz_state_adapter and
 # uav_dynamics: same five state topics out, EKF2 in. px4_offboard_bridge is the other end -
 # it turns pos_ctrl's desired attitude and thrust into OFFBOARD setpoints.
+# vicon_px4_bridge is px4_state_adapter mirrored: a mocap pose in, as EKF2 aiding.
 set(PX4_NODES
   px4_state_adapter
   px4_offboard_bridge
   px4_takeoff_gate
+  vicon_px4_bridge
 )
 
 # sim_pilot stands in for the safety pilot under venue:=indoor. It closes its loop on Gazebo
 # ground truth and it ARMS the aircraft, so the hardware build excludes it.
 option(BUILD_SIM_PILOT "Build sim_pilot, the SITL stand-in safety pilot" ON)
 if(BUILD_SIM_PILOT)
-  list(APPEND PX4_NODES sim_pilot)
+  # attitude_oracle feeds ground-truth tilt to the loop for the E94 diagnostic; SITL only.
+  list(APPEND PX4_NODES sim_pilot attitude_oracle)
 else()
   message(STATUS "quad_px4: sim_pilot excluded (BUILD_SIM_PILOT=OFF)")
 endif()

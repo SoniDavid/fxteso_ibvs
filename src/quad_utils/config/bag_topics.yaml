@@ -18,16 +18,48 @@ plant_and_target:
   # Gazebo ground truth, published whenever BodyWrench runs (plant:=gazebo and plant:=px4).
   # Under px4 it is the only unfiltered reference against which EKF2 can be checked.
   - /quad_state
+  # plant:=gazebo: every force on the airframe except commanded thrust (BodyWrench echo).
+  - /external_force
   # plant:=px4 only: whether the loop or PX4's failsafe was flying, which lock% cannot show.
   # The _v4 suffix is NOT optional - the unversioned name subscribes silently to nothing.
   # Bump it when px4_msgs bumps VehicleStatus.
   - /fmu/out/vehicle_status_v4
+  # plant:=analytic and gazebo: the same question, answered by sim_hold's PX4 Hold emulation.
+  - /sim_hold/active
   # plant:=px4 only. An EKF2 reset steps quad_position; the td_linear spike is not motion.
   - /quad_estimator_reset
+  # venue:=vicon only. Independent 6-DoF ground truth, and - via aiding_active - exactly when
+  # Vicon was feeding EKF2. Without the second, the resume transients cannot be excluded and a
+  # scored window cannot be shown to have been unaided.
+  - /vicon/quad/quad
+  - /vicon_px4_bridge/aiding_active
+  # plant:=px4 only. cs_ev_pos is how a run proves the EV stream was actually fused rather than
+  # merely published; cs_fake_pos is EKF2 admitting it has no horizontal aiding.
+  - /fmu/out/estimator_status_flags
+  # plant:=px4 only. WHY a mode became unavailable: local_position_invalid,
+  # offboard_control_signal_lost, and the mode_req_* masks that say what each mode needs.
+  # nav_state alone shows the fallback, never its cause.
+  - /fmu/out/failsafe_flags
+  # plant:=px4 only. The stick trace. A stick override ends a run permanently by reassigning the
+  # mode intent, and without this the only record of it is PX4's own ulog.
+  - /fmu/out/manual_control_setpoint
+  # attitude_oracle:=... only (E94 diagnostic). Which attitude the loop was fed, whether the
+  # oracle passed its frame check, and whether the bridge was correcting setpoints.
+  - /attitude_reference
+  - /quad_attitude_reference
+  - /attitude_estimates_reference
+  - /attitude_oracle/verified
+  - /px4_offboard_bridge/reference_correction_active
+  # target_release:=settled only: when the target started moving.
+  - /target_position/released
 
 # thesis Figs 5.10d, 5.11a, 5.12
 vision_and_observer:
   - /ImFeat_vector
+  # How many of the four markers were actually MEASURED this frame. Separates a geometry failure
+  # (target leaving the frame) from a decode failure, which lock% cannot do - and marks any frame
+  # whose centroids were reconstructed rather than seen, so a scored lock% can exclude them.
+  - /ImFeat_sources
   # false while fewer than four markers decode. ImFeat_vector's no-lock sentinel is
   # numerically identical to the servo setpoint, so this is the only way to tell a genuine
   # divergence from an open-loop coast.
@@ -62,14 +94,15 @@ differentiators:
   - /attitude_estimates
   - /attitude_desired_estimates
   - /lin_vel_BF_estimates
+  # What pos_ctrl's Coriolis term ACTUALLY used, whichever velocity_source arm was flown.
+  # Without it the arms are indistinguishable offline.
+  - /quad_vel_virtual_real
   - /position_estimates
   - /attitude_td_error
   - /attitude_des_td_error
   - /position_td_error
 
-# Foxglove 3D panel
+# Foxglove 3D panel. The Paths and markers are published but NOT recorded: the Paths are
+# cumulative - 80% of a bag - and quad_position/tgt_position already carry the same poses.
 visualisation:
   - /tf
-  - /quad_path
-  - /tgt_path
-  - /ibvs_markers

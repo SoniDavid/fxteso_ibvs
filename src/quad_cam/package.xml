@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>quad_cam</name>
+  <version>0.1.0</version>
+  <description>
+    Raspberry Pi Camera Module 3 Wide publisher for the IBVS stack. Publishes bgr8
+    frames on /quad/camera/image_raw, ISP-downscaled to the module3wide_2304 render
+    size so image_features runs unchanged from simulation. Backend is picamera2
+    (the RaspberryPi libcamera fork built to /usr/local); picamera2 has no rosdep
+    key and is satisfied out-of-band - see RUNNING.md. Carries no simulation
+    dependency, so it ships to the aircraft.
+  </description>
+  <maintainer email="losfansdepalomino@proton.me">SoniDavid</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <!-- bench.launch.py includes quad_control's launch files and reads quad_description's presets -->
+  <exec_depend>quad_control</exec_depend>
+  <exec_depend>quad_description</exec_depend>
+  <!-- probe_detect only -->
+  <exec_depend>python3-opencv</exec_depend>
+  <!-- probe_bench only -->
+  <exec_depend>python3-psutil</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

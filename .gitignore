@@ -8,3 +8,5 @@ bags/
 docs/
 __pycache__/
 Research-Proposal_*.pdf
+bench_*.log
+src/vision_opencv/

@@ -1,0 +1,37 @@
+# Camera Module 3 Wide (imx708_wide), module3wide_2304 preset rendered at 1152x648.
+#
+# Intrinsics are SYNTHESIZED, not calibrated: fx = width / (2*tan(hFOV/2)) with
+# hFOV 102 deg, principal point at the image centre. The distortion vector is
+# cameras.yaml's admitted ASSUMPTION for a 102 deg lens - replace k1..k3 with a real
+# fit from `camera_module3_wide_test.py --calib` (radial coeffs are dimensionless, so
+# a calibration taken at any resolution transfers).
+#
+# Not published by default (image_features derives its own intrinsics from launch
+# params). Set camera.launch.py publish_camera_info:=true only when another consumer
+# needs it.
+image_width: 1152
+image_height: 648
+camera_name: imx708_wide_module3wide_1152x648
+distortion_model: plumb_bob
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [466.434, 0.0, 576.0,
+         0.0, 466.434, 324.0,
+         0.0, 0.0, 1.0]
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [-0.30, 0.10, 0.0, 0.0, -0.02]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0,
+         0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [466.434, 0.0, 576.0, 0.0,
+         0.0, 466.434, 324.0, 0.0,
+         0.0, 0.0, 1.0, 0.0]

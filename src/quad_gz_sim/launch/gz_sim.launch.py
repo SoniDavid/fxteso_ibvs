@@ -3,13 +3,14 @@
   ros2 launch quad_gz_sim gz_sim.launch.py [headless:=true] [plant:=analytic|gazebo]
                                            [camera:=module2_1640] [target_scale:=1.0]
                                            [marker_dict:=7x7] [camera_rate:=0.0]
+                                           [quad_mass:=2.0] [start_altitude:=4.0]
 
 plant starts no node here; it selects how the world is derived. See _world_for().
 
 camera, target_scale and marker_dict do the same for the models: _models_for() writes derived
 copies of F450_base and aruco_target into a scratch tree that is prepended to
 GZ_SIM_RESOURCE_PATH, so model:// still resolves and the originals are never touched. The
-camera presets live in config/cameras.yaml, which the offline footprint calculator reads too -
+camera presets live in quad_description/config/cameras.yaml, which the offline footprint calculator reads too -
 one table, so the rendered geometry and the calculator cannot disagree.
 
 The matching intrinsics have to reach image_features as well, or the feature model is computed
@@ -41,19 +42,26 @@ PLANTS = ('analytic', 'gazebo', 'px4')
 MARKER_DICTS = {'7x7': 'meshes', '4x4': 'meshes_4x4'}
 
 
-def _presets():
-    """camera_presets.py, which lives beside this file. share/<pkg>/launch is not on
-    sys.path, so it is loaded by path rather than imported."""
-    path = os.path.join(get_package_share_directory(PKG), 'launch', 'camera_presets.py')
-    spec = importlib.util.spec_from_file_location('camera_presets', path)
+def _load(name):
+    """A quad_description launch module. share/<pkg>/launch is not on sys.path, so it is loaded
+    by path rather than imported."""
+    path = os.path.join(get_package_share_directory('quad_description'), 'launch',
+                        name + '.py')
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
+def _presets():
+    """quad_description's camera_presets.py."""
+    return _load('camera_presets')
+
+
 def generate_launch_description():
     share = get_package_share_directory(PKG)
     presets = _presets()
+    airframe = _load('airframe')
     world_file = os.path.join(share, 'worlds', 'ibvs.sdf')
     ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
@@ -65,7 +73,7 @@ def generate_launch_description():
         # analytic = the paper's ROS-side integrator; gazebo = DART; px4 = DART with PX4
         # SITL owning allocation and the inner loop.
         DeclareLaunchArgument('plant', default_value='analytic'),
-        # Camera module AND sensor mode; see config/cameras.yaml. Not every module reaches the
+        # Camera module AND sensor mode; see quad_description/config/cameras.yaml. Not every module reaches the
         # 50 Hz image_features loop at full field of view, which is why modes are separate
         # presets rather than a resolution argument.
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
@@ -78,6 +86,10 @@ def generate_launch_description():
         # Above zero, overrides the camera sensor's update_rate. Use it to fly the real sensor
         # mode's frame rate against the 50 Hz loop instead of the sim's free 50 fps.
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
+        # Composite airframe mass; rewrites F450_base's inertial. 2.0 is the thesis vehicle.
+        DeclareLaunchArgument('quad_mass', default_value='2.0'),
+        # analytic and gazebo: the F450's spawn height. px4 spawns on the ground and takes off.
+        DeclareLaunchArgument('start_altitude', default_value='4.0'),
     ]
 
     models = os.path.join(get_package_share_directory('quad_description'), 'models')
@@ -179,14 +191,17 @@ def generate_launch_description():
         with open(os.path.join(dst, 'model.sdf'), 'w') as fh:
             fh.write(rewrite(sdf))
         shutil.copy(os.path.join(src, 'model.config'), dst)
+        if meshes_from is False:
+            return
         meshes = os.path.join(src, meshes_from or 'meshes')
         if not os.path.isdir(meshes):
             raise RuntimeError('%s does not exist. Generate it with '
                                'quad_description/scripts/make_markers.py.' % meshes)
         os.symlink(meshes, os.path.join(dst, 'meshes'))
 
-    def _models_for(camera, target_scale, marker_dict, camera_rate):
-        """Derive F450_base (camera preset) and aruco_target (scale, marker dictionary)."""
+    def _models_for(plant, camera, target_scale, marker_dict, camera_rate, quad_mass):
+        """Derive F450_base (camera preset, mass, welded rotors under gazebo), F450 (no rotor
+        spin under gazebo) and aruco_target (scale, marker dictionary)."""
         if camera not in cameras:
             raise RuntimeError('camera:=%s is not one of %s.'
                                % (camera, ', '.join(cameras)))
@@ -237,15 +252,47 @@ def generate_launch_description():
                              '<size>%g %g 0.001</size>'
                              % (0.90 * target_scale, 0.75 * target_scale), 'collision <size>')
 
-        _derive_model('F450_base', camera_block)
+        # gazebo is SITL's body driven by an ideal wrench: the rotors keep their mass and inertia
+        # but are welded, since a DART joint velocity command is a real torque on the airframe;
+        # their meshes move to visual-only models (_world_for). Derived for every plant, so a
+        # gazebo copy never shadows the original afterwards.
+        gazebo = plant == 'gazebo'
+        weld = (lambda x: airframe.strip_rotor_visuals(airframe.weld_rotors(x))) if gazebo \
+            else (lambda x: x)
+        _derive_model('F450_base', lambda sdf: weld(
+            airframe.rewrite_mass(camera_block(sdf), quad_mass)))
+        _derive_model('F450', airframe.strip_rotor_spin if gazebo else (lambda x: x), False)
         _derive_model('aruco_target', target_block, MARKER_DICTS[marker_dict])
 
-    def _world_for(plant):
-        """Derive the world for `plant`: filter ONLY blocks, and zero gravity for analytic."""
+    def _world_for(plant, start_altitude=4.0, quad_mass=2.0):
+        """Derive the world for `plant`: filter ONLY blocks, zero gravity for analytic, and
+        place the analytic/gazebo F450 at start_altitude with BodyWrench holding its weight."""
         with open(world_file) as fh:
             sdf = fh.read()
 
         out = _select(sdf, plant, 'worlds/ibvs.sdf')
+        if plant in ('analytic', 'gazebo'):
+            out = _sub_once(out, r'(<uri>model://F450</uri>\s*<name>F450</name>\s*'
+                                 r'<pose>\S+ \S+ )\S+',
+                            r'\g<1>%g' % start_altitude, 'the F450 spawn <pose>')
+        if plant == 'gazebo':
+            # The plant and its echo must agree, or a lighter airframe climbs on the thesis
+            # 19.62 N until pos_ctrl takes over and the echo misreads the wrench.
+            out, n = re.subn(r'<initial_thrust>(?!0<)[^<]*</initial_thrust>',
+                             '<initial_thrust>%g</initial_thrust>'
+                             % (quad_mass * airframe.GRAVITY), out)
+            if n != 2:
+                raise RuntimeError(
+                    'worlds/ibvs.sdf has %d non-zero BodyWrench <initial_thrust> tags for '
+                    'plant:=gazebo, expected 2 (plant and echo). Fix one or the other.' % n)
+            # Visual-only rotors beside the F450, posed by gz_pose_broadcaster; no dynamics.
+            m = re.search(r'<uri>model://F450</uri>\s*<name>F450</name>\s*<pose>(\S+) (\S+) (\S+)'
+                          r'[^<]*</pose>\s*</include>', out)
+            if m is None:
+                raise RuntimeError('worlds/ibvs.sdf: no F450 include to place the rotors beside.')
+            rotors, _ = airframe.rotor_visuals(airframe.base_sdf(),
+                                               [float(v) for v in m.groups()])
+            out = out[:m.end()] + '\n' + rotors + out[m.end():]
         if plant == 'analytic':
             gravity_off = out.replace('<gravity>0 0 -9.81</gravity>',
                                       '<gravity>0 0 0</gravity>')
@@ -267,10 +314,11 @@ def generate_launch_description():
         if plant not in PLANTS:
             raise RuntimeError('plant:=%s is not one of %s.' % (plant, ', '.join(PLANTS)))
         camera = LaunchConfiguration('camera').perform(context)
-        _models_for(camera,
+        _models_for(plant, camera,
                     float(LaunchConfiguration('target_scale').perform(context)),
                     LaunchConfiguration('marker_dict').perform(context),
-                    float(LaunchConfiguration('camera_rate').perform(context)))
+                    float(LaunchConfiguration('camera_rate').perform(context)),
+                    float(LaunchConfiguration('quad_mass').perform(context)))
         cam = cameras[camera]
         # Logged because the sensor mode is a hardware constraint the sim otherwise hides:
         # Module 2's full-FOV mode runs at 41.85 fps against a 50 Hz loop.
@@ -286,7 +334,10 @@ def generate_launch_description():
             IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(ros_gz_sim, 'launch', 'gz_sim.launch.py')),
-            launch_arguments={'gz_args': flags + _world_for(plant),
+            launch_arguments={'gz_args': flags + _world_for(
+                plant,
+                float(LaunchConfiguration('start_altitude').perform(context)),
+                float(LaunchConfiguration('quad_mass').perform(context))),
                               'gz_version': '8'}.items(),
             )]
 
@@ -325,13 +376,18 @@ def generate_launch_description():
 
     def _broadcaster(context, *a, **k):
         # Under plant:=gazebo physics owns the quad's pose; the broadcaster keeps the target
-        # and the cosmetic rotor spin.
-        gazebo = LaunchConfiguration('plant').perform(context).lower() != 'analytic'
+        # and poses gazebo's visual-only rotors.
+        plant = LaunchConfiguration('plant').perform(context).lower()
+        params = {'world': LaunchConfiguration('world'),
+                  'teleport_quad': plant == 'analytic',
+                  'rotor_hover_thrust': airframe.GRAVITY * float(
+                      LaunchConfiguration('quad_mass').perform(context)),
+                  'use_sim_time': True}
+        if plant == 'gazebo':
+            params.update(airframe.rotor_visuals(airframe.base_sdf(), (0.0, 0.0, 0.0))[1])
         return [Node(
             package=PKG, executable='gz_pose_broadcaster', name='gz_pose_broadcaster',
-            output='screen', parameters=[{'world': LaunchConfiguration('world'),
-                                          'teleport_quad': not gazebo,
-                                          'use_sim_time': True}],
+            output='screen', parameters=[params],
         )]
 
     return LaunchDescription(args + egl_vendor + [

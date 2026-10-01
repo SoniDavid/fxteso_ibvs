@@ -29,6 +29,15 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         # The same number estimation.launch.py gives fixed_eso; see there.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
+        # Which velocity feeds pos_ctrl's Coriolis term: td (default, what every recorded bag
+        # was flown with) | ekf2 | vision | off. See aibvs_pos_ctrl.cpp and e83.md - indoors
+        # the td path carries EKF2's dead-reckoned position, differentiated.
+        DeclareLaunchArgument('velocity_source', default_value='td',
+                              choices=['td', 'ekf2', 'vision', 'off']),
+        # pos_ctrl's per-cycle error print. Off by default: at 50 Hz it buried every WARN in the
+        # launch console, including the lock losses and PX4 failing safe. The same numbers are on
+        # /error_visual_servoing.
+        DeclareLaunchArgument('print_error', default_value='false'),
     ]
 
     def _nodes(context, *a, **k):
@@ -45,6 +54,10 @@ def generate_launch_description():
                 p['zD'] = ParameterValue(LaunchConfiguration('zD'), value_type=float)
                 p['quad_mass'] = ParameterValue(
                     LaunchConfiguration('quad_mass'), value_type=float)
+                p['velocity_source'] = ParameterValue(
+                    LaunchConfiguration('velocity_source'), value_type=str)
+                p['print_error'] = ParameterValue(
+                    LaunchConfiguration('print_error'), value_type=bool)
             return [p]
 
         return [

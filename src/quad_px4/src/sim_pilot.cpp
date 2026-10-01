@@ -6,6 +6,9 @@
 // The stick stream never stops, because PX4 treats a gap as RC loss.
 // Stamps come off PX4's clock: hrt_absolute_time() here is wall clock, and ROS-stamped
 // samples look ~56 years old and are silently discarded.
+// While the loop OWNS the aircraft it lets go, as a briefed pilot must: stick motion is PX4's
+// override, and it reassigns the mode intent to POSCTL for good. Ownership is nav_state_user_
+// intention, not nav_state: a lock-loss failsafe drops nav_state while PX4 still intends OFFBOARD.
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include "quad_px4/px4_topic.hpp"
@@ -80,6 +83,16 @@ int main(int argc, char **argv)
 	// The pilot points the nose as well as holding the spot. ibvs_gate wants |qpsi| <= 0.15 rad
 	// before it will hand over, and nothing else was steering yaw - it sat at -0.293.
 	const double kp_yaw = node->declare_parameter<double>("pilot_kp_yaw", 2.0);
+	// Moving sticks while the loop owns the aircraft sets PX4's intended mode to POSCTL, which
+	// indoors never returns. failsafe/framework.cpp assigns POSCTL unconditionally; no parameter.
+	const bool hands_off = node->declare_parameter<bool>("hands_off_in_offboard", true);
+	// Seconds the sticks stay still after PX4 gives up the intention, before the pilot flies again.
+	const double reaction = node->declare_parameter<double>("pilot_reaction", 0.0);
+	// Ceiling on hands-off while the INTENTION says OFFBOARD but PX4 is not actually flying it.
+	// Without it a permanently stuck intention would strand the aircraft in a failsafe with frozen
+	// sticks. 5 s clears the full hand-back round trip: COM_OF_LOSS_T 1.0 + the bridge's
+	// setpoint_timeout 0.3 + stream_before_switch 1.5 = 2.8 s.
+	const double handback_timeout = node->declare_parameter<double>("handback_timeout", 5.0);
 
 	const rclcpp::QoS px4In = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile();
 	using quad_px4::px4Topic;
@@ -90,6 +103,8 @@ int main(int argc, char **argv)
 		px4Topic<VehicleCommand>("/fmu/in/vehicle_command"), 10);
 
 	uint8_t nav_state = 0, arming_state = 0;
+	// What PX4 means to fly, as opposed to what a failsafe has it flying right now.
+	uint8_t nav_intention = 0;
 	bool have_status = false;
 	// PX4's clock, and the local time it was read at, so the two can be related.
 	uint64_t px4_stamp = 0;
@@ -99,6 +114,7 @@ int main(int argc, char **argv)
 		[&](const VehicleStatus::ConstSharedPtr s)
 		{
 			nav_state = s->nav_state;
+			nav_intention = s->nav_state_user_intention;
 			arming_state = s->arming_state;
 			px4_stamp = s->timestamp;
 			px4_stamp_local = node->now();
@@ -212,7 +228,9 @@ int main(int argc, char **argv)
 		msg.pitch = static_cast<float>(std::clamp(pitch, -1.0, 1.0));
 		msg.yaw = static_cast<float>(std::clamp(yaw, -1.0, 1.0));
 		msg.throttle = static_cast<float>(std::clamp(throttle, -1.0, 1.0));
-		msg.sticks_moving = false;     // true would be an override request and would drop OFFBOARD
+		// Inert: manual_control recomputes this field from stick VELOCITY against MAN_OVERRIDE_SPD
+		// before commander reads it. Freezing the sticks below is what actually holds it false.
+		msg.sticks_moving = false;
 		manualPub->publish(msg);
 	};
 
@@ -241,6 +259,13 @@ int main(int argc, char **argv)
 	            takeoff_altitude, rate_hz);
 
 	fxteso::SimRate loop_rate(node, rate_hz);
+
+	// The last sticks actually sent; frozen, they are republished so stick velocity stays zero.
+	double sent_throttle = 0.0, sent_roll = 0.0, sent_pitch = 0.0, sent_yaw = 0.0;
+	rclcpp::Time last_offboard(0, 0, RCL_ROS_TIME);
+	// Last time PX4 was ACTUALLY in OFFBOARD, which bounds how long an intention alone holds.
+	rclcpp::Time last_in_offboard(0, 0, RCL_ROS_TIME);
+	bool frozen = false;
 
 	while (rclcpp::ok())
 	{
@@ -292,8 +317,50 @@ int main(int argc, char **argv)
 		if (phase == Phase::Climb || phase == Phase::Hold)
 			holdSticks(roll_stick, pitch_stick, yaw_stick);
 
+		// Intention, not nav_state. A lock-loss failsafe drops nav_state to ALTCTL while leaving the
+		// intention at OFFBOARD - PX4 means to give the aircraft back. Flying in that window is read
+		// as a stick override, which reassigns the intention to POSCTL and ends the run: that is what
+		// killed px4_20260918_084714 at t=7.1 s, 10 ms after PX4 had recovered OFFBOARD by itself.
+		const rclcpp::Time now = node->now();
+		const bool in_offboard = nav_state == VehicleStatus::NAVIGATION_STATE_OFFBOARD;
+		if (in_offboard)
+			last_in_offboard = now;
+		// Bounded: intention alone only holds the sticks while a hand-back is still plausible.
+		const bool waiting_handback =
+			nav_intention == VehicleStatus::NAVIGATION_STATE_OFFBOARD &&
+			last_in_offboard.nanoseconds() != 0 &&
+			(now - last_in_offboard).seconds() < handback_timeout;
+		const bool loop_owns = in_offboard || waiting_handback;
+		if (hands_off && loop_owns)
+			last_offboard = now;
+		const bool freeze = hands_off && last_offboard.nanoseconds() != 0 &&
+		                    (loop_owns || (now - last_offboard).seconds() < reaction);
+		if (freeze != frozen)
+		{
+			if (freeze)
+				RCLCPP_INFO(node->get_logger(), "the loop has the aircraft - hands off the sticks.");
+			else
+				RCLCPP_WARN(node->get_logger(),
+				            "the loop no longer has the aircraft (nav_state %u, intention %u) - "
+				            "flying again.", nav_state, nav_intention);
+			frozen = freeze;
+		}
+		if (freeze)
+		{
+			throttle = sent_throttle;
+			roll_stick = sent_roll;
+			pitch_stick = sent_pitch;
+			yaw_stick = sent_yaw;
+		}
+
 		if (have_status)
+		{
 			publishSticks(throttle, roll_stick, pitch_stick, yaw_stick);
+			sent_throttle = throttle;
+			sent_roll = roll_stick;
+			sent_pitch = pitch_stick;
+			sent_yaw = yaw_stick;
+		}
 		loop_rate.sleep();
 	}
 

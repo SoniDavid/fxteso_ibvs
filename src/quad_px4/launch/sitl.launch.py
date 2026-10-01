@@ -72,23 +72,30 @@ SYS_AUTOSTART = '22100'
 PROPS = {
     '9545': (8.566e-06, 702.7),   # measured
 }
-MASS, GRAVITY = 2.0, 9.81
+GRAVITY = 9.81
 ROTOR_MIN = 150.0                 # SIM_GZ_EC_MIN, the ESC idle floor
+# MPC_THR_HOVER's documented maximum; PositionControl clamps hover thrust at 0.9 regardless.
+THR_HOVER_MAX = 0.8
 
 
-def rotor_setup(prop, cells):
-    """Rotor velocity ceiling and hover throttle for a prop and cell count.
+def rotor_setup(prop, cells, mass):
+    """Rotor velocity ceiling, hover throttle and T/W for a prop, cell count and mass.
 
     PX4 maps its normalised output linearly onto [SIM_GZ_EC_MIN, SIM_GZ_EC_MAX] rotor velocity
     while thrust goes as omega^2, so hover throttle is not mg/T_max. This expression reproduced
     the previously measured MPC_THR_HOVER of 0.716 to 0.001.
     """
     c_t, kv_loaded = PROPS[prop]
+    weight = mass * GRAVITY
     w_max = kv_loaded * cells * 3.7 * 2.0 * math.pi / 60.0
-    w_hover = math.sqrt((MASS * GRAVITY / 4.0) / c_t)
-    if w_hover >= w_max:
-        raise RuntimeError('%s on %dS cannot hover %.1f kg.' % (prop, cells, MASS))
-    return w_max, (w_hover - ROTOR_MIN) / (w_max - ROTOR_MIN)
+    w_hover = math.sqrt((weight / 4.0) / c_t)
+    thr_hover = (w_hover - ROTOR_MIN) / (w_max - ROTOR_MIN)
+    t_w = 4.0 * c_t * w_max * w_max / weight
+    if thr_hover > THR_HOVER_MAX:
+        raise RuntimeError(
+            '%s on %dS hovers %.2f kg at %.2f throttle (T/W %.2f); PX4 allows at most %.1f. '
+            'Check quad_mass, or add cells.' % (prop, cells, mass, thr_hover, t_w, THR_HOVER_MAX))
+    return w_max, thr_hover, t_w
 
 
 # Spawn pose from worlds/ibvs.sdf, in NED (the world is ENU, so y and z are negated). EKF2
@@ -107,9 +114,10 @@ FRAME_YAW_OFFSET = -math.pi / 2.0
 
 
 def camera_presets():
-    """quad_gz_sim's camera preset resolver - the one implementation of the intrinsics and
+    """quad_description's camera preset resolver - the one implementation of the intrinsics and
     the aD derivation. share/<pkg>/launch is not on sys.path, so it is loaded by path."""
-    path = os.path.join(get_package_share_directory(SIM_PKG), 'launch', 'camera_presets.py')
+    path = os.path.join(get_package_share_directory('quad_description'), 'launch',
+                        'camera_presets.py')
     spec = importlib.util.spec_from_file_location('camera_presets', path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -152,9 +160,19 @@ def generate_launch_description():
         DeclareLaunchArgument('target_accel', default_value='0.5'),
         # Above zero, places fixed_eso's x/y gains as a triple pole at this rate.
         DeclareLaunchArgument('observer_omega', default_value='0.0'),
-        # 4S, not 3S: 9545 on 3S needs 91% throttle to hover at 2.0 kg, leaving attitude loop nothing.
-        DeclareLaunchArgument('battery_cells', default_value='4'),
+        # The 3S build. The thesis plant (2.0 kg) needs 4S: on 3S it hovers at 91% and is refused.
+        DeclareLaunchArgument('battery_cells', default_value='3'),
         DeclareLaunchArgument('prop', default_value='9545'),
+        # Parts-list estimate for the 3S build (1.19-1.37 kg), not yet weighed. Sets the SDF,
+        # PX4, bridge and controllers. Thesis plant: quad_mass:=2.0 battery_cells:=4.
+        DeclareLaunchArgument('quad_mass', default_value='1.30'),
+        # Which velocity feeds pos_ctrl's Coriolis term - the ONE place EKF2 reaches the
+        # control output. td (default) is what every recorded bag was flown with; indoors it
+        # carries EKF2's dead-reckoned position differentiated, 66x true speed.
+        # pos_ctrl's per-cycle error print; off by default so the WARNs stay readable.
+        DeclareLaunchArgument('print_error', default_value='false'),
+        DeclareLaunchArgument('velocity_source', default_value='td',
+                              choices=['td', 'ekf2', 'vision', 'off']),
         # Table 5.3 thesis values: gamma2_xy=10, gamma3_xy=7, gamma3_yaw=7.
         DeclareLaunchArgument('gamma1_xy', default_value='18.0'),
         DeclareLaunchArgument('gamma2_xy', default_value='20.0'),
@@ -181,8 +199,26 @@ def generate_launch_description():
         # PX4 yaw unwinds over ~100 s after takeoff; target is held so waiting costs only wall clock.
         DeclareLaunchArgument('gate_timeout', default_value='120.0'),
         # One arg drives every node so they cannot disagree. See RUNNING.md for full explanation.
+        # vicon is the indoor venue with Vicon aiding EKF2 while the loop does NOT have the
+        # aircraft - everything indoor does, plus the EV params, vicon_sim and the bridge.
         DeclareLaunchArgument('venue', default_value='indoor',
-                              choices=['outdoor', 'indoor']),
+                              choices=['outdoor', 'indoor', 'vicon']),
+        # venue:=vicon only. vicon_sim's imitation of the lab; the bridge is the one that flies.
+        DeclareLaunchArgument('vicon_latency', default_value='0.02'),
+        DeclareLaunchArgument('vicon_noise_sd', default_value='0.001'),
+        DeclareLaunchArgument('vicon_dropout_probability', default_value='0.0'),
+        DeclareLaunchArgument('aiding_policy', default_value='gated',
+                              choices=['gated', 'always', 'oneshot', 'manual']),
+        # DIAGNOSTIC. venue:=vicon only. Feeds EKF2 a VELOCITY reference and no position one -
+        # what an optical flow sensor supplies - so the flow route can be decided before any
+        # hardware is bought. Every result showing aiding works (E85, E88) used mocap POSITION.
+        DeclareLaunchArgument('ev_velocity', default_value='false',
+                              choices=['true', 'false']),
+        # EKF2_IMU_CTRL bitmask: 0 gyro bias, 1 accel bias, 2 gravity fusion. 7 is PX4's default
+        # and leaves behaviour unchanged. Unaided, a tilt and a horizontal accel bias are
+        # unobservable as a pair, so EKF2 trades them and both wander  (2.13 deg tilt error
+        # indoors against 0.29 aided). 5 inhibits the accel-bias half of that trade.
+        DeclareLaunchArgument('imu_ctrl', default_value='7'),
         # 0.0 keeps heading aided through station-keeping (PX4 default is 0.5).
         DeclareLaunchArgument('mag_acclim', default_value='0.0'),
         DeclareLaunchArgument(
@@ -195,21 +231,44 @@ def generate_launch_description():
             default_value=os.path.expanduser(
                 '~/Robotics/Micro-XRCE-DDS-Agent/build/MicroXRCEAgent'),
             description='MicroXRCEAgent binary. It is not normally on PATH.'),
-        # Must equal MPC_THR_HOVER in the airframe — a drift silently mis-scales every command.
-        DeclareLaunchArgument('hover_thrust', default_value='0.6461'),
+        # Empty = derived from prop, battery_cells and quad_mass. A value given must agree with it.
+        DeclareLaunchArgument('hover_thrust', default_value=''),
         # Feeds both the rendered <camera> block and image_features' intrinsics from one table.
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
         # 0.5 = printed target, 450×375 mm — the sheet that exists, not a tuned value.
         DeclareLaunchArgument('target_scale', default_value='0.5'),
         DeclareLaunchArgument('marker_dict', default_value='7x7'),
+        # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last
+        # detection). aruco3 only applies to opencv.
+        DeclareLaunchArgument('detector_backend', default_value='hybrid'),
+        # aruco_nano tolerances (nano's own 0 / 0 rejects a marker for one mis-read bit).
+        # roi_margin: fraction of the target box.
+        DeclareLaunchArgument('nano_error_correction', default_value='0.3'),
+        DeclareLaunchArgument('nano_border_error_rate', default_value='0.35'),
+        DeclareLaunchArgument('nano_box_filter', default_value='15'),
+        DeclareLaunchArgument('nano_max_revisited', default_value='0.05'),
+        DeclareLaunchArgument('roi_margin', default_value='0.5'),
+        DeclareLaunchArgument('use_aruco3_detection', default_value='false'),
+        # Fraction of the nominal marker size aruco3 must still find.
+        DeclareLaunchArgument('aruco3_margin', default_value='0.7'),
+        # OpenCV threads; at 1 its idle pool stops burning CPU next to nano.
+        DeclareLaunchArgument('cv_num_threads', default_value='1'),
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
         # Degrees from +x. 0 = tight FOV axis; 90 = wide axis (~2× field budget).
         DeclareLaunchArgument('target_heading', default_value='0.0'),
+        # control: the target moves on the loop's first command (every run before E96).
+        # settled: it waits until the loop holds it centred at zD, as the lab pushes the cart.
+        DeclareLaunchArgument('target_release', default_value='control',
+                              description='control | settled'),
         # m/s per axis, scaled by wind_scale. Default points down the camera's tight axis.
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # Hides target to exercise lock-loss path. 0 disables.
         DeclareLaunchArgument('blackout_at', default_value='0.0'),
         DeclareLaunchArgument('blackout_for', default_value='3.0'),
+        # Indoor stand-in pilot lets go in OFFBOARD; false flies through it and trips PX4's override.
+        DeclareLaunchArgument('pilot_hands_off', default_value='true'),
+        # Seconds its hands stay still after PX4 leaves OFFBOARD.
+        DeclareLaunchArgument('pilot_reaction', default_value='0.0'),
         # aD and MIS_TAKEOFF_ALT are both derived from zD — one number drives three things.
         DeclareLaunchArgument('zD', default_value='1.2'),
         # 1.5 > zD 1.2: take off high, descend onto target. Pass 'zD' to start at servo depth.
@@ -219,6 +278,13 @@ def generate_launch_description():
         # 'launch' needed for observer experiments: fixed_eso converges in ~1 s post-gate.
         DeclareLaunchArgument('record_from', default_value='handover',
                               description='handover | launch'),
+        # DIAGNOSTIC (E94). Feeds GROUND-TRUTH tilt into the loop: derotation (image_features),
+        # setpoint (bridge corrects by EKF2 - truth), both, or replay (truth + a recorded error).
+        # Never a scored or deployable configuration.
+        DeclareLaunchArgument('attitude_oracle', default_value='none',
+                              description='none | derotation | setpoint | both | replay'),
+        # replay only: CSV of (t, roll_err, pitch_err) in radians, t = 0 at the handover.
+        DeclareLaunchArgument('oracle_replay_csv', default_value=''),
     ]
 
     def takeoff_alt_of(context):
@@ -243,9 +309,37 @@ def generate_launch_description():
         raw = LaunchConfiguration('eso_z_des').perform(context).strip()
         return float(raw) if raw else float(LaunchConfiguration('zD').perform(context))
 
+    def rotor_of(context):
+        """(w_max, hover throttle, T/W) - one resolver, so PX4 and the bridge cannot disagree."""
+        return rotor_setup(LaunchConfiguration('prop').perform(context),
+                           int(LaunchConfiguration('battery_cells').perform(context)),
+                           float(LaunchConfiguration('quad_mass').perform(context)))
+
+    def _check_plant(context, *a, **k):
+        """Refuse an unflyable plant or a stale hover_thrust before Gazebo starts, not after."""
+        w_max, thr_hover, t_w = rotor_of(context)
+        prop = LaunchConfiguration('prop').perform(context)
+        cells = int(LaunchConfiguration('battery_cells').perform(context))
+        mass = float(LaunchConfiguration('quad_mass').perform(context))
+        # The bridge maps newtons through hover_thrust; one off MPC_THR_HOVER mis-scales every
+        # command. An explicit value may only confirm the derivation.
+        declared = LaunchConfiguration('hover_thrust').perform(context).strip()
+        if declared and abs(float(declared) - thr_hover) > 0.005:
+            raise RuntimeError(
+                'hover_thrust:=%s but %s on %dS at %.2f kg derives %.4f. Omit hover_thrust to '
+                'use the derived value.' % (declared, prop, cells, mass, thr_hover))
+        return [LogInfo(msg='plant: %s on %dS at %.2f kg - rotor ceiling %.0f rad/s, '
+                            'MPC_THR_HOVER %.4f, T/W %.2f'
+                            % (prop, cells, mass, w_max, thr_hover, t_w))]
+
     def _indoor(context):
-        """venue:=indoor. One resolver, for the same reason takeoff_alt_of is one."""
-        return LaunchConfiguration('venue').perform(context).strip().lower() == 'indoor'
+        """venue:=indoor or vicon - both are the GPS-denied lab, and every indoor decision holds
+        for vicon too. One resolver, for the same reason takeoff_alt_of is one."""
+        return LaunchConfiguration('venue').perform(context).strip().lower() in ('indoor', 'vicon')
+
+    def _vicon(context):
+        """venue:=vicon. Indoor, plus Vicon aiding EKF2 outside OFFBOARD."""
+        return LaunchConfiguration('venue').perform(context).strip().lower() == 'vicon'
 
     simulation = [
         include(SIM_PKG, 'gz_sim.launch.py',
@@ -255,7 +349,8 @@ def generate_launch_description():
                  'camera': LaunchConfiguration('camera'),
                  'target_scale': LaunchConfiguration('target_scale'),
                  'marker_dict': LaunchConfiguration('marker_dict'),
-                 'camera_rate': LaunchConfiguration('camera_rate')}),
+                 'camera_rate': LaunchConfiguration('camera_rate'),
+                 'quad_mass': LaunchConfiguration('quad_mass')}),
         include(SIM_PKG, 'scenario.launch.py',
                 {'disturbance': LaunchConfiguration('disturbance'),
                  'disturbance_seed': LaunchConfiguration('disturbance_seed'),
@@ -266,6 +361,7 @@ def generate_launch_description():
                  # Arming and takeoff cost sim time the other plants do not spend; without
                  # this the target leaves the camera footprint before ibvs_gate can lock.
                  'hold_target': 'true',
+                 'target_release': LaunchConfiguration('target_release'),
                  'target_profile': LaunchConfiguration('target_profile'),
                  'target_speed': LaunchConfiguration('target_speed'),
                  'target_yaw_rate': LaunchConfiguration('target_yaw_rate'),
@@ -304,12 +400,13 @@ def generate_launch_description():
 
         # Rotor ceiling and hover anchor are one derivation; PX4 must not carry a second copy.
         # Keep model.sdf's maxRotVelocity above these or the motor model clamps silently.
-        prop = LaunchConfiguration('prop').perform(context)
         cells = int(LaunchConfiguration('battery_cells').perform(context))
-        w_max, thr_hover = rotor_setup(prop, cells)
+        w_max, thr_hover, _ = rotor_of(context)
         for i in (1, 2, 3, 4):
             env['PX4_PARAM_SIM_GZ_EC_MAX%d' % i] = '%d' % round(w_max)
         env['PX4_PARAM_MPC_THR_HOVER'] = '%.4f' % thr_hover
+        # rcS defaults it to 4; PX4's simulated battery scales its pack voltage by it.
+        env['PX4_PARAM_BAT1_N_CELLS'] = '%d' % cells
 
         # Loss of marker lock stops the setpoint stream. The default 0 = Position expects RC
         # that SITL has not, so the aircraft descends; 5 = Hold is the only recoverable mode.
@@ -324,6 +421,27 @@ def generate_launch_description():
         env['PX4_PARAM_EKF2_GPS_CTRL'] = '0' if indoor else '7'
         # 0 barometric, 1 GPS. Indoors the barometer is the ONLY height source there is.
         env['PX4_PARAM_EKF2_HGT_REF'] = '0' if indoor else '1'
+        # See the imu_ctrl argument. Default 7 is PX4's own, so this is inert unless asked for.
+        env['PX4_PARAM_EKF2_IMU_CTRL'] = LaunchConfiguration('imu_ctrl').perform(context).strip()
+        # Vicon external vision. 1 = horizontal position only. Height is not fused (EKF2_HGT_REF
+        # stays 0) so the cut at the handover cannot remove the height reference, and YAW is not
+        # fused so EKF2's mag heading stays an independent witness for the bridge's frame check -
+        # fusing it once let a 90 deg frame error redefine the datum unchallenged. Set on BOTH
+        # branches for the parameters.bson reason above: a stale non-zero value would silently aid
+        # an indoor run that is supposed to be unaided.
+        # 4 = bit 2, 3D velocity fusion; 1 = bit 0, horizontal position.
+        _evvel = LaunchConfiguration('ev_velocity').perform(context).lower() == 'true'
+        env['PX4_PARAM_EKF2_EV_CTRL'] = ('4' if _evvel else '1') if _vicon(context) else '0'
+        # 1 = trust EKF2_EVP/EVA_NOISE rather than the message covariance; the bridge reports a
+        # fixed variance, so there is nothing better in the message.
+        env['PX4_PARAM_EKF2_EV_NOISE_MD'] = '1'
+        env['PX4_PARAM_EKF2_EVP_NOISE'] = '0.02'
+        env['PX4_PARAM_EKF2_EVA_NOISE'] = '0.05'
+        # Matches vicon_sim's latency. On hardware this comes from the bridge's reported age.
+        env['PX4_PARAM_EKF2_EV_DELAY'] = (
+            '%.1f' % (float(LaunchConfiguration('vicon_latency').perform(context)) * 1e3)
+            if _vicon(context) else '0.0')
+
         # Set explicitly, not trusted to its default: PX4 intermittently refuses to arm with
         # "Preflight Fail: barometer 0 missing".
         env['PX4_PARAM_SIM_GZ_EN_BARO'] = '1'
@@ -331,6 +449,13 @@ def generate_launch_description():
         # 4 ignores every stick source; 1 is MAVLink only, so PX4 accepts sim_pilot's stream.
         # On the real aircraft this must be 0 (RC only) - the pilot is on a transmitter.
         env['PX4_PARAM_COM_RC_IN_MODE'] = '1' if indoor else '4'
+        # Negative disables the stick override entirely (manual_control_params.yaml). In SITL the
+        # "pilot" is a node, so nobody needs to grab the aircraft, and the override is pure hazard:
+        # commander hands the aircraft back by setting the mode intent to POSCTL unconditionally,
+        # which GPS-denied never returns. sim_pilot freezes its sticks as well; this is the backstop.
+        # HARDWARE KEEPS THE DEFAULT 1.0 - there the override is a safety feature. Explicit on both
+        # branches for the parameters.bson reason above.
+        env['PX4_PARAM_MAN_OVERRIDE_SPD'] = '-1.0'
         # From boot until disarm, not the default "while armed": the start-up failures worth
         # diagnosing are exactly the runs that never arm, which would log nothing.
         env['PX4_PARAM_SDLOG_MODE'] = '1'
@@ -342,14 +467,6 @@ def generate_launch_description():
 
         env['PX4_PARAM_EKF2_MAG_ACCLIM'] = '%.3f' % float(
             LaunchConfiguration('mag_acclim').perform(context))
-
-        # px4_offboard_bridge maps newtons to normalised thrust with its own hover_thrust, so a
-        # drift between the two silently mis-scales every command. Fail loudly instead.
-        declared = float(LaunchConfiguration('hover_thrust').perform(context))
-        if abs(declared - thr_hover) > 0.005:
-            raise RuntimeError(
-                'hover_thrust:=%.4f but %s on %dS derives %.4f. Pass hover_thrust:=%.4f.'
-                % (declared, prop, cells, thr_hover, thr_hover))
 
         px4_proc = ExecuteProcess(cmd=[binary], cwd=rootfs, env=env,
                                   name='px4_sitl', output='screen')
@@ -391,7 +508,82 @@ def generate_launch_description():
             parameters=[{'use_sim_time': True,
                          # Same resolver as the bridge's, or the pilot stops climbing below the
                          # height the bridge is waiting for and the handover never happens.
-                         'takeoff_altitude': takeoff_alt_of(context)}])]
+                         'takeoff_altitude': takeoff_alt_of(context),
+                         'hands_off_in_offboard': ParameterValue(
+                             LaunchConfiguration('pilot_hands_off'), value_type=bool),
+                         'pilot_reaction': ParameterValue(
+                             LaunchConfiguration('pilot_reaction'), value_type=float)}])]
+
+    def _vicon_nodes(context, *a, **k):
+        """venue:=vicon only. vicon_sim stands in for the lab; the bridge is the flight article."""
+        if not _vicon(context):
+            return []
+        return [
+            LogInfo(msg='venue: vicon - EKF2 aided by mocap whenever the loop does NOT have the '
+                        'aircraft (policy %s). The scored OFFBOARD window is unaided.'
+                        % LaunchConfiguration('aiding_policy').perform(context)),
+            Node(package=SIM_PKG, executable='vicon_sim', name='vicon_sim', output='screen',
+                 parameters=[{'use_sim_time': True,
+                              'latency': ParameterValue(
+                                  LaunchConfiguration('vicon_latency'), value_type=float),
+                              'position_noise_sd': ParameterValue(
+                                  LaunchConfiguration('vicon_noise_sd'), value_type=float),
+                              'dropout_probability': ParameterValue(
+                                  LaunchConfiguration('vicon_dropout_probability'),
+                                  value_type=float)}]),
+            Node(package=PKG, executable='vicon_px4_bridge', name='vicon_px4_bridge',
+                 output='screen',
+                 parameters=[{'use_sim_time': True,
+                              'aiding_policy': LaunchConfiguration('aiding_policy'),
+                              # vicon_sim publishes ENU with FLU body axes, as a Vicon volume
+                              # calibrated Z-up does. The lab's own convention is confirmed by
+                              # hand on the bench, not assumed from here.
+                              'vicon_frame': 'enu',
+                              # Empty unless ev_velocity:=true. /quad_state's twist is body FLU
+                              # (gz_state_adapter.cpp:63); the bridge flips it to FRD.
+                              'velocity_topic': PythonExpression(
+                                  ["'/quad_state' if '",
+                                   LaunchConfiguration('ev_velocity'), "'.lower()=='true' else ''"]),
+                              'body_frame': 'flu',
+                              # Feeds EKF2's own NED frame; the workspace datum is applied
+                              # downstream by px4_state_adapter's frame_yaw_offset.
+                              'yaw_offset': 0.0,
+                              'stamp_source': 'header'}]),
+        ]
+
+    def _oracle(context):
+        mode = LaunchConfiguration('attitude_oracle').perform(context).strip().lower()
+        if mode not in ('none', 'derotation', 'setpoint', 'both', 'replay'):
+            raise RuntimeError('attitude_oracle:=%s is not one of none, derotation, setpoint, '
+                               'both, replay.' % mode)
+        if mode == 'replay' and not LaunchConfiguration('oracle_replay_csv').perform(context):
+            raise RuntimeError('attitude_oracle:=replay needs oracle_replay_csv.')
+        return mode
+
+    def _oracle_nodes(context, *a, **k):
+        mode = _oracle(context)
+        if mode == 'none':
+            return []
+        nodes = [
+            LogInfo(msg='attitude_oracle:=%s - GROUND TRUTH is inside the loop. Diagnostic only.'
+                        % mode),
+            Node(package=PKG, executable='attitude_oracle', name='attitude_oracle',
+                 output='screen',
+                 parameters=[{'use_sim_time': True,
+                              # A frame error is >= 90 deg; aided EKF2 at rest has read 1.6.
+                              'max_tilt_disagreement': 5.0,
+                              'replay_csv': (LaunchConfiguration('oracle_replay_csv')
+                                             .perform(context) if mode == 'replay' else '')}])]
+        if mode in ('derotation', 'both', 'replay'):
+            # The unmodified tracking differentiator, fed the reference instead of EKF2, so the
+            # derotation input differs from the flown one in its source and nothing else.
+            nodes.append(Node(package=CTRL_PKG, executable='td_attitude',
+                              name='td_attitude_reference', output='log',
+                              parameters=[{'use_sim_time': True}],
+                              remappings=[('quad_attitude', 'quad_attitude_reference'),
+                                          ('attitude_estimates', 'attitude_estimates_reference'),
+                                          ('attitude_td_error', 'attitude_td_error_reference')]))
+        return nodes
 
     def _offboard_bridge(context, *a, **k):
         # Must come from the SAME resolver as MIS_TAKEOFF_ALT and the takeoff gate: left at the
@@ -400,7 +592,8 @@ def generate_launch_description():
             package=PKG, executable='px4_offboard_bridge', name='px4_offboard_bridge',
             output='screen',
             parameters=[{'use_sim_time': True,
-                         'hover_thrust': LaunchConfiguration('hover_thrust'),
+                         'hover_thrust': rotor_of(context)[1],
+                         'mass': float(LaunchConfiguration('quad_mass').perform(context)),
                          'takeoff_altitude': takeoff_alt_of(context),
                          'bringup': ('pilot' if _indoor(context) else 'auto'),
                          # sim_pilot has no consent input and never will - it is not a person.
@@ -410,7 +603,9 @@ def generate_launch_description():
                              LaunchConfiguration('offboard_recovery'), value_type=bool),
                          # Same value as the adapter's: one rotates into the workspace frame,
                          # the other rotates back out of it.
-                         'frame_yaw_offset': FRAME_YAW_OFFSET}])]
+                         'frame_yaw_offset': FRAME_YAW_OFFSET,
+                         'reference_attitude_correction':
+                             _oracle(context) in ('setpoint', 'both', 'replay')}])]
 
     viz = include(UTILS_PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove'),
                                                'camera': LaunchConfiguration('camera')})
@@ -473,7 +668,10 @@ def generate_launch_description():
         target_action=gate,
         on_exit=lambda event, context: (
             ([include(CTRL_PKG, 'control.launch.py',
-                      {'attitude_controller': 'false', 'zD': LaunchConfiguration('zD')})]
+                      {'attitude_controller': 'false', 'zD': LaunchConfiguration('zD'),
+                       'quad_mass': LaunchConfiguration('quad_mass'),
+                       'velocity_source': LaunchConfiguration('velocity_source'),
+                       'print_error': LaunchConfiguration('print_error')})]
              if LaunchConfiguration('controllers').perform(context).lower() == 'true'
              else [LogInfo(msg='controllers:=false - the aircraft will loiter after takeoff.')])
             + ([OpaqueFunction(function=_bag)]
@@ -496,6 +694,7 @@ def generate_launch_description():
                 float(LaunchConfiguration('camera_rate').perform(context)))),
             include(CTRL_PKG, 'estimation.launch.py',
                     {'initial_estimate_offset': LaunchConfiguration('initial_estimate_offset'),
+                     'quad_mass': LaunchConfiguration('quad_mass'),
                      'z_des': '%.6f' % eso_z_des_of(context),
                      'gamma1_xy': LaunchConfiguration('gamma1_xy'),
                      'gamma2_xy': LaunchConfiguration('gamma2_xy'),
@@ -514,6 +713,21 @@ def generate_launch_description():
                      'camera_distortion': str(cam['distortion']),
                      'aD': '%.12g' % cam['aD'],
                      'marker_dict': LaunchConfiguration('marker_dict'),
+                     'detector_backend': LaunchConfiguration('detector_backend'),
+                     'nano_error_correction': LaunchConfiguration('nano_error_correction'),
+                     'nano_border_error_rate': LaunchConfiguration('nano_border_error_rate'),
+                     'nano_box_filter': LaunchConfiguration('nano_box_filter'),
+                     'nano_max_revisited': LaunchConfiguration('nano_max_revisited'),
+                     'roi_margin': LaunchConfiguration('roi_margin'),
+                     'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
+                     'cv_num_threads': LaunchConfiguration('cv_num_threads'),
+                     'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
+                         cam, float(LaunchConfiguration('target_scale').perform(context)),
+                         float(LaunchConfiguration('zD').perform(context)),
+                         float(LaunchConfiguration('aruco3_margin').perform(context))),
+                     'attitude_topic': ('attitude_estimates_reference'
+                                        if _oracle(context) in ('derotation', 'both', 'replay')
+                                        else 'attitude_estimates'),
                      'camera_topic': ('/quad/camera/image_distorted'
                                       if any(cam['distortion'])
                                       else '/quad/camera/image_raw')}),
@@ -532,9 +746,13 @@ def generate_launch_description():
         )))
 
     return LaunchDescription(
-        args + [OpaqueFunction(function=_normalise_takeoff_alt),
+        args + [OpaqueFunction(function=_check_plant),
+                OpaqueFunction(function=_normalise_takeoff_alt),
                 OpaqueFunction(function=_bag_at_launch)] + simulation
         + [OpaqueFunction(function=_px4), state_adapter,
+           # Before the pilot: EKF2 should be aided before anything tries to arm.
+           OpaqueFunction(function=_vicon_nodes),
            OpaqueFunction(function=_sim_pilot),
-           OpaqueFunction(function=_offboard_bridge), viz,
+           OpaqueFunction(function=_offboard_bridge), OpaqueFunction(function=_oracle_nodes),
+           viz,
            estimation, takeoff_gate])

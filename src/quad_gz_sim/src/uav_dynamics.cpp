@@ -114,10 +114,15 @@ int main(int argc, char **argv)
 	auto quad_vel_BF_pub = node->create_publisher<geometry_msgs::msg::Vector3>("quad_velocity_BF",100);
 	
 	
-	J << 0.0411, 0, 0,
-		 0, 0.0478, 0,
-		 0, 0, 0.0599;
-	
+	// The composite body DART flies (quad_description/launch/airframe.py); defaults are the thesis'.
+	quad_mass = node->declare_parameter<double>("quad_mass", quad_mass);
+	thrust = quad_mass*gravity;
+	J << node->declare_parameter<double>("J_xx", 0.0411), 0, 0,
+		 0, node->declare_parameter<double>("J_yy", 0.0478), 0,
+		 0, 0, node->declare_parameter<double>("J_zz", 0.0599);
+	RCLCPP_INFO(node->get_logger(), "mass = %.3f kg, J = diag(%.5f, %.5f, %.5f)",
+	            quad_mass, J(0,0), J(1,1), J(2,2));
+
 	// x,y start over the target, which target_position.cpp initialises at (-10,-10).
 	// z = -4 is the paper's initial condition.
 	const double start_alt = node->declare_parameter<double>("start_altitude", 4.0);

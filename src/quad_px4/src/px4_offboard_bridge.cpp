@@ -6,6 +6,7 @@
 #include "quad_px4/px4_topic.hpp"
 
 #include <geometry_msgs/msg/quaternion.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
@@ -14,6 +15,7 @@
 #include <px4_msgs/msg/vehicle_attitude_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 
 #include <tf2/LinearMath/Quaternion.hpp>
@@ -27,6 +29,7 @@ using px4_msgs::msg::OffboardControlMode;
 using px4_msgs::msg::VehicleAttitudeSetpoint;
 using px4_msgs::msg::VehicleCommand;
 using px4_msgs::msg::VehicleLocalPosition;
+using px4_msgs::msg::VehicleOdometry;
 using px4_msgs::msg::VehicleStatus;
 
 enum class Phase
@@ -89,6 +92,14 @@ int main(int argc, char **argv)
 	const bool offboard_recovery = node->declare_parameter<bool>("offboard_recovery", false);
 	// So an intermittently visible target cannot flap the aircraft between Hold and OFFBOARD.
 	const int max_recoveries = node->declare_parameter<int>("max_recoveries", 5);
+	// How long nav_state may sit outside OFFBOARD, with the setpoint stream still fresh, before
+	// this node accepts that PX4 has taken the aircraft. Longer than the mode-command round trip
+	// (~0.2 s) so a switch in progress is not mistaken for a revert.
+	const double offboard_lost_grace = node->declare_parameter<double>("offboard_lost_grace", 0.5);
+	// Seconds between re-asserting the offboard claim and commanding the mode, so an EV-aiding
+	// bridge downstream gets the same lead before a retake that it gets before the first handover:
+	// EKF2 drops EV fusion 2 x EV_MAX_INTERVAL (0.4 s) after the last sample.
+	const double ev_cut_lead = node->declare_parameter<double>("ev_cut_lead", 0.5);
 
 	// Must match MIS_TAKEOFF_ALT in the airframe, and so zD in aibvs_pos_ctrl.cpp.
 	const double takeoff_altitude = node->declare_parameter<double>("takeoff_altitude", 2.5);
@@ -126,6 +137,12 @@ int main(int argc, char **argv)
 	auto commandPub = node->create_publisher<VehicleCommand>(
 		px4Topic<VehicleCommand>("/fmu/in/vehicle_command"), 10);
 
+	// Raised as soon as this node intends to take the aircraft, which leads PX4's nav_state by
+	// stream_before_switch. vicon_px4_bridge cuts the EV stream on it, so EKF2's 0.4 s fusion
+	// timeout expires before OFFBOARD rather than after it. Latched, published only on change.
+	auto offboardReqPub = node->create_publisher<std_msgs::msg::Bool>(
+		"~/offboard_requested", rclcpp::QoS(1).transient_local());
+
 	// --- inputs ---------------------------------------------------------------
 	double roll_d = 0.0, pitch_d = 0.0, yaw_d = 0.0;
 	double thrust_n = weight;          // hover until told otherwise
@@ -144,6 +161,39 @@ int main(int argc, char **argv)
 			last_setpoint = node->now();
 			have_setpoint = true;
 		});
+
+	// SITL diagnostic (E94): PX4 flies EKF2's attitude, so the TRUE attitude is the command minus
+	// EKF2's error. Pre-multiplying by E = q_ekf * q_ref^-1 makes the true attitude the command.
+	const bool ref_correction = node->declare_parameter<bool>("reference_attitude_correction", false);
+	tf2::Quaternion qRef, qEkf;
+	rclcpp::Time last_ref(0, 0, RCL_ROS_TIME), last_ekf(0, 0, RCL_ROS_TIME);
+	rclcpp::Subscription<geometry_msgs::msg::Quaternion>::SharedPtr refSub;
+	rclcpp::Subscription<VehicleOdometry>::SharedPtr ekfSub;
+	auto refActivePub = node->create_publisher<std_msgs::msg::Bool>(
+		"~/reference_correction_active", rclcpp::QoS(1).transient_local());
+	bool ref_active = false;
+	if (ref_correction)
+	{
+		refSub = node->create_subscription<geometry_msgs::msg::Quaternion>(
+			"attitude_reference", 10,
+			[&](const geometry_msgs::msg::Quaternion::ConstSharedPtr q)
+			{
+				qRef = tf2::Quaternion(q->x, q->y, q->z, q->w);
+				last_ref = node->now();
+			});
+		ekfSub = node->create_subscription<VehicleOdometry>(
+			px4Topic<VehicleOdometry>("/fmu/out/vehicle_odometry"),
+			rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile(),
+			[&](const VehicleOdometry::ConstSharedPtr o)
+			{
+				if (!std::isfinite(o->q[0]))
+					return;
+				qEkf = tf2::Quaternion(o->q[1], o->q[2], o->q[3], o->q[0]);
+				last_ekf = node->now();
+			});
+		RCLCPP_WARN(node->get_logger(), "reference_attitude_correction ON: setpoints are corrected "
+		            "by (EKF2 - attitude_reference). SITL diagnostic only.");
+	}
 
 	auto thrustSub = node->create_subscription<std_msgs::msg::Float64>(
 		"quad_thrust", 1,
@@ -273,7 +323,26 @@ int main(int argc, char **argv)
 		// pos_ctrl's Euler triple is in the workspace frame; rotate it back into PX4's.
 		tf2::Quaternion qWs;
 		qWs.setRPY(roll_d, pitch_d, yaw_d);
-		const tf2::Quaternion q = qFrameInv * qWs;
+		tf2::Quaternion q = qFrameInv * qWs;
+		if (ref_correction)
+		{
+			const rclcpp::Time now = node->now();
+			const bool fresh = last_ref.nanoseconds() > 0 && last_ekf.nanoseconds() > 0 &&
+				(now - last_ref).seconds() < 0.1 && (now - last_ekf).seconds() < 0.1;
+			if (fresh)
+				q = (qEkf * qRef.inverse()) * q;
+			else
+				RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 2000,
+				                     "attitude_reference or EKF2 odometry stale - setpoint sent "
+				                     "UNCORRECTED.");
+			if (fresh != ref_active)
+			{
+				ref_active = fresh;
+				std_msgs::msg::Bool b;
+				b.data = fresh;
+				refActivePub->publish(b);
+			}
+		}
 		msg.q_d[0] = static_cast<float>(q.w());
 		msg.q_d[1] = static_cast<float>(q.x());
 		msg.q_d[2] = static_cast<float>(q.y());
@@ -294,6 +363,14 @@ int main(int argc, char **argv)
 	Phase phase = Phase::WaitEkf;
 	int recoveries = 0;   // offboard re-commands spent; see Phase::Offboard
 	bool seen_takeoff = false;
+	bool offboard_requested = false;
+	// PX4 left OFFBOARD while the setpoints were still fresh. Until this clears, the claim is
+	// DROPPED: an EV-aiding bridge gated on ~/offboard_requested must resume aiding immediately,
+	// or EKF2 free-runs for as long as the loop keeps talking to nobody.
+	bool px4_reverted = false;
+	rclcpp::Time non_offboard_since(0, 0, RCL_ROS_TIME);
+	// When the claim was re-asserted for a retake; the mode command waits ev_cut_lead after it.
+	rclcpp::Time claim_reasserted(0, 0, RCL_ROS_TIME);
 	rclcpp::Time last_command(0, 0, RCL_ROS_TIME);
 	rclcpp::Time stream_since(0, 0, RCL_ROS_TIME);
 
@@ -305,6 +382,38 @@ int main(int argc, char **argv)
 		// Cleared on every transition: Streaming only initialises it when zero, so a re-entry
 		// would inherit the first timestamp and switch mode before PX4 accepts it.
 		stream_since = rclcpp::Time(0, 0, RCL_ROS_TIME);
+		non_offboard_since = rclcpp::Time(0, 0, RCL_ROS_TIME);
+	};
+
+	// The two ways of losing the aircraft - a stale setpoint, and PX4 reverting under a live one -
+	// answer to the same guards, so they share one implementation rather than two that can drift.
+	auto tryRecover = [&](const char *why)
+	{
+		if (!offboard_recovery)
+		{
+			RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
+			                     "%s and offboard_recovery is off - this run is over even if the "
+			                     "markers come back.", why);
+			return false;
+		}
+		if (pilot_has_it)
+		{
+			RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
+			                     "%s but the pilot has the aircraft - not recovering.", why);
+			return false;
+		}
+		if (recoveries >= max_recoveries)
+		{
+			RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
+			                     "%s and max_recoveries (%d) is spent - not recovering.", why,
+			                     max_recoveries);
+			return false;
+		}
+		++recoveries;
+		RCLCPP_WARN(node->get_logger(), "%s (nav_state %u). Re-streaming to recover, attempt %d of %d.",
+		            why, nav_state, recoveries, max_recoveries);
+		enter(Phase::Streaming);
+		return true;
 	};
 
 	// True once enough time has passed to retry a command PX4 did not act on.
@@ -342,6 +451,21 @@ int main(int argc, char **argv)
 		const rclcpp::Time now = node->now();
 		const bool setpoint_fresh =
 			have_setpoint && (now - last_setpoint).seconds() < setpoint_timeout;
+
+		// A stale setpoint drops the claim: the run is over or the pilot has it, and the
+		// estimator should be aided again before they need it. So does a revert: PX4 holding the
+		// aircraft while pos_ctrl still publishes is the same thing from the estimator's side.
+		const bool requesting =
+			(phase == Phase::Streaming || phase == Phase::Offboard) && setpoint_fresh && !px4_reverted;
+		if (requesting != offboard_requested)
+		{
+			offboard_requested = requesting;
+			if (offboard_requested)
+				claim_reasserted = now;
+			std_msgs::msg::Bool req;
+			req.data = offboard_requested;
+			offboardReqPub->publish(req);
+		}
 
 		// Withdrawing consent aborts the same way a lock loss does: stop the stream.
 		if ((phase == Phase::Streaming || phase == Phase::Offboard) && !consentGiven())
@@ -417,9 +541,17 @@ int main(int argc, char **argv)
 
 			if (setpoint_fresh && (now - stream_since).seconds() >= stream_before_switch)
 			{
+				// Re-assert the claim BEFORE commanding the mode, not after: an EV-aiding bridge
+				// gated on it needs EKF2's 0.4 s fusion timeout to expire ahead of the switch,
+				// which is the same ordering the first handover gets from stream_before_switch.
+				if (px4_reverted)
+				{
+					px4_reverted = false;
+					break;
+				}
 				if (nav_state == VehicleStatus::NAVIGATION_STATE_OFFBOARD)
 					enter(Phase::Offboard);
-				else if (dueForCommand())
+				else if ((now - claim_reasserted).seconds() >= ev_cut_lead && dueForCommand())
 					sendCommand(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1.f, 6.f);
 			}
 			break;
@@ -436,32 +568,47 @@ int main(int argc, char **argv)
 				// Still in OFFBOARD means COM_OF_LOSS_T has not expired: nothing to recover from.
 				if (nav_state != VehicleStatus::NAVIGATION_STATE_OFFBOARD)
 				{
-					if (!offboard_recovery)
-						RCLCPP_WARN_THROTTLE(
-							node->get_logger(), *node->get_clock(), 5000,
-							"PX4 has failed safe and offboard_recovery is off - this run is over "
-							"even if the markers come back.");
-					else if (pilot_has_it)
-						RCLCPP_WARN_THROTTLE(
-							node->get_logger(), *node->get_clock(), 5000,
-							"PX4 has failed safe but the pilot has the aircraft - not recovering.");
-					else if (recoveries >= max_recoveries)
-						RCLCPP_WARN_THROTTLE(
-							node->get_logger(), *node->get_clock(), 5000,
-							"PX4 has failed safe and max_recoveries (%d) is spent - not recovering.",
-							max_recoveries);
-					else
-					{
-						++recoveries;
-						RCLCPP_WARN(node->get_logger(),
-						            "PX4 failed safe out of OFFBOARD (nav_state %u). Re-streaming "
-						            "to recover, attempt %d of %d.",
-						            nav_state, recoveries, max_recoveries);
-						enter(Phase::Streaming);
-					}
+					px4_reverted = true;
+					tryRecover("PX4 has failed safe out of OFFBOARD");
 				}
 				break;
 			}
+
+			// The setpoints are fine and PX4 has the aircraft anyway. Nothing upstream says so:
+			// pos_ctrl keeps publishing, and without this the node streams into the void for the
+			// rest of the flight while the claim keeps an EV-aiding bridge cut. That is exactly
+			// what turned a 2.2 s dropout into a 34 s dead run in px4_20260918_084714.
+			if (nav_state != VehicleStatus::NAVIGATION_STATE_OFFBOARD)
+			{
+				if (non_offboard_since.nanoseconds() == 0)
+					non_offboard_since = now;
+				else if ((now - non_offboard_since).seconds() >= offboard_lost_grace && !px4_reverted)
+				{
+					px4_reverted = true;
+					RCLCPP_ERROR(node->get_logger(),
+					             "PX4 left OFFBOARD (nav_state %u) while desired_attitude is still "
+					             "fresh - the loop is commanding nobody. Claim dropped so the "
+					             "estimator is aided again.", nav_state);
+					tryRecover("PX4 took the aircraft under a live setpoint stream");
+					break;
+				}
+			}
+			else
+			{
+				non_offboard_since = rclcpp::Time(0, 0, RCL_ROS_TIME);
+			}
+
+			// Latched with no recovery available: stop commanding rather than keep the heartbeat
+			// alive. A live heartbeat lets PX4 slip back into OFFBOARD on its own while the
+			// estimator is aided again, which is a contaminated window recorded as a clean one.
+			if (px4_reverted)
+			{
+				RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
+				                     "not streaming: PX4 has the aircraft and no recovery is "
+				                     "available. Aiding is back on; this run is over.");
+				break;
+			}
+
 			publishOffboardMode();
 			publishAttitudeSetpoint();
 			break;

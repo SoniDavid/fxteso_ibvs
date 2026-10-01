@@ -26,7 +26,7 @@ CANONICAL = os.path.join(HERE, 'fxteso_ibvs.json')
 
 
 def cameras_yaml():
-    """quad_gz_sim's preset table - the same file camera_presets.py reads.
+    """quad_description's preset table - the same file camera_presets.py reads.
 
     Install trees are per-package (install/quad_utils/share/quad_utils/foxglove), so the
     source-tree sibling path does not resolve there; ask ament first. The source path is the
@@ -34,10 +34,10 @@ def cameras_yaml():
     """
     try:
         from ament_index_python.packages import get_package_share_directory
-        return os.path.join(get_package_share_directory('quad_gz_sim'), 'config',
+        return os.path.join(get_package_share_directory('quad_description'), 'config',
                             'cameras.yaml')
     except Exception:
-        return os.path.join(HERE, os.pardir, os.pardir, 'quad_gz_sim', 'config',
+        return os.path.join(HERE, os.pardir, os.pardir, 'quad_description', 'config',
                             'cameras.yaml')
 
 # The one panel that differs, and what each file points it at. The canonical file is edited by

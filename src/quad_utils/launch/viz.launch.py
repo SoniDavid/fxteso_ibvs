@@ -36,7 +36,7 @@ def _variants():
 
 def generate_launch_description():
     args = [DeclareLaunchArgument('foxglove', default_value='false'),
-            # Only used to name the layout to import; the preset itself is quad_gz_sim's.
+            # Only used to name the layout to import; the preset itself is quad_description's.
             DeclareLaunchArgument('camera', default_value=''),
             # False on hardware, and on a bag replayed without --clock.
             DeclareLaunchArgument('use_sim_time', default_value='true')]

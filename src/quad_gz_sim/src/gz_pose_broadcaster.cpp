@@ -3,6 +3,7 @@
 #include <geometry_msgs/msg/vector3.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <tf2/LinearMath/Quaternion.hpp>
+#include <tf2/LinearMath/Vector3.hpp>
 
 #include <gz/msgs/boolean.pb.h>
 #include <gz/msgs/double.pb.h>
@@ -13,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <vector>
 
 float quad_x = 0, quad_y = 0, quad_z = 0;
 float roll = 0, pitch = 0, yaw = 0;
@@ -94,9 +96,26 @@ int main(int argc, char **argv)
 	const double hover_rate = node->declare_parameter<double>("rotor_hover_rate", 60.0);
 	const double idle_rate = node->declare_parameter<double>("rotor_idle_rate", 12.0);
 	const double hover_thrust = node->declare_parameter<double>("rotor_hover_thrust", 19.62);
+	quad_thrust = hover_thrust;   // hover speed until the first command, whatever the mass
 
 	// Under plant:=gazebo physics owns the quad's pose; the target is always broadcast.
 	const bool teleport_quad = node->declare_parameter<bool>("teleport_quad", true);
+
+	// plant:=gazebo welds the rotors, so visual-only copies are posed here instead: hub offsets
+	// (FLU, from the airframe SDF) and spin signs, one entry per model name.
+	const auto rotor_models = node->declare_parameter<std::vector<std::string>>(
+		"rotor_models", std::vector<std::string>{});
+	const auto rotor_offsets = node->declare_parameter<std::vector<double>>(
+		"rotor_offsets", std::vector<double>{});
+	const auto rotor_signs = node->declare_parameter<std::vector<double>>(
+		"rotor_signs", std::vector<double>{});
+	if (rotor_offsets.size() != 3 * rotor_models.size() ||
+	    rotor_signs.size() != rotor_models.size())
+	{
+		RCLCPP_FATAL(node->get_logger(), "rotor_offsets needs 3 and rotor_signs 1 per rotor_models entry");
+		return 1;
+	}
+	std::vector<double> rotor_angle(rotor_models.size(), 0.0);
 
 	fxteso::SimRate loop_rate(node, 100);
 
@@ -157,16 +176,35 @@ int main(int argc, char **argv)
 			fill(msg.add_pose(), "aruco_Target", tgt_x, -tgt_y, -tgt_z, q_tgt);
 		}
 
+		// Rotor speeds: thrust ~ omega^2.
+		const double ratio = std::max(0.0, static_cast<double>(quad_thrust)) / hover_thrust;
+		const double omega = std::clamp(hover_rate * std::sqrt(ratio), idle_rate, 2.0 * hover_rate);
+
+		// Visual-only rotors: aircraft pose x hub offset x Rz(angle). Nothing here reaches physics.
+		if (!teleport_quad && !rotor_models.empty() && have_quad_pos && have_quad_att)
+		{
+			tf2::Quaternion q_quad;
+			q_quad.setRPY(roll, -pitch, -yaw);
+			q_quad.normalize();
+			for (size_t i = 0; i < rotor_models.size(); ++i)
+			{
+				rotor_angle[i] = std::fmod(rotor_angle[i] + rotor_signs[i] * omega * 0.01, 2.0 * M_PI);
+				const tf2::Vector3 hub = tf2::quatRotate(
+					q_quad, tf2::Vector3(rotor_offsets[3 * i], rotor_offsets[3 * i + 1],
+					                     rotor_offsets[3 * i + 2]));
+				tf2::Quaternion spin;
+				spin.setRPY(0, 0, rotor_angle[i]);
+				fill(msg.add_pose(), rotor_models[i], quad_x + hub.x(), -quad_y + hub.y(),
+				     -quad_z + hub.z(), (q_quad * spin).normalized());
+			}
+		}
+
 		if (msg.pose_size() > 0)
 			gz_node.Request(service, msg, &onSetPose);
 
-		// Rotor speeds: thrust ~ omega^2. 20 Hz is plenty for a cosmetic signal.
-		if (tick++ % 5 == 0)
+		// JointController rotor spin, analytic only (gazebo welds the joints). 20 Hz is plenty.
+		if (teleport_quad && tick++ % 5 == 0)
 		{
-			const double ratio = std::max(0.0, static_cast<double>(quad_thrust)) / hover_thrust;
-			const double omega = std::clamp(hover_rate * std::sqrt(ratio),
-			                                idle_rate, 2.0 * hover_rate);
-
 			for (size_t i = 0; i < rotors.size(); ++i)
 			{
 				gz::msgs::Double cmd;

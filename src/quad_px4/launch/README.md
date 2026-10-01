@@ -56,7 +56,7 @@ each one - it kills a previous run's processes and waits for the ports to be rel
 ### Camera and target geometry
 
 `camera` selects a Raspberry Pi module **and a sensor mode** from
-`quad_gz_sim/config/cameras.yaml` — one table that feeds both the `<camera>` block gz-sim
+`quad_description/config/cameras.yaml` — one table that feeds both the `<camera>` block gz-sim
 renders and `image_features`' feature model, so the two cannot disagree. Modes are separate
 presets because not every module reaches the 50 Hz loop at full field of view.
 
@@ -80,6 +80,8 @@ repoints `image_features` at `/quad/camera/image_distorted`; a zero vector leave
 | `camera` | `module3wide_2304` | Preset from the table above. An unknown name fails at launch with the valid list. |
 | `target_scale` | `0.5` | Scales the ArUco target; the default is 450 × 375 mm printed. Larger markers buy field-of-view slack and cost decode pixels. `aD` follows automatically. |
 | `marker_dict` | `7x7` | `7x7` (the thesis, and every archived bag) or `4x4`, which decodes at about two thirds the pixel size. Same IDs, so corner ordering is unchanged. |
+| `detector_backend` | `hybrid` | `hybrid` runs tuned aruco_nano while the target is locked and `cv::aruco::ArucoDetector` on nano's misses and while searching; `nano` and `opencv` run one detector alone. `image_features` logs `detectMarkers (<backend>)` timing every 10 s. |
+| `use_aruco3_detection` | `false` | `opencv` arm only: candidate search on a downscaled image, down to `aruco3_margin` (0.7) of the nominal marker size derived from `camera`, `target_scale` and `zD`. |
 | `camera_rate` | `0.0` | Above zero, overrides the sensor's update rate — use it to fly the real mode's fps against the 50 Hz loop instead of the sim's free 50. |
 | `zD` | `1.2` | Servoing depth. `aD`, `MIS_TAKEOFF_ALT` and the takeoff gate are all derived from it, so it is one number, not three. See `RUNNING.md` for the 2.5 m configuration. |
 
@@ -154,12 +156,47 @@ align since. A sensor that goes quiet mid-run means something has lost its noise
 | argument | default | what it does |
 | --- | --- | --- |
 | `prop` | `9545` | Rotor model. Only the 9545 is benched; nothing else is in the table. |
-| `battery_cells` | `4` | 4S, not 3S: at 2.0 kg a 9545 on 3S needs 91% throttle to hover, leaving the attitude loop nothing. 4S gives T/W 2.07. |
-| `hover_thrust` | `0.6461` | Anchors the newton → normalised thrust map in `px4_offboard_bridge`. It is cross-checked against the value derived from `prop` and `battery_cells`, and launch **fails** if they differ by more than 0.005 — a silent drift here mis-scales every command. |
+| `battery_cells` | `3` | The 3S build. The thesis plant (2.0 kg) needs 4S: on 3S it hovers at 91% throttle, and launch refuses any plant whose derived `MPC_THR_HOVER` exceeds PX4's 0.8 — before Gazebo starts. |
+| `quad_mass` | `1.30` | Airframe mass, battery in. A parts-list estimate (1.19–1.37 kg) until the aircraft is weighed. Sets F450_base's base-link mass and scales its inertia, and reaches `px4_offboard_bridge`, `pos_ctrl` and `fixed_eso`. `quad_mass:=2.0 battery_cells:=4` is the thesis plant (`MPC_THR_HOVER` 0.6461). |
+| `hover_thrust` | empty | Derived from `prop`, `battery_cells` and `quad_mass`, and handed to `px4_offboard_bridge` as the newton → normalised thrust anchor. An explicit value must agree within 0.005 or launch **fails** — a silent drift here mis-scales every command. |
 
-`prop` and `battery_cells` also set `SIM_GZ_EC_MAX*` and `MPC_THR_HOVER` from one derivation,
+`prop`, `battery_cells` and `quad_mass` also set `SIM_GZ_EC_MAX*`, `MPC_THR_HOVER` and `BAT1_N_CELLS` from one derivation,
 and the launch file forces `COM_OBL_RC_ACT=5` (Hold): the default 0 = Position expects RC that
 SITL does not have, so losing marker lock would make the aircraft descend.
+
+### Vicon external vision (`venue:=vicon`)
+
+`venue:=vicon` is the indoor venue plus mocap aiding EKF2. It adds `vicon_sim` (Gazebo truth
+republished as the receiver's `PoseStamped` — the gz world is ENU with FLU body axes, so it is
+passed through unrotated) and `vicon_px4_bridge` (the node that flies on hardware), and sets
+`EKF2_EV_CTRL=1` — **horizontal position only**. Height stays on the barometer so the cut cannot
+remove the height reference, and **yaw is deliberately not fused**: fusing it makes EKF2's heading
+datum whatever the Vicon frame says, which is how a 90° frame error once redefined the datum
+unchallenged and flew the aircraft to 58 m. With yaw off, EKF2's mag heading stays an independent
+witness, and the bridge's frame check compares against it before publishing anything.
+`EKF2_EV_CTRL=9` (adding yaw) is only safe once the Vicon datum has been measured against
+magnetic north on site; it is not the shipped configuration.
+
+| argument | default | what it does |
+| --- | --- | --- |
+| `aiding_policy` | `gated` | `gated` publishes only while the loop does **not** have the aircraft: the cut fires on `px4_offboard_bridge`'s `~/offboard_requested`, which leads PX4's `nav_state` change, and EKF2 drops EV fusion 400 ms later. The scored window is therefore unaided. `always` removes the gate — the A/B that asks whether the indoor blocker is the estimator. `oneshot`, `manual` also available. |
+| `vicon_latency` | `0.02` | End-to-end latency `vicon_sim` imitates, in seconds. Also sets `EKF2_EV_DELAY` (ms) so the two cannot disagree. |
+| `vicon_noise_sd` | `0.001` | Position noise, metres. |
+| `vicon_dropout_probability` | `0.0` | Per-tick chance of a `vicon_dropout_duration` occlusion, to exercise the bridge's staleness path. |
+
+`EKF2_EV_CTRL` is written on **every** branch (`0` for indoor and outdoor) for the same reason
+`EKF2_GPS_CTRL` is: PX4 saves parameters into `parameters.bson`, and a one-sided value survives
+into the next run of another venue — here that would silently aid a run meant to be unaided.
+
+A published EV stream that PX4 rejects looks exactly like one it fuses. `cs_ev_pos` in
+`estimator_status_flags` is the only proof, and on this firmware `EKF2_SENS_EN` bit 3 must also be
+set (it is, by its 8191 default) or `EKF2_EV_CTRL` alone does nothing.
+
+**A wrong frame is worse than a rejected one.** A rotated but self-consistent EV frame makes EKF2
+re-anchor to it and report near-zero innovation, so innovations and test ratios cannot detect it.
+`vicon_px4_bridge` therefore refuses to publish until the converted EV attitude agrees with EKF2's
+own to within `max_attitude_error` (30°, chosen to separate a 90° frame error from a few degrees
+of mag bias), and names the likely wrong knob when it does not. `frame_check:=false` disables it.
 
 ### Observer and controller gains
 

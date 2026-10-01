@@ -43,14 +43,13 @@ add_executable(ibvs_gate src/ibvs_gate.cpp)
 target_compile_features(ibvs_gate PUBLIC cxx_std_17)
 ament_target_dependencies(ibvs_gate rclcpp geometry_msgs)
 
-# OpenCV 4.6.0 on Noble still ships the pre-4.7 cv::aruco API, so image_features.cpp
-# compiles unchanged from the ROS 1 original.
+# 4.7+ for cv::aruco::ArucoDetector and aruco_nano. Noble's apt 4.6 is too old; see RUNNING.md.
 find_package(cv_bridge REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(OpenCV 4.7 REQUIRED)
 
 add_executable(image_features src/image_features.cpp)
 target_compile_features(image_features PUBLIC cxx_std_17)
-target_include_directories(image_features PUBLIC ${EIGEN3_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+target_include_directories(image_features PUBLIC ${EIGEN3_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} include)
 target_link_libraries(image_features ${OpenCV_LIBRARIES})
 ament_target_dependencies(image_features rclcpp std_msgs geometry_msgs sensor_msgs cv_bridge quad_common)
 

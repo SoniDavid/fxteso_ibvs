@@ -1,12 +1,12 @@
-"""The eleven-node flight subset on the real aircraft. No Gazebo, no PX4 SITL, no sim_pilot.
+"""The flight stack on the real aircraft: Pi camera, estimation, gates and the PX4 link.
+Nothing simulated - no Gazebo, no PX4 SITL, no sim_pilot.
 
   ros2 launch quad_px4 hardware.launch.py
 
-Differs from SITL in three ways that are not tuning: use_sim_time is false, frame_yaw_offset is
-zero, and the camera runs at native resolution. att_ctrl stays off; PX4 owns the inner loop.
-
-No camera driver is launched - there is none in this repo. Start it separately and point
-camera_topic at it.
+Differs from SITL in ways that are not tuning, and every one fails silently: use_sim_time is
+false, frame_yaw_offset is zero, the camera is subscribed BEST_EFFORT, and the handover needs a
+person. att_ctrl stays off; PX4 owns the inner loop. camera_driver:=false leaves the camera to an
+external driver already publishing on camera_topic.
 """
 import datetime
 import importlib.util
@@ -18,7 +18,8 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription,
-                            LogInfo, OpaqueFunction, RegisterEventHandler)
+                            LogInfo, OpaqueFunction, RegisterEventHandler,
+                            SetEnvironmentVariable)
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -28,7 +29,8 @@ from launch_ros.parameter_descriptions import ParameterValue
 PKG = 'quad_px4'
 CTRL_PKG = 'quad_control'
 UTILS_PKG = 'quad_utils'
-SIM_PKG = 'quad_gz_sim'   # for the camera preset table only; nothing simulated is launched
+CAM_PKG = 'quad_cam'
+DESC_PKG = 'quad_description'   # the camera preset table; builds on the Pi, unlike quad_gz_sim
 
 # The lab's Vicon coverage ceiling, not a tuning knob.
 DEFAULT_ZD = 1.2
@@ -37,8 +39,8 @@ DEFAULT_TAKEOFF_ALT = 1.5
 
 
 def camera_presets():
-    """quad_gz_sim's preset resolver. Loaded by path: share/<pkg>/launch is not on sys.path."""
-    path = os.path.join(get_package_share_directory(SIM_PKG), 'launch', 'camera_presets.py')
+    """quad_description's preset resolver. Loaded by path: share/<pkg>/launch is not on sys.path."""
+    path = os.path.join(get_package_share_directory(DESC_PKG), 'launch', 'camera_presets.py')
     spec = importlib.util.spec_from_file_location('camera_presets', path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -61,34 +63,60 @@ def bag_topics():
 
 
 def generate_launch_description():
+    presets = camera_presets()
     args = [
         # --- the flight geometry ------------------------------------------------
         DeclareLaunchArgument('zD', default_value=str(DEFAULT_ZD),
                               description='servoing depth, m. The lab rig sets this.'),
         DeclareLaunchArgument('takeoff_alt', default_value=str(DEFAULT_TAKEOFF_ALT),
                               description='altitude the pilot flies to before the handover, m'),
-        DeclareLaunchArgument('target_scale', default_value='1.0',
+        # 0.5 = the printed 450x375 mm plate. aD scales with its square.
+        DeclareLaunchArgument('target_scale', default_value='0.5',
                               description='printed plate size relative to the reference target'),
 
         # --- the airframe -------------------------------------------------------
-        # Weighed as flown, battery included. The 2.0 default is the simulated F450's.
+        # Weighed as flown, battery included. 2.0 is the thesis vehicle's; the 3S build is ~1.3 kg.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
         # Must equal MPC_THR_HOVER on the aircraft; read it off a real hover.
         DeclareLaunchArgument('hover_thrust', default_value='0.60'),
 
         # --- the camera ---------------------------------------------------------
-        DeclareLaunchArgument('camera', default_value='module3wide_2304'),
-        # What the driver publishes. Empty means the preset's native mode.
+        DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
+        # Start quad_cam's picamera2 driver. false = an external driver on camera_topic, which must
+        # run with FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA too or image_features receives nothing.
+        DeclareLaunchArgument('camera_driver', default_value='true'),
+        # What the driver publishes. Empty = the preset's render size, the one benchmarked at 50 Hz.
         DeclareLaunchArgument('camera_width', default_value=''),
         DeclareLaunchArgument('camera_height', default_value=''),
-        DeclareLaunchArgument('camera_topic', default_value='/camera/image_raw'),
-        DeclareLaunchArgument('camera_info_topic', default_value='/camera/camera_info'),
-        # True for a real driver: they publish BEST_EFFORT, and a RELIABLE
-        # subscription to one receives nothing, silently.
+        DeclareLaunchArgument('camera_topic', default_value='/quad/camera/image_raw'),
+        DeclareLaunchArgument('camera_info_topic', default_value='/quad/camera/camera_info'),
+        # BEST_EFFORT on both ends: a RELIABLE subscriber back-pressures the driver under load.
         DeclareLaunchArgument('sensor_qos', default_value='true'),
         # Brown-Conrady k1,k2,p1,p2,k3 from a real calibration. The preset's are an assumption.
         DeclareLaunchArgument('camera_distortion', default_value='[0.0, 0.0, 0.0, 0.0, 0.0]'),
         DeclareLaunchArgument('marker_dict', default_value='7x7'),
+        # Manual focus for flight; 0.83 dioptres is ~1.2 m.
+        DeclareLaunchArgument('af_mode', default_value='manual'),
+        DeclareLaunchArgument('lens_position', default_value='0.83'),
+
+        # --- vision compute -----------------------------------------------------
+        # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last detection).
+        DeclareLaunchArgument('detector_backend', default_value='hybrid'),
+        # aruco_nano tolerances (nano's own 0 / 0 rejects a marker for one mis-read bit).
+        # roi_margin: fraction of the target box.
+        DeclareLaunchArgument('nano_error_correction', default_value='0.3'),
+        DeclareLaunchArgument('nano_border_error_rate', default_value='0.35'),
+        DeclareLaunchArgument('nano_box_filter', default_value='15'),
+        DeclareLaunchArgument('nano_max_revisited', default_value='0.05'),
+        DeclareLaunchArgument('roi_margin', default_value='0.5'),
+        # opencv arm only: aruco3 must still find markers at this fraction of the nominal size.
+        DeclareLaunchArgument('use_aruco3_detection', default_value='false'),
+        DeclareLaunchArgument('aruco3_margin', default_value='0.7'),
+        # 1 stops OpenCV's idle pool burning CPU; fallback frames get slower, so bench 1 vs 2 on the Pi.
+        DeclareLaunchArgument('cv_num_threads', default_value='1'),
+        # Core pinning on the 4-core Pi. Empty leaves the node unpinned.
+        DeclareLaunchArgument('camera_cpu', default_value='2'),
+        DeclareLaunchArgument('image_features_cpu', default_value=''),
 
         # --- the link -----------------------------------------------------------
         DeclareLaunchArgument('agent', default_value='true',
@@ -108,8 +136,32 @@ def generate_launch_description():
         # Barometer-only height. The SITL barometer is 300x quieter than PX4's own model.
         DeclareLaunchArgument('takeoff_tolerance', default_value='0.20'),
 
+        # --- Vicon external-vision aiding ---------------------------------------
+        # The receiver runs on the LAPTOP - the Vicon SDK is x86-64 only - and must be started
+        # with FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA, or nothing here receives it.
+        DeclareLaunchArgument('vicon', default_value='false',
+                              description='feed Vicon to EKF2 as external vision'),
+        DeclareLaunchArgument('vicon_topic', default_value='/vicon/quad/quad',
+                              description='PoseStamped from the Vicon receiver'),
+        # gated: aided iff the loop does not have the aircraft, so the scored window is unaided.
+        # always: bring-up and shadow flights. oneshot: until the first handover. manual: service.
+        DeclareLaunchArgument('aiding_policy', default_value='gated',
+                              choices=['gated', 'always', 'oneshot', 'manual']),
+        # The Vicon global frame from the wand calibration, and the object template's body axes.
+        # Both are guesses until step 2 of the bring-up ladder confirms them.
+        DeclareLaunchArgument('vicon_frame', default_value='enu', choices=['enu', 'ned']),
+        DeclareLaunchArgument('body_frame', default_value='flu', choices=['flu', 'frd']),
+        # Rotates the Vicon world onto the workspace datum. Measured on site, like frame_yaw_offset.
+        DeclareLaunchArgument('vicon_yaw_offset', default_value='0.0'),
+        # header needs chrony between the laptop and the Pi; receipt carries the latency in
+        # EKF2_EV_DELAY instead.
+        DeclareLaunchArgument('stamp_source', default_value='header',
+                              choices=['header', 'receipt']),
+
         # --- the workspace datum ------------------------------------------------
-        # Zero, unlike SITL's -pi/2: that encodes the Gazebo world's ENU convention.
+        # Zero, unlike SITL's -pi/2: that encodes the Gazebo world's ENU convention. Stays zero
+        # under vicon:=true as well - EV yaw makes EKF2's heading relative to what the bridge feeds,
+        # so the datum is applied there as vicon_yaw_offset instead.
         DeclareLaunchArgument('frame_yaw_offset', default_value='0.0'),
 
         # --- recording ----------------------------------------------------------
@@ -118,21 +170,61 @@ def generate_launch_description():
         DeclareLaunchArgument('foxglove', default_value='false'),
     ]
 
+    def _float(name, context):
+        return float(LaunchConfiguration(name).perform(context))
+
     def _camera(context):
         """Preset intrinsics at the resolution the driver actually publishes."""
-        presets = camera_presets()
         cam = presets.resolve(
             LaunchConfiguration('camera').perform(context),
-            float(LaunchConfiguration('target_scale').perform(context)),
-            float(LaunchConfiguration('zD').perform(context)))
+            _float('target_scale', context), _float('zD', context))
         w = LaunchConfiguration('camera_width').perform(context)
         h = LaunchConfiguration('camera_height').perform(context)
-        # The preset's render size is a simulation speed choice; native is what a camera does.
-        cam['width'] = int(w) if w else cam['native'][0]
-        cam['height'] = int(h) if h else cam['native'][1]
+        if w:
+            cam['width'] = int(w)
+        if h:
+            cam['height'] = int(h)
         # fx follows the width; aD is metric and does not.
         cam['fx'] = cam['width'] / (2.0 * math.tan(cam['hfov'] / 2.0))
         return cam
+
+    def _camera_driver(context, *a, **k):
+        if LaunchConfiguration('camera_driver').perform(context).lower() != 'true':
+            return []
+        cam = _camera(context)
+        best_effort = LaunchConfiguration('sensor_qos').perform(context).lower() == 'true'
+        # Same size and QoS image_features is given below, so the two cannot disagree.
+        return [include(CAM_PKG, 'camera.launch.py', {
+            'width': str(cam['width']),
+            'height': str(cam['height']),
+            'sensor_width': str(cam['native'][0]),
+            'sensor_height': str(cam['native'][1]),
+            'image_topic': LaunchConfiguration('camera_topic'),
+            'camera_info_topic': LaunchConfiguration('camera_info_topic'),
+            'image_qos': 'sensor_data' if best_effort else 'reliable',
+            'af_mode': LaunchConfiguration('af_mode'),
+            'lens_position': LaunchConfiguration('lens_position'),
+            'cpu_affinity': LaunchConfiguration('camera_cpu'),
+        })]
+
+    def _vicon(context, *a, **k):
+        if LaunchConfiguration('vicon').perform(context).lower() != 'true':
+            return []
+        return [
+            LogInfo(msg='vicon: EKF2 external-vision aiding ON, policy %s. Load the EKF2_EV_* '
+                        'block from params/hardware.params and REBOOT the FC first.'
+                        % LaunchConfiguration('aiding_policy').perform(context)),
+            Node(package=PKG, executable='vicon_px4_bridge', name='vicon_px4_bridge',
+                 output='screen',
+                 parameters=[{'use_sim_time': False,
+                              'vicon_topic': LaunchConfiguration('vicon_topic'),
+                              'aiding_policy': LaunchConfiguration('aiding_policy'),
+                              'vicon_frame': LaunchConfiguration('vicon_frame'),
+                              'body_frame': LaunchConfiguration('body_frame'),
+                              'yaw_offset': ParameterValue(
+                                  LaunchConfiguration('vicon_yaw_offset'), value_type=float),
+                              'stamp_source': LaunchConfiguration('stamp_source')}]),
+        ]
 
     def _agent(context, *a, **k):
         if LaunchConfiguration('agent').perform(context).lower() != 'true':
@@ -201,15 +293,18 @@ def generate_launch_description():
 
     def _estimation(context, *a, **k):
         cam = _camera(context)
-        presets = camera_presets()
+        zD = _float('zD', context)
+        scale = _float('target_scale', context)
         return [
-            LogInfo(msg=presets.summary(cam, float(LaunchConfiguration('zD').perform(context)))),
-            LogInfo(msg='hardware: use_sim_time FALSE, frame_yaw_offset %s, camera %dx%d'
+            LogInfo(msg=presets.summary(cam, zD)),
+            LogInfo(msg='hardware: use_sim_time FALSE, frame_yaw_offset %s, camera %dx%d, '
+                        'marker ~%.0f px, detector %s'
                         % (LaunchConfiguration('frame_yaw_offset').perform(context),
-                           cam['width'], cam['height'])),
+                           cam['width'], cam['height'], presets.marker_px(cam, scale, zD),
+                           LaunchConfiguration('detector_backend').perform(context))),
             include(CTRL_PKG, 'estimation.launch.py', {
                 'use_sim_time': 'false',
-                'z_des': '%.6f' % float(LaunchConfiguration('zD').perform(context)),
+                'z_des': '%.6f' % zD,
                 'quad_mass': LaunchConfiguration('quad_mass'),
                 'camera_hfov': '%.9f' % cam['hfov'],
                 'camera_width': str(cam['width']),
@@ -220,6 +315,17 @@ def generate_launch_description():
                 'camera_topic': LaunchConfiguration('camera_topic'),
                 'camera_info_topic': LaunchConfiguration('camera_info_topic'),
                 'sensor_qos': LaunchConfiguration('sensor_qos'),
+                'detector_backend': LaunchConfiguration('detector_backend'),
+                'nano_error_correction': LaunchConfiguration('nano_error_correction'),
+                'nano_border_error_rate': LaunchConfiguration('nano_border_error_rate'),
+                'nano_box_filter': LaunchConfiguration('nano_box_filter'),
+                'nano_max_revisited': LaunchConfiguration('nano_max_revisited'),
+                'roi_margin': LaunchConfiguration('roi_margin'),
+                'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
+                'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
+                    cam, scale, zD, _float('aruco3_margin', context)),
+                'cv_num_threads': LaunchConfiguration('cv_num_threads'),
+                'image_features_cpu': LaunchConfiguration('image_features_cpu'),
             }),
         ]
 
@@ -264,7 +370,14 @@ def generate_launch_description():
     })
 
     return LaunchDescription(args + [
+        # A 2.24 MB frame overflows Fast DDS's default 512 KiB shared-memory segment and is
+        # dropped silently under load; every process launched below inherits the larger profile.
+        SetEnvironmentVariable('FASTDDS_BUILTIN_TRANSPORTS', 'LARGE_DATA'),
+        OpaqueFunction(function=_camera_driver),
         OpaqueFunction(function=_agent),
+        # Before the state adapter and the bridge: EKF2 should be aided by the time anything
+        # downstream reads its estimate.
+        OpaqueFunction(function=_vicon),
         state_adapter,
         OpaqueFunction(function=_bridge),
         takeoff_gate,

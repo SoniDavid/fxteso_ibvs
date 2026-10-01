@@ -4,6 +4,7 @@
 #include <chrono>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float64.hpp>
 
 #include <eigen3/Eigen/Dense>
@@ -12,6 +13,9 @@
 
 
 bool control_started = false;
+// Latest image features and lock; release_when_settled waits on them.
+float feat_qx = 0, feat_qy = 0, feat_qz = 0;
+bool feat_valid = false;
 
 float pos_x;
 float pos_y;
@@ -274,6 +278,18 @@ int main(int argc, char** argv)
 	// ~25 s, by which time the target has driven out of frame. Default false keeps old timing.
 	const bool hold_until_control =
 		node->declare_parameter<bool>("hold_until_control", false);
+	// The lab's procedure: push the cart only once the aircraft holds station over it. With
+	// this set the target also waits, after control starts, until the features have sat within
+	// settle_offset (qx, qy) and settle_depth (qz - 1) for settle_time, or settle_timeout passes.
+	const bool release_when_settled =
+		node->declare_parameter<bool>("release_when_settled", false);
+	// Loose on purpose: at hover qz settles ~5% off 1, and unaided the standing offset is ~0.15
+	// (E96 smoke), so tighter bounds only ever release on the timeout.
+	const float settle_offset = node->declare_parameter<double>("settle_offset", 0.2);
+	const float settle_depth = node->declare_parameter<double>("settle_depth", 0.1);
+	const float settle_time = node->declare_parameter<double>("settle_time", 5.0);
+	const float settle_min = node->declare_parameter<double>("settle_min", 10.0);
+	const float settle_timeout = node->declare_parameter<double>("settle_timeout", 30.0);
 
 	// Trajectory selection. "thesis" is the default and is the trajectory every recorded bag
 	// was flown on; the others exist to sweep the Assumption 7 bounds and are inert until asked
@@ -306,6 +322,18 @@ int main(int argc, char** argv)
 	auto ctrl_sub = node->create_subscription<geometry_msgs::msg::Quaternion>(
 		"desired_attitude", 1,
 		[](const geometry_msgs::msg::Quaternion::ConstSharedPtr) { control_started = true; });
+	// ImFeat_vector's no-lock sentinel equals the setpoint, so validity is checked separately.
+	auto feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>(
+		"ImFeat_vector", 1,
+		[](const geometry_msgs::msg::Quaternion::ConstSharedPtr f)
+		{ feat_qx = f->x; feat_qy = f->y; feat_qz = f->z; });
+	auto valid_sub = node->create_subscription<std_msgs::msg::Bool>(
+		"ImFeat_valid", 1,
+		[](const std_msgs::msg::Bool::ConstSharedPtr v) { feat_valid = v->data; });
+	auto released_pub = node->create_publisher<std_msgs::msg::Bool>(
+		"~/released", rclcpp::QoS(1).transient_local());
+	int ctrl_ticks = 0, settled_ticks = 0;
+	bool released = false;
 
 
 
@@ -453,7 +481,26 @@ int main(int argc, char** argv)
 
 		// Freezing the clock rather than the outputs keeps the trajectory itself untouched:
 		// it simply starts later, from the same t=0 it always did.
-		if (!hold_until_control || control_started)
+		if (control_started && release_when_settled && !released)
+		{
+			ctrl_ticks++;
+			const bool settled = feat_valid && fabsf(feat_qx) < settle_offset &&
+				fabsf(feat_qy) < settle_offset && fabsf(feat_qz - 1.0f) < settle_depth;
+			settled_ticks = settled ? settled_ticks + 1 : 0;
+			const bool timed_out = ctrl_ticks * step >= settle_timeout;
+			if ((settled_ticks * step >= settle_time && ctrl_ticks * step >= settle_min) || timed_out)
+			{
+				released = true;
+				std_msgs::msg::Bool b;
+				b.data = true;
+				released_pub->publish(b);
+				RCLCPP_INFO(node->get_logger(), "target released %.1f s after control started (%s)",
+				            ctrl_ticks * step, timed_out ? "TIMEOUT - never settled" : "settled");
+			}
+		}
+		const bool held = hold_until_control &&
+			(!control_started || (release_when_settled && !released));
+		if (!held)
 			i = i+1;
 
 	
