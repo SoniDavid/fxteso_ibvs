@@ -27,12 +27,14 @@ CTRL_PKG = 'quad_control'
 
 PLANTS = ('analytic', 'gazebo')
 
-# The thesis conditions every archived analytic/gazebo bag was flown in.
+# The thesis conditions every archived analytic/gazebo bag was flown in; pass them explicitly.
 THESIS = {'zD': '2.5', 'target_scale': '1.0', 'target_profile': 'thesis',
-          'quad_mass': '2.0', 'start_altitude': '4.0', 'hold_target': 'false'}
+          'quad_mass': '2.0', 'start_altitude': '4.0', 'hold_target': 'false',
+          'record_from': 'handover', 'sim_hold': 'false'}
 # sitl.launch.py's defaults: the 3S build over the printed target at the lab depth.
 DEPLOYMENT = {'zD': '1.2', 'target_scale': '0.5', 'target_profile': 'hover',
-              'quad_mass': '1.30', 'start_altitude': '1.5', 'hold_target': 'true'}
+              'quad_mass': '1.30', 'start_altitude': '1.5', 'hold_target': 'true',
+              'record_from': 'launch'}
 
 # Forwarded verbatim to scenario.launch.py.
 SCENARIO_ARGS = ('disturbance', 'disturbance_seed', 'gust_scale', 'wind_scale', 'gust_tau',
@@ -87,9 +89,12 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
     if mode not in ('closed', 'observer'):
         raise ValueError('mode %r is not closed or observer' % mode)
     presets = camera_presets()
-    d = dict(DEPLOYMENT)
-    d.update(defaults or {})
     closed = mode == 'closed'
+    d = dict(DEPLOYMENT)
+    if not closed:
+        # Nothing ever releases a held target without pos_ctrl.
+        d['hold_target'] = 'false'
+    d.update(defaults or {})
 
     def arg(name, default, **kw):
         return DeclareLaunchArgument(name, default_value=d.get(name, default), **kw)
@@ -107,8 +112,8 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
         args += [
             # false leaves the controllers unstarted, for open-loop testing.
             arg('controllers', 'true'),
-            # launch: record the observer's transient too; handover: start at the gate.
-            arg('record_from', 'handover', choices=['handover', 'launch']),
+            # launch also keeps a bag of a run that never locks; handover starts at the gate.
+            arg('record_from', 'launch', choices=['handover', 'launch']),
             # PX4's offboard-loss Hold, which these plants otherwise lack; false for A/B only.
             arg('sim_hold', 'true', choices=['true', 'false']),
         ]

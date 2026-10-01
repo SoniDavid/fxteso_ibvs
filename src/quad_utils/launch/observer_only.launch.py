@@ -2,7 +2,8 @@
 
 The observer test - nothing can diverge from a control gain here. Expect /quad_thrust
 and /quad_torques to stay silent. No ibvs_gate either: nothing is being held back, and the
-recorder starts at launch. The thesis conditions, as sim.launch.py.
+recorder starts at launch. sitl.launch.py's defaults, as sim.launch.py; the fixed-time sweeps
+flown at the thesis conditions pass them explicitly (sim_stack.py's THESIS).
 
   ros2 launch quad_utils observer_only.launch.py [plant:=gazebo] [disturbance:=gust]
                                                  [rosbag:=true]
@@ -23,4 +24,4 @@ def _stack():
 
 
 def generate_launch_description():
-    return _stack().build(mode='observer', defaults=_stack().THESIS, bag_prefix='obs_')
+    return _stack().build(mode='observer', bag_prefix='obs_')

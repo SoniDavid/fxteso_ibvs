@@ -18,7 +18,7 @@ the 0.5-scale target holding station, the 1.30 kg 3S build. Arguments: sim_stack
                                             [quad_mass:=1.30] [start_altitude:=1.5]
 
 Thesis conditions: zD:=2.5 target_scale:=1.0 target_profile:=thesis quad_mass:=2.0
-start_altitude:=4.0, or sim.launch.py, which keeps them as its defaults.
+start_altitude:=4.0 hold_target:=false record_from:=handover sim_hold:=false.
 """
 import importlib.util
 import os

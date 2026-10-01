@@ -1,7 +1,10 @@
-"""The analytic or gazebo stack by plant:=, at the thesis conditions: zD 2.5, the full-size
-target on the thesis profile, 2.0 kg, a 4 m start, the target not held. What every archived
-spec was flown with; analytic.launch.py and gazebo.launch.py take sitl.launch.py's defaults
-instead. Arguments: sim_stack.py.
+"""The analytic or gazebo stack by plant:=, with sitl.launch.py's defaults: zD 1.2 from a 1.5 m
+start, the 0.5-scale target held until handover, the 1.30 kg 3S build. Identical to
+analytic.launch.py and gazebo.launch.py apart from the plant argument.
+
+Archived runs reproduce with sim_stack.py's THESIS set passed explicitly: zD:=2.5
+target_scale:=1.0 target_profile:=thesis quad_mass:=2.0 start_altitude:=4.0 hold_target:=false
+record_from:=handover sim_hold:=false.
 
   ros2 launch quad_utils sim.launch.py [plant:=analytic|gazebo] [headless:=true]
                                        [rosbag:=true] [foxglove:=true] [controllers:=false]
@@ -22,4 +25,4 @@ def _stack():
 
 
 def generate_launch_description():
-    return _stack().build(defaults=_stack().THESIS, bag_prefix='ibvs_')
+    return _stack().build(bag_prefix='ibvs_')

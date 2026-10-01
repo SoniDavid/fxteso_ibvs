@@ -114,15 +114,18 @@ One launch file per plant, and one body for all three. `quad_description/launch/
 | `gazebo` | the same ideal wrench (BodyWrench), rotors welded | DART, 1 kHz | the same model in a real physics engine, in SITL's world and camera |
 | `px4` | PX4 allocation → spinning rotors (MulticopterMotorModel) | DART, 1 kHz | the platform that transfers to hardware |
 
-Both take `sitl.launch.py`'s arguments wherever the argument means the same thing — camera and detector, target trajectory, disturbance, observer and controller gains, gates, recording — with its deployment defaults: zD 1.2, the 0.5-scale target on `hover`, held until the loop takes over, and the 1.30 kg 3S build.
+Both take `sitl.launch.py`'s arguments wherever the argument means the same thing — camera and detector, target trajectory, disturbance, observer and controller gains, gates, recording — with its deployment defaults: zD 1.2, the 0.5-scale target on `hover`, held until the loop takes over, and the 1.30 kg 3S build. Unlike SITL they record from launch (`record_from:=launch`), so a run that never locks still leaves a bag.
 
 ```sh
 ros2 launch quad_utils analytic.launch.py
 ros2 launch quad_utils gazebo.launch.py target_profile:=line target_heading:=90 disturbance:=wind
 
-# the thesis conditions; sim.launch.py keeps them as its defaults for the archived specs
-ros2 launch quad_utils sim.launch.py plant:=analytic
+# the thesis conditions (the archived specs pass exactly this)
+ros2 launch quad_utils sim.launch.py plant:=analytic zD:=2.5 target_scale:=1.0 target_profile:=thesis \
+    quad_mass:=2.0 start_altitude:=4.0 hold_target:=false record_from:=handover sim_hold:=false
 ```
+
+`sim.launch.py` is the same stack with `plant:=` as an argument, and every entry point here defaults to SITL's profile.
 
 **Lock loss.** `pos_ctrl` stops on lock loss and leaves the aircraft to PX4. On these plants `sim_hold` stands in for it, with SITL's timing: after 0.3 s without `pos_ctrl` plus `COM_OF_LOSS_T` (1.0 s) of the last command, it holds position with PX4's position cascade and the fork's default gains, and it hands back the moment `pos_ctrl` publishes again. `/sim_hold/active` is bagged, so these runs score on authority gaps exactly as SITL does. `sim_hold:=false` restores the old behaviour, for A/B only.
 
