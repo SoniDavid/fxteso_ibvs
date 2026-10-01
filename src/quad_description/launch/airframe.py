@@ -133,3 +133,47 @@ def derive(quad_mass):
     """The composite body DART flies for quad_mass; what uav_dynamics must integrate too."""
     return composite(rewrite_mass(base_sdf(), quad_mass))
 
+
+ROTOR_LINKS = ('rotor_front_left', 'rotor_rear_left', 'rotor_rear_right', 'rotor_front_right')
+# Spin sense from above, as F450/model.sdf's JointControllers declare it.
+ROTOR_SPIN = {'rotor_front_left': -1.0, 'rotor_rear_left': 1.0,
+              'rotor_rear_right': -1.0, 'rotor_front_right': 1.0}
+
+
+def _link_block(sdf, name):
+    m = re.search(r"<link name='%s'>.*?</link>" % name, sdf, re.DOTALL)
+    if m is None:
+        raise RuntimeError('F450_base/model.sdf has no link %s.' % name)
+    return m
+
+
+def strip_rotor_visuals(sdf):
+    """Welded rotor links keep their inertia but lose their meshes; rotor_visuals() draws them."""
+    for name in ROTOR_LINKS:
+        m = _link_block(sdf, name)
+        blk, n = re.subn(r'\s*<visual name=.*?</visual>', '', m.group(0), flags=re.DOTALL)
+        if n != 1:
+            raise RuntimeError('link %s has %d visuals, expected 1.' % (name, n))
+        sdf = sdf[:m.start()] + blk + sdf[m.end():]
+    return sdf
+
+
+def rotor_visuals(sdf, spawn):
+    """Visual-only rotor models for the world, plus the parameters gz_pose_broadcaster poses them
+    with. Each carries its link's own <visual>, so the mesh has one source."""
+    models, params = [], {'rotor_models': [], 'rotor_offsets': [], 'rotor_signs': []}
+    for name in ROTOR_LINKS:
+        blk = _link_block(sdf, name).group(0)
+        hub = [float(x) for x in re.search(r'<pose>([^<]*)</pose>', blk).group(1).split()[:3]]
+        visual = re.search(r'<visual name=.*?</visual>', blk, re.DOTALL).group(0)
+        model = 'F450_' + name
+        models.append(
+            "<model name='%s'>\n  <pose>%.6f %.6f %.6f 0 0 0</pose>\n"
+            "  <link name='link'>\n    <gravity>0</gravity>\n"
+            "    <inertial><mass>0.001</mass><inertia><ixx>1e-7</ixx><iyy>1e-7</iyy>"
+            "<izz>1e-7</izz></inertia></inertial>\n    %s\n  </link>\n</model>"
+            % (model, spawn[0] + hub[0], spawn[1] + hub[1], spawn[2] + hub[2], visual))
+        params['rotor_models'].append(model)
+        params['rotor_offsets'] += hub
+        params['rotor_signs'].append(ROTOR_SPIN[name])
+    return '\n'.join(models), params

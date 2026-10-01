@@ -253,10 +253,12 @@ def generate_launch_description():
                              % (0.90 * target_scale, 0.75 * target_scale), 'collision <size>')
 
         # gazebo is SITL's body driven by an ideal wrench: the rotors keep their mass and inertia
-        # but are welded, since a DART joint velocity command is a real torque on the airframe.
-        # Derived for every plant, so a gazebo copy never shadows the original afterwards.
+        # but are welded, since a DART joint velocity command is a real torque on the airframe;
+        # their meshes move to visual-only models (_world_for). Derived for every plant, so a
+        # gazebo copy never shadows the original afterwards.
         gazebo = plant == 'gazebo'
-        weld = airframe.weld_rotors if gazebo else (lambda x: x)
+        weld = (lambda x: airframe.strip_rotor_visuals(airframe.weld_rotors(x))) if gazebo \
+            else (lambda x: x)
         _derive_model('F450_base', lambda sdf: weld(
             airframe.rewrite_mass(camera_block(sdf), quad_mass)))
         _derive_model('F450', airframe.strip_rotor_spin if gazebo else (lambda x: x), False)
@@ -283,6 +285,14 @@ def generate_launch_description():
                 raise RuntimeError(
                     'worlds/ibvs.sdf has %d non-zero BodyWrench <initial_thrust> tags for '
                     'plant:=gazebo, expected 2 (plant and echo). Fix one or the other.' % n)
+            # Visual-only rotors beside the F450, posed by gz_pose_broadcaster; no dynamics.
+            m = re.search(r'<uri>model://F450</uri>\s*<name>F450</name>\s*<pose>(\S+) (\S+) (\S+)'
+                          r'[^<]*</pose>\s*</include>', out)
+            if m is None:
+                raise RuntimeError('worlds/ibvs.sdf: no F450 include to place the rotors beside.')
+            rotors, _ = airframe.rotor_visuals(airframe.base_sdf(),
+                                               [float(v) for v in m.groups()])
+            out = out[:m.end()] + '\n' + rotors + out[m.end():]
         if plant == 'analytic':
             gravity_off = out.replace('<gravity>0 0 -9.81</gravity>',
                                       '<gravity>0 0 0</gravity>')
@@ -366,13 +376,15 @@ def generate_launch_description():
 
     def _broadcaster(context, *a, **k):
         # Under plant:=gazebo physics owns the quad's pose; the broadcaster keeps the target
-        # and the cosmetic rotor spin.
+        # and poses gazebo's visual-only rotors.
         plant = LaunchConfiguration('plant').perform(context).lower()
         params = {'world': LaunchConfiguration('world'),
                   'teleport_quad': plant == 'analytic',
                   'rotor_hover_thrust': airframe.GRAVITY * float(
                       LaunchConfiguration('quad_mass').perform(context)),
                   'use_sim_time': True}
+        if plant == 'gazebo':
+            params.update(airframe.rotor_visuals(airframe.base_sdf(), (0.0, 0.0, 0.0))[1])
         return [Node(
             package=PKG, executable='gz_pose_broadcaster', name='gz_pose_broadcaster',
             output='screen', parameters=[params],
