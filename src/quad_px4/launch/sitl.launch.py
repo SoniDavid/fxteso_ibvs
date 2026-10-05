@@ -24,7 +24,7 @@ Start-up runs through two gates:
   ibvs_gate          plant, target and a held marker lock      -> start pos_ctrl
 
   ros2 launch quad_px4 sitl.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
-                                      [controllers:=false] [record_from:=handover|launch]
+                                      [controllers:=false] [record_from:=handover|gate|launch]
                                       [disturbance:=none|step|gust|wind|table52|csv]
                                       [disturbance_seed:=N] [turbulence_scale:=1.0]
                                       [px4_dir:=...] [xrce_agent:=...]
@@ -287,8 +287,10 @@ def generate_launch_description():
         # Node default (0.5 m) straddles the depth stability threshold — tighten it here.
         DeclareLaunchArgument('takeoff_tolerance', default_value='0.10'),
         # 'launch' needed for observer experiments: fixed_eso converges in ~1 s post-gate.
+        # gate: from the takeoff gate, so the bag covers the handover (the recorder takes ~4 s
+        # to subscribe, which a handover start loses).
         DeclareLaunchArgument('record_from', default_value='handover',
-                              description='handover | launch'),
+                              description='handover | gate | launch'),
         # DIAGNOSTIC (E94). Feeds GROUND-TRUTH tilt into the loop: derotation (image_features),
         # setpoint (bridge corrects by EKF2 - truth), both, or replay (truth + a recorded error).
         # Never a scored or deployable configuration.
@@ -701,7 +703,7 @@ def generate_launch_description():
              if LaunchConfiguration('controllers').perform(context).lower() == 'true'
              else [LogInfo(msg='controllers:=false - the aircraft will loiter after takeoff.')])
             + ([OpaqueFunction(function=_bag)]
-               if LaunchConfiguration('record_from').perform(context).lower() != 'launch'
+               if LaunchConfiguration('record_from').perform(context).lower() == 'handover'
                else [])
             if event.returncode == 0 else
             [LogInfo(msg='ibvs_gate failed - controllers not started. See its error above.')]
@@ -763,6 +765,8 @@ def generate_launch_description():
         target_action=takeoff_gate,
         on_exit=lambda event, context: (
             _estimation_include(context) + [gate, control]
+            + ([OpaqueFunction(function=_bag)]
+               if LaunchConfiguration('record_from').perform(context).lower() == 'gate' else [])
             if event.returncode == 0 else
             # Tear the run down instead of idling to the harness timeout. EKF2 never recovers
             # from a failed initialisation - one run sat 82 s - so the remaining minutes buy

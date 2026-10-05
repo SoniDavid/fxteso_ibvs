@@ -152,8 +152,12 @@ void imFeatValidCallback(const std_msgs::msg::Bool::ConstSharedPtr v)
 	imgFeat_valid = v->data;
 }
 
+// Wall-clock arrival of each input, published as pos_ctrl_input_age to catch handover stalls.
+std::chrono::steady_clock::time_point feat_rx, est_rx, est_dot_rx;
+
 void imFeatCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr img_features)
 {
+	feat_rx = std::chrono::steady_clock::now();
 	imgFeat(0) = img_features->x;
 	imgFeat(1) = img_features->y;
 	imgFeat(2) = img_features->z;
@@ -162,6 +166,7 @@ void imFeatCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr img_fea
 
 void ImFeatEstCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr ifEst)
 {
+	est_rx = std::chrono::steady_clock::now();
 	imgFeat_est(0) = ifEst->x;
 	imgFeat_est(1) = ifEst->y;
 	imgFeat_est(2) = ifEst->z;
@@ -170,6 +175,7 @@ void ImFeatEstCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr ifEs
 
 void ImFeatEstDotCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr ifEstDot)
 {
+	est_dot_rx = std::chrono::steady_clock::now();
 	imgFeat_dot_est(0) = ifEstDot->x;
 	imgFeat_dot_est(1) = ifEstDot->y;
 	imgFeat_dot_est(2) = ifEstDot->z;
@@ -297,6 +303,20 @@ RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg, vel
     auto quad_vel_VF_real_pub = node->create_publisher<geometry_msgs::msg::Vector3>("quad_vel_virtual_real",100);
 
     auto ctrl_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("ibvs_control_input",100);
+    // Seconds since ImFeat_estimates_fxt (x), its derivative (y) and ImFeat_vector (z) last arrived.
+    auto input_age_pub = node->create_publisher<geometry_msgs::msg::Vector3>("pos_ctrl_input_age", 100);
+    auto publishInputAge = [&]()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        auto age = [&](std::chrono::steady_clock::time_point t)
+        { return t.time_since_epoch().count() == 0 ? -1.0
+                 : std::chrono::duration<double>(now - t).count(); };
+        geometry_msgs::msg::Vector3 a;
+        a.x = age(est_rx);
+        a.y = age(est_dot_rx);
+        a.z = age(feat_rx);
+        input_age_pub->publish(a);
+    };
 
 	auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);
 	auto im_feat_valid_sub = node->create_subscription<std_msgs::msg::Bool>("ImFeat_valid", 1, imFeatValidCallback);
@@ -402,6 +422,7 @@ imgFeat_des << 0,0,1,0;
     thrust_pub->publish(thrust_var);
     desired_att_pub->publish(desired_attitude_var);
     ctrl_pub->publish(ctrl_input_var);
+    publishInputAge();
 
     loop_rate.sleepFor(1.0);
     
@@ -409,6 +430,7 @@ imgFeat_des << 0,0,1,0;
 
     while(rclcpp::ok())
     {
+        publishInputAge();
         // No measurement -> no control. The no-lock sentinel equals imgFeat_des, so servoing on
         // it reads as converged and the aircraft coasts. Hold every integrator and drop the
         // stream instead. The control law itself is untouched; this only gates whether it runs.

@@ -97,6 +97,7 @@ differentiators:
   # What pos_ctrl's Coriolis term ACTUALLY used, whichever velocity_source arm was flown.
   # Without it the arms are indistinguishable offline.
   - /quad_vel_virtual_real
+  - /pos_ctrl_input_age
   - /position_estimates
   - /attitude_td_error
   - /attitude_des_td_error
