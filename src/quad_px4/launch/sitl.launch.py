@@ -261,12 +261,16 @@ def generate_launch_description():
         # OpenCV threads; at 1 its idle pool stops burning CPU next to nano.
         DeclareLaunchArgument('cv_num_threads', default_value='1'),
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
-        # Degrees from +x. 0 = tight FOV axis; 90 = wide axis (~2× field budget).
-        DeclareLaunchArgument('target_heading', default_value='0.0'),
-        # control: the target moves on the loop's first command (every run before E96).
-        # settled: it waits until the loop holds it centred at zD, as the lab pushes the cart.
-        DeclareLaunchArgument('target_release', default_value='control',
+        # Degrees from +x. 90 = wide axis (~2× field budget), as the lab cart runs; 0 = tight axis,
+        # every run before 2026-10-04 (E98: line 0.5-1.0 hold only on the wide axis).
+        DeclareLaunchArgument('target_heading', default_value='90.0'),
+        # settled: the target waits until the loop holds it centred at zD, as the lab pushes the
+        # cart. control: it moves on the loop's first command, ~1.8 s before PX4 grants OFFBOARD,
+        # so a 0.7 m/s target leaves the FOV under the pilot (E98a). Every run before E96 used it.
+        DeclareLaunchArgument('target_release', default_value='settled',
                               description='control | settled'),
+        # settled only: feature offset to hold before release. 0.05 centred (E98e); 0.2 is E96's.
+        DeclareLaunchArgument('target_settle_offset', default_value='0.05'),
         # m/s per axis, scaled by wind_scale. Default points down the camera's tight axis.
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # Hides target to exercise lock-loss path. 0 disables.
@@ -376,6 +380,7 @@ def generate_launch_description():
                  # this the target leaves the camera footprint before ibvs_gate can lock.
                  'hold_target': 'true',
                  'target_release': LaunchConfiguration('target_release'),
+                 'target_settle_offset': LaunchConfiguration('target_settle_offset'),
                  'target_profile': LaunchConfiguration('target_profile'),
                  'target_speed': LaunchConfiguration('target_speed'),
                  'target_yaw_rate': LaunchConfiguration('target_yaw_rate'),
