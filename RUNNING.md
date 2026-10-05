@@ -88,7 +88,10 @@ exhaustive list of all arguments available in `sitl.launch.py`, which `hardware.
 - `record_from:=<handover|launch>` — When to start recording the rosbag (default: `handover`).
 
 ### Environment & Venue
-- `venue:=<indoor|outdoor>` — `indoor` disables GNSS and waits for a safety pilot; `outdoor` waits for GNSS heading alignment (default: `indoor`).
+- `venue:=<vicon|indoor|outdoor>` — `vicon` is the lab with EKF2 fusing the Vicon pose (position + yaw) all flight; `indoor` is the same lab unaided; both disable GNSS and wait for a safety pilot. `outdoor` waits for GNSS heading alignment (default: `vicon`).
+- `aiding_policy:=<always|gated|oneshot|manual>` — `venue:=vicon` only. `always` fuses the full pose for the whole flight; `gated` fuses horizontal position only and cuts it at the handover (default: `always`).
+- `velocity_source:=<off|td|ekf2|vision>` — Velocity in `pos_ctrl`'s Coriolis term. `off` keeps the Vicon-aided position out of the controller, so Vicon reaches EKF2 only (default: `off`; bags before 2026-10-04 used `td`).
+- `target_release:=<settled|control>` — When a moving target starts. `settled` waits until the loop has held it centred (≥10 s of control, 5 s centred), as the lab pushes the cart; `control` starts it on the loop's first command, ~1.8 s before PX4 grants OFFBOARD (default: `settled`; runs before 2026-10-04 used `control`).
 - `disturbance:=<none|step|gust|wind|table52|csv>` — Wind and disturbance model (default: `none`).
 - `disturbance_seed:=<int>` — Seed for disturbances (default: `0`).
 - `gust_scale:=<float>` — Gust magnitude multiplier (default: `1.0`).

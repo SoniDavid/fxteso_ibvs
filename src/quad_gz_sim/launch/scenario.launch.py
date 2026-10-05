@@ -44,6 +44,9 @@ def generate_launch_description():
         # aircraft holds station.
         DeclareLaunchArgument('target_release', default_value='control',
                               description='control | settled'),
+        # settled only: |qx|, |qy| the features must hold before release. 0.2 is E96's loose
+        # bound; 0.05 waits for a centred aircraft, so the cart does not start 0.26 m off.
+        DeclareLaunchArgument('target_settle_offset', default_value='0.2'),
         # Target trajectory. 'thesis' is what every recorded bag was flown on; the rest sweep
         # the Assumption 7 bounds. The target_ prefix keeps these clear of the disturbances
         # node's own 'profile' parameter, which is a different thing fed by 'disturbance'.
@@ -109,6 +112,8 @@ def generate_launch_description():
                      'release_when_settled': ParameterValue(
                          PythonExpression(["'", LaunchConfiguration('target_release'),
                                            "' == 'settled'"]), value_type=bool),
+                     'settle_offset': ParameterValue(
+                         LaunchConfiguration('target_settle_offset'), value_type=float),
                      'profile': ParameterValue(
                          LaunchConfiguration('target_profile'), value_type=str),
                      'speed': ParameterValue(

@@ -91,6 +91,9 @@ int main(int argc, char **argv)
 	// real bias of a few degrees. This separates the two with margin at both ends.
 	const double max_attitude_error =
 		node->declare_parameter<double>("max_attitude_error", 30.0);
+	// EKF2's heading still jumps just after cs_yaw_align (108.9 deg, then 2.3 deg 20 ms later), so
+	// the check waits until alignment has held this long.
+	const double frame_check_settle = node->declare_parameter<double>("frame_check_settle", 1.0);
 
 	// Reported in the message, but EKF2_EV_NOISE_MD:=1 makes PX4 use EKF2_EVP/EVA_NOISE instead.
 	const double position_sd = node->declare_parameter<double>("position_sd", 0.02);
@@ -184,9 +187,17 @@ int main(int argc, char **argv)
 	// Until EKF2 has aligned its heading the witness is worthless - comparing against it fires a
 	// FATAL that is not fatal, which is the fastest way to teach someone to ignore FATALs.
 	bool yaw_aligned = false;
+	int64_t yaw_aligned_since_us = 0;
 	auto flagsSub = node->create_subscription<EstimatorStatusFlags>(
 		px4Topic<EstimatorStatusFlags>("/fmu/out/estimator_status_flags"), px4In,
-		[&](const EstimatorStatusFlags::ConstSharedPtr f) { yaw_aligned = f->cs_yaw_align; });
+		[&](const EstimatorStatusFlags::ConstSharedPtr f)
+		{
+			yaw_aligned = f->cs_yaw_align;
+			if (!yaw_aligned)
+				yaw_aligned_since_us = 0;
+			else if (yaw_aligned_since_us == 0)
+				yaw_aligned_since_us = sysNowUs();
+		});
 	// FLU body -> FRD body is the same pi-about-x the attitude uses; no pose needed, which is
 	// why the velocity arm cannot inherit a pose-frame error.
 	std::array<float, 3> ev_vel{};
@@ -362,7 +373,8 @@ int main(int argc, char **argv)
 			// from under the aircraft. Until it passes, nothing is published.
 			if (!frame_validated)
 			{
-				if (!have_ekf_att || !yaw_aligned)
+				if (!have_ekf_att || !yaw_aligned ||
+				    now_us - yaw_aligned_since_us < static_cast<int64_t>(frame_check_settle * 1e6))
 				{
 					RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
 					                     "Waiting for EKF2 to align its heading (cs_yaw_align) "
