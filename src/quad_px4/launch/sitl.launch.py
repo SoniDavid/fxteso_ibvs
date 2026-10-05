@@ -30,7 +30,9 @@ Start-up runs through two gates:
                                       [px4_dir:=...] [xrce_agent:=...]
 
 Defaults: module3wide_2304, takeoff at 1.5 m, servo at zD 1.2 with a 0.5-scale target, holding
-station. See RUNNING.md at the repository root for the standing configurations.
+station, in the Vicon lab with EKF2 aided by mocap pose all flight (venue:=vicon
+aiding_policy:=always velocity_source:=off). See RUNNING.md at the repository root for the
+standing configurations.
 
 Prerequisites, both one-off:
   git submodule update --init --recursive external/PX4-Autopilot
@@ -166,12 +168,12 @@ def generate_launch_description():
         # Parts-list estimate for the 3S build (1.19-1.37 kg), not yet weighed. Sets the SDF,
         # PX4, bridge and controllers. Thesis plant: quad_mass:=2.0 battery_cells:=4.
         DeclareLaunchArgument('quad_mass', default_value='1.30'),
-        # Which velocity feeds pos_ctrl's Coriolis term - the ONE place EKF2 reaches the
-        # control output. td (default) is what every recorded bag was flown with; indoors it
-        # carries EKF2's dead-reckoned position differentiated, 66x true speed.
         # pos_ctrl's per-cycle error print; off by default so the WARNs stay readable.
         DeclareLaunchArgument('print_error', default_value='false'),
-        DeclareLaunchArgument('velocity_source', default_value='td',
+        # Which velocity feeds pos_ctrl's Coriolis term - the ONE place EKF2 position reaches the
+        # control output. off keeps Vicon-aided position out of the loop (~0.004 N dropped, E84);
+        # td is what every bag before 2026-10-04 was flown with.
+        DeclareLaunchArgument('velocity_source', default_value='off',
                               choices=['td', 'ekf2', 'vision', 'off']),
         # Table 5.3 thesis values: gamma2_xy=10, gamma3_xy=7, gamma3_yaw=7.
         DeclareLaunchArgument('gamma1_xy', default_value='18.0'),
@@ -199,15 +201,20 @@ def generate_launch_description():
         # PX4 yaw unwinds over ~100 s after takeoff; target is held so waiting costs only wall clock.
         DeclareLaunchArgument('gate_timeout', default_value='120.0'),
         # One arg drives every node so they cannot disagree. See RUNNING.md for full explanation.
-        # vicon is the indoor venue with Vicon aiding EKF2 while the loop does NOT have the
-        # aircraft - everything indoor does, plus the EV params, vicon_sim and the bridge.
-        DeclareLaunchArgument('venue', default_value='indoor',
+        # vicon (the flight configuration) is everything indoor does, plus the EV params,
+        # vicon_sim and the bridge. indoor is the unaided GPS-denied arm.
+        DeclareLaunchArgument('venue', default_value='vicon',
                               choices=['outdoor', 'indoor', 'vicon']),
         # venue:=vicon only. vicon_sim's imitation of the lab; the bridge is the one that flies.
         DeclareLaunchArgument('vicon_latency', default_value='0.02'),
         DeclareLaunchArgument('vicon_noise_sd', default_value='0.001'),
         DeclareLaunchArgument('vicon_dropout_probability', default_value='0.0'),
-        DeclareLaunchArgument('aiding_policy', default_value='gated',
+        # EKF2_EV_DELAY, ms. 0: the bridge's timestamp_sample already carries the capture time, so
+        # EKF2 subtracting vicon_latency again would date every sample that much too early.
+        DeclareLaunchArgument('ev_delay', default_value='0.0'),
+        # always: full pose (3D position + yaw) into EKF2 all flight - the flight configuration.
+        # gated: horizontal position only, cut at the handover (the E85 A/B).
+        DeclareLaunchArgument('aiding_policy', default_value='always',
                               choices=['gated', 'always', 'oneshot', 'manual']),
         # DIAGNOSTIC. venue:=vicon only. Feeds EKF2 a VELOCITY reference and no position one -
         # what an optical flow sensor supplies - so the flow route can be decided before any
@@ -338,8 +345,15 @@ def generate_launch_description():
         return LaunchConfiguration('venue').perform(context).strip().lower() in ('indoor', 'vicon')
 
     def _vicon(context):
-        """venue:=vicon. Indoor, plus Vicon aiding EKF2 outside OFFBOARD."""
+        """venue:=vicon. Indoor, plus Vicon aiding EKF2 under aiding_policy."""
         return LaunchConfiguration('venue').perform(context).strip().lower() == 'vicon'
+
+    def _full_pose(context):
+        """venue:=vicon aiding_policy:=always: EKF2 fuses Vicon height and yaw too. Only safe when
+        aiding is never cut, so EKF2_EV_CTRL and EKF2_HGT_REF come from this one resolver."""
+        return (_vicon(context)
+                and LaunchConfiguration('aiding_policy').perform(context).strip().lower() == 'always'
+                and LaunchConfiguration('ev_velocity').perform(context).lower() != 'true')
 
     simulation = [
         include(SIM_PKG, 'gz_sim.launch.py',
@@ -419,27 +433,27 @@ def generate_launch_description():
         # Bitmask: 7 is PX4's default, 0 is no GNSS aiding. EKF2 then dead-reckons
         # horizontally, which nothing downstream uses.
         env['PX4_PARAM_EKF2_GPS_CTRL'] = '0' if indoor else '7'
-        # 0 barometric, 1 GPS. Indoors the barometer is the ONLY height source there is.
-        env['PX4_PARAM_EKF2_HGT_REF'] = '0' if indoor else '1'
+        # 0 barometric, 1 GPS, 3 vision. Indoors unaided the barometer is the ONLY height source.
+        env['PX4_PARAM_EKF2_HGT_REF'] = ('3' if _full_pose(context) else '0') if indoor else '1'
         # See the imu_ctrl argument. Default 7 is PX4's own, so this is inert unless asked for.
         env['PX4_PARAM_EKF2_IMU_CTRL'] = LaunchConfiguration('imu_ctrl').perform(context).strip()
-        # Vicon external vision. 1 = horizontal position only. Height is not fused (EKF2_HGT_REF
-        # stays 0) so the cut at the handover cannot remove the height reference, and YAW is not
-        # fused so EKF2's mag heading stays an independent witness for the bridge's frame check -
-        # fusing it once let a 90 deg frame error redefine the datum unchallenged. Set on BOTH
-        # branches for the parameters.bson reason above: a stale non-zero value would silently aid
-        # an indoor run that is supposed to be unaided.
-        # 4 = bit 2, 3D velocity fusion; 1 = bit 0, horizontal position.
+        # Vicon external vision. Bits: 0 horizontal position, 1 vertical position, 2 velocity,
+        # 3 yaw. always: 11, the full pose - the bridge's frame check validates the datum against
+        # the mag heading before the first sample, so fusing yaw can no longer hide a frame error.
+        # Cut policies: 1, so the handover cut cannot remove the height reference at 1.2 m.
+        # ev_velocity: 4. Set on BOTH branches for the parameters.bson reason above.
         _evvel = LaunchConfiguration('ev_velocity').perform(context).lower() == 'true'
-        env['PX4_PARAM_EKF2_EV_CTRL'] = ('4' if _evvel else '1') if _vicon(context) else '0'
+        env['PX4_PARAM_EKF2_EV_CTRL'] = (
+            ('4' if _evvel else '11' if _full_pose(context) else '1')
+            if _vicon(context) else '0')
         # 1 = trust EKF2_EVP/EVA_NOISE rather than the message covariance; the bridge reports a
         # fixed variance, so there is nothing better in the message.
         env['PX4_PARAM_EKF2_EV_NOISE_MD'] = '1'
         env['PX4_PARAM_EKF2_EVP_NOISE'] = '0.02'
         env['PX4_PARAM_EKF2_EVA_NOISE'] = '0.05'
-        # Matches vicon_sim's latency. On hardware this comes from the bridge's reported age.
+        # See the ev_delay argument; vicon_latency only shapes vicon_sim now.
         env['PX4_PARAM_EKF2_EV_DELAY'] = (
-            '%.1f' % (float(LaunchConfiguration('vicon_latency').perform(context)) * 1e3)
+            '%.1f' % float(LaunchConfiguration('ev_delay').perform(context))
             if _vicon(context) else '0.0')
 
         # Set explicitly, not trusted to its default: PX4 intermittently refuses to arm with
@@ -490,14 +504,18 @@ def generate_launch_description():
                 ))),
         ]
 
-    state_adapter = Node(
-        package=PKG, executable='px4_state_adapter', name='px4_state_adapter',
-        output='screen',
-        parameters=[{'use_sim_time': True,
-                     'origin_north': SPAWN_NED[0],
-                     'origin_east': SPAWN_NED[1],
-                     'origin_down': SPAWN_NED[2],
-                     'frame_yaw_offset': FRAME_YAW_OFFSET}])
+    def _state_adapter(context, *a, **k):
+        # EV fusion resets EKF2 onto the Vicon (= gz world) frame, so adding the spawn origin
+        # would count it twice; height is absolute only when EV height is fused too.
+        vicon = _vicon(context)
+        return [Node(
+            package=PKG, executable='px4_state_adapter', name='px4_state_adapter',
+            output='screen',
+            parameters=[{'use_sim_time': True,
+                         'origin_north': 0.0 if vicon else SPAWN_NED[0],
+                         'origin_east': 0.0 if vicon else SPAWN_NED[1],
+                         'origin_down': 0.0 if _full_pose(context) else SPAWN_NED[2],
+                         'frame_yaw_offset': FRAME_YAW_OFFSET}])]
 
     def _sim_pilot(context, *a, **k):
         """venue:=indoor only. Nothing else can get the aircraft off the ground there."""
@@ -518,10 +536,12 @@ def generate_launch_description():
         """venue:=vicon only. vicon_sim stands in for the lab; the bridge is the flight article."""
         if not _vicon(context):
             return []
+        policy = LaunchConfiguration('aiding_policy').perform(context)
         return [
-            LogInfo(msg='venue: vicon - EKF2 aided by mocap whenever the loop does NOT have the '
-                        'aircraft (policy %s). The scored OFFBOARD window is unaided.'
-                        % LaunchConfiguration('aiding_policy').perform(context)),
+            LogInfo(msg=('venue: vicon - EKF2 fuses the Vicon pose (position + yaw) all flight.'
+                         if _full_pose(context) else
+                         'venue: vicon - EKF2 aided by mocap, policy %s; aiding may be cut while '
+                         'the loop has the aircraft.' % policy)),
             Node(package=SIM_PKG, executable='vicon_sim', name='vicon_sim', output='screen',
                  parameters=[{'use_sim_time': True,
                               'latency': ParameterValue(
@@ -640,10 +660,11 @@ def generate_launch_description():
                          value_type=float),
                      'tolerance': ParameterValue(
                          LaunchConfiguration('takeoff_tolerance'), value_type=float),
-                     # Indoors cs_gnss_pos never comes true. Yaw alignment is still required.
+                     # Indoors (vicon too) cs_gnss_pos never comes true. Yaw alignment is
+                     # still required.
                      'require_gnss': ParameterValue(
                          PythonExpression(["'", LaunchConfiguration('venue'),
-                                           "' != 'indoor'"]), value_type=bool)}])
+                                           "' == 'outdoor'"]), value_type=bool)}])
 
     # Same gate as the other plants: exits 0 once the aircraft is placed, the target is
     # placed and the markers have held a lock.
@@ -660,7 +681,7 @@ def generate_launch_description():
                              # the target is a printed plate and no such topic exists.
                              'require_target': ParameterValue(
                                  PythonExpression(["'", LaunchConfiguration('venue'),
-                                                   "' != 'indoor'"]), value_type=bool)}])
+                                                   "' == 'outdoor'"]), value_type=bool)}])
 
     # pos_ctrl publishing desired_attitude is what tips px4_offboard_bridge into OFFBOARD,
     # so starting it here is the handover. att_ctrl stays off: PX4 owns the inner loop.
@@ -749,7 +770,7 @@ def generate_launch_description():
         args + [OpaqueFunction(function=_check_plant),
                 OpaqueFunction(function=_normalise_takeoff_alt),
                 OpaqueFunction(function=_bag_at_launch)] + simulation
-        + [OpaqueFunction(function=_px4), state_adapter,
+        + [OpaqueFunction(function=_px4), OpaqueFunction(function=_state_adapter),
            # Before the pilot: EKF2 should be aided before anything tries to arm.
            OpaqueFunction(function=_vicon_nodes),
            OpaqueFunction(function=_sim_pilot),

@@ -166,21 +166,26 @@ SITL does not have, so losing marker lock would make the aircraft descend.
 
 ### Vicon external vision (`venue:=vicon`)
 
-`venue:=vicon` is the indoor venue plus mocap aiding EKF2. It adds `vicon_sim` (Gazebo truth
-republished as the receiver's `PoseStamped` — the gz world is ENU with FLU body axes, so it is
-passed through unrotated) and `vicon_px4_bridge` (the node that flies on hardware), and sets
-`EKF2_EV_CTRL=1` — **horizontal position only**. Height stays on the barometer so the cut cannot
-remove the height reference, and **yaw is deliberately not fused**: fusing it makes EKF2's heading
-datum whatever the Vicon frame says, which is how a 90° frame error once redefined the datum
-unchallenged and flew the aircraft to 58 m. With yaw off, EKF2's mag heading stays an independent
-witness, and the bridge's frame check compares against it before publishing anything.
-`EKF2_EV_CTRL=9` (adding yaw) is only safe once the Vicon datum has been measured against
-magnetic north on site; it is not the shipped configuration.
+`venue:=vicon` (the default) is the indoor venue plus mocap aiding EKF2. It adds `vicon_sim`
+(Gazebo truth republished as the receiver's `PoseStamped` — the gz world is ENU with FLU body
+axes, so it is passed through unrotated) and `vicon_px4_bridge` (the node that flies on hardware).
+The bridge publishes **pose only**; velocity goes out as NaN.
+
+Under the default `aiding_policy:=always` EKF2 fuses the **full pose for the whole flight**:
+`EKF2_EV_CTRL=11` (horizontal position, height, yaw) and `EKF2_HGT_REF=3` (vision). Yaw is safe
+to fuse because the bridge's one-shot frame check validates the datum against EKF2's mag heading
+before the first sample is published; a 90° frame error once flew the aircraft to 58 m when that
+check did not exist. `velocity_source` defaults to `off` here, so Vicon reaches EKF2 and nothing
+else: with `td` the aided position would enter `pos_ctrl` through `td_linear`'s velocity.
+
+Under the cut policies (`gated`, `oneshot`, `manual`) EKF2 fuses **horizontal position only**
+(`EKF2_EV_CTRL=1`, `EKF2_HGT_REF=0`): the cut must not remove the height reference at 1.2 m.
 
 | argument | default | what it does |
 | --- | --- | --- |
-| `aiding_policy` | `gated` | `gated` publishes only while the loop does **not** have the aircraft: the cut fires on `px4_offboard_bridge`'s `~/offboard_requested`, which leads PX4's `nav_state` change, and EKF2 drops EV fusion 400 ms later. The scored window is therefore unaided. `always` removes the gate — the A/B that asks whether the indoor blocker is the estimator. `oneshot`, `manual` also available. |
-| `vicon_latency` | `0.02` | End-to-end latency `vicon_sim` imitates, in seconds. Also sets `EKF2_EV_DELAY` (ms) so the two cannot disagree. |
+| `aiding_policy` | `always` | `always` fuses the full pose all flight — the flight configuration. `gated` publishes only while the loop does **not** have the aircraft: the cut fires on `px4_offboard_bridge`'s `~/offboard_requested`, which leads PX4's `nav_state` change, and EKF2 drops EV fusion 400 ms later, so the scored window is unaided (the E85 A/B). `oneshot`, `manual` also available. |
+| `vicon_latency` | `0.02` | End-to-end latency `vicon_sim` imitates, in seconds. |
+| `ev_delay` | `0.0` | `EKF2_EV_DELAY`, ms. EKF2 subtracts it from `timestamp_sample`, which the bridge already fills with the capture time, so a non-zero value double-counts the latency. |
 | `vicon_noise_sd` | `0.001` | Position noise, metres. |
 | `vicon_dropout_probability` | `0.0` | Per-tick chance of a `vicon_dropout_duration` occlusion, to exercise the bridge's staleness path. |
 
