@@ -227,7 +227,8 @@
            sensor NAMES below, so none of them may be renamed (GZBridge.cpp:228,240,304,317),
            and they must stay on a link called base_link. Under plant:=analytic and
            plant:=gazebo the matching gz-sim systems are not loaded and these go unused.
-           Noise parameters are PX4's own, from Tools/simulation/gz/models/x500_base. -->
+           White noise is PX4's x500_base (IIM-42653). The IMU has no turn-on bias (calibration removes
+           it, and gz decays any turn-on bias once dynamic_bias is set) and a slow in-run bias walk. -->
       <sensor name="air_pressure_sensor" type="air_pressure">
         <always_on>1</always_on>
         <update_rate>50</update_rate>
@@ -260,14 +261,14 @@
         <update_rate>250</update_rate>
         <imu>
           <angular_velocity>
-            <x><noise type="gaussian"><mean>0</mean><stddev>0.00018665</stddev><bias_mean>0</bias_mean><bias_stddev>0.038785</bias_stddev><dynamic_bias_stddev>0.00000389</dynamic_bias_stddev><dynamic_bias_correlation_time>318.6</dynamic_bias_correlation_time></noise></x>
-            <y><noise type="gaussian"><mean>0</mean><stddev>0.00018665</stddev><bias_mean>0</bias_mean><bias_stddev>0.038785</bias_stddev><dynamic_bias_stddev>0.00000389</dynamic_bias_stddev><dynamic_bias_correlation_time>318.6</dynamic_bias_correlation_time></noise></y>
-            <z><noise type="gaussian"><mean>0</mean><stddev>0.00018665</stddev><bias_mean>0</bias_mean><bias_stddev>0.038785</bias_stddev><dynamic_bias_stddev>0.00000389</dynamic_bias_stddev><dynamic_bias_correlation_time>318.6</dynamic_bias_correlation_time></noise></z>
+            <x><noise type="gaussian"><mean>0</mean><stddev>0.00087</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev><dynamic_bias_stddev>0.000071</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></x>
+            <y><noise type="gaussian"><mean>0</mean><stddev>0.00087</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev><dynamic_bias_stddev>0.000071</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></y>
+            <z><noise type="gaussian"><mean>0</mean><stddev>0.00087</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev><dynamic_bias_stddev>0.000071</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></z>
           </angular_velocity>
           <linear_acceleration>
-            <x><noise type="gaussian"><mean>0</mean><stddev>0.00186</stddev><bias_mean>0</bias_mean><bias_stddev>0.006</bias_stddev><dynamic_bias_stddev>0.000006</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></x>
-            <y><noise type="gaussian"><mean>0</mean><stddev>0.00186</stddev><bias_mean>0</bias_mean><bias_stddev>0.006</bias_stddev><dynamic_bias_stddev>0.000006</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></y>
-            <z><noise type="gaussian"><mean>0</mean><stddev>0.00186</stddev><bias_mean>0</bias_mean><bias_stddev>0.006</bias_stddev><dynamic_bias_stddev>0.000006</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></z>
+            <x><noise type="gaussian"><mean>0</mean><stddev>0.00637</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev><dynamic_bias_stddev>0.00082</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></x>
+            <y><noise type="gaussian"><mean>0</mean><stddev>0.00637</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev><dynamic_bias_stddev>0.00082</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></y>
+            <z><noise type="gaussian"><mean>0</mean><stddev>0.00637</stddev><bias_mean>0</bias_mean><bias_stddev>0</bias_stddev><dynamic_bias_stddev>0.00082</dynamic_bias_stddev><dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time></noise></z>
           </linear_acceleration>
         </imu>
       </sensor>
