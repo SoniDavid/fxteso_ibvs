@@ -93,4 +93,8 @@ install(TARGETS BodyWrenchSystem
 install(DIRECTORY launch config worlds
   DESTINATION share/${PROJECT_NAME})
 
+# HITL: gz sensors and rotors <-> a real PX4 FC over USB MAVLink (quad_px4 hitl_world.launch.py).
+install(PROGRAMS scripts/hitl_bridge.py
+  DESTINATION lib/${PROJECT_NAME})
+
 ament_package()

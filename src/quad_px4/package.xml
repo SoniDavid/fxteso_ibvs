@@ -28,6 +28,8 @@
   <!-- hardware.launch.py: the shared camera presets and the Pi camera driver. -->
   <exec_depend>quad_description</exec_depend>
   <exec_depend>quad_cam</exec_depend>
+  <!-- hitl_wait.py -->
+  <exec_depend>rclpy</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 
