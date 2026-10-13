@@ -229,6 +229,8 @@ def build(mode='sitl'):
         DeclareLaunchArgument('target_settle_offset', default_value='0.05'),
         # m/s per axis, scaled by wind_scale. Default points down the camera's tight axis.
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
+        # Seconds for the mean wind to ramp on; 0 steps it on in full.
+        DeclareLaunchArgument('wind_ramp', default_value='0.0'),
         # Hides target to exercise lock-loss path. 0 disables.
         DeclareLaunchArgument('blackout_at', default_value='0.0'),
         DeclareLaunchArgument('blackout_for', default_value='3.0'),
@@ -358,6 +360,7 @@ def build(mode='sitl'):
                  'target_accel': LaunchConfiguration('target_accel'),
                  'target_heading': LaunchConfiguration('target_heading'),
                  'wind_velocity': LaunchConfiguration('wind_velocity'),
+                 'wind_ramp': LaunchConfiguration('wind_ramp'),
                  'blackout_at': LaunchConfiguration('blackout_at'),
                  'blackout_for': LaunchConfiguration('blackout_for'),
                  'zD': LaunchConfiguration('zD')}),

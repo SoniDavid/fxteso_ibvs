@@ -38,7 +38,7 @@ DEPLOYMENT = {'zD': '1.2', 'target_scale': '0.5', 'target_profile': 'hover',
 
 # Forwarded verbatim to scenario.launch.py.
 SCENARIO_ARGS = ('disturbance', 'disturbance_seed', 'gust_scale', 'wind_scale', 'gust_tau',
-                 'turbulence_scale', 'wind_velocity', 'target_profile', 'target_speed',
+                 'turbulence_scale', 'wind_velocity', 'wind_ramp', 'target_profile', 'target_speed',
                  'target_yaw_rate', 'target_accel', 'target_heading', 'hold_target',
                  'target_release', 'blackout_at', 'blackout_for', 'zD')
 # Forwarded verbatim to estimation.launch.py.
@@ -156,6 +156,8 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
         arg('turbulence_scale', '1.0'),
         # m/s per axis, scaled by wind_scale. The default points down the camera's tight axis.
         arg('wind_velocity', '[0.8, 0.4, 0.0]'),
+        # Seconds for the mean wind to ramp on; 0 steps it on in full.
+        arg('wind_ramp', '0.0'),
 
         # Target trajectory; see quad_gz_sim/scenario.launch.py.
         arg('target_profile', 'hover',

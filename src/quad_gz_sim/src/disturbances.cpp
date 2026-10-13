@@ -11,6 +11,7 @@
 #include <iostream>
 #include <math.h>
 #include <vector>
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <sstream>
@@ -184,6 +185,8 @@ int main(int argc, char *argv[])
     const Eigen::Vector3d wind_velocity = wind_scale * toVec3(
         node->declare_parameter<vector<double>>("wind_velocity", {0.0, 0.0, 0.0}),
         "wind_velocity", log);
+    // Seconds for the mean wind to ramp from 0 to wind_velocity; 0 steps it on in full.
+    const double wind_ramp = node->declare_parameter<double>("wind_ramp", 0.0);
     const Eigen::Vector3d drag_cd_a = toVec3(
         node->declare_parameter<vector<double>>("drag_cd_a", {0.03, 0.03, 0.10}),
         "drag_cd_a", log);
@@ -273,6 +276,10 @@ int main(int argc, char *argv[])
                          "(thesis Eq. 2.25, per axis)",
                     wind_velocity(0), wind_velocity(1), wind_velocity(2),
                     drag_cd_a(0), drag_cd_a(1), drag_cd_a(2));
+        if (wind_ramp > 0.0)
+            RCLCPP_INFO(log, "  wind onset: mean ramps on over %.1f s", wind_ramp);
+        else
+            RCLCPP_INFO(log, "  wind onset: step");
         if (wind_turbulence.norm() > 0.0)
             RCLCPP_INFO(log, "  wind turbulence: sigma=[%.3f %.3f %.3f] m/s, tau=%.2f s, "
                              "seed=%d", wind_turbulence(0), wind_turbulence(1),
@@ -365,7 +372,8 @@ int main(int argc, char *argv[])
                     wind_turb(k) += -wind_turb(k) * decay
                                     + wind_turbulence(k) * diffusion * gaussian(rng);
             }
-            dist -= dragForce((wind_velocity + wind_turb) - quad_vel_IF.cast<double>(),
+            const double ramp = wind_ramp > 0.0 ? std::min(1.0, t / wind_ramp) : 1.0;
+            dist -= dragForce((ramp * wind_velocity + wind_turb) - quad_vel_IF.cast<double>(),
                               drag_cd_a);
         }
 
