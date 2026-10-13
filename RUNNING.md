@@ -6,6 +6,7 @@ in their launch file: `sitl.launch.py` or `hardware.launch.py` and in what feeds
 
 - [**RUNNING_SIM.md**](RUNNING_SIM.md) — dev desktop, PX4 SITL, disturbances, the observer alone.
 - [**RUNNING_HW.md**](RUNNING_HW.md) — the Raspberry Pi, the real UAV, bench testing.
+- [**RUNNING_HITL.md**](RUNNING_HITL.md) — the real Pixhawk flying the Gazebo plant: `hitl_world.launch.py` (Gazebo + the USB link to the FC) and `hitl_flight.launch.py` (the companion computer's stack).
 
 ## Setup the environment
 
