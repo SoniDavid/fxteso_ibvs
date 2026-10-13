@@ -146,7 +146,7 @@ exhaustive list of all arguments available in `sitl.launch.py`, which `hardware.
 - `hover_thrust:=<float>` — `MPC_THR_HOVER`; empty derives it from `prop`, `battery_cells` and `quad_mass`, and an explicit value must agree (default: empty).
 - `offboard_recovery:=<bool>` — Attempt offboard recovery on lock-loss (default: `false`).
 - `px4_dir:=<path>` — Path to the PX4 fork submodule.
-- `xrce_agent:=<path>` — Path to the MicroXRCEAgent binary.
+- `xrce_agent:=<path>` — Path to the MicroXRCEAgent binary (default: the `external/Micro-XRCE-DDS-Agent` submodule's build).
 
 ## Camera Presets
 

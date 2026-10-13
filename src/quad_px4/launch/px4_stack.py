@@ -194,8 +194,8 @@ def build(mode='sitl'):
         DeclareLaunchArgument(
             'xrce_agent',
             default_value=os.path.expanduser(
-                '~/Robotics/Micro-XRCE-DDS-Agent/build/MicroXRCEAgent'),
-            description='MicroXRCEAgent binary. It is not normally on PATH.'),
+                '~/Robotics/fxteso_ibvs/external/Micro-XRCE-DDS-Agent/build/MicroXRCEAgent'),
+            description='MicroXRCEAgent binary, built in its submodule. It is not on PATH.'),
         # Empty = derived from prop, battery_cells and quad_mass. A value given must agree with it.
         DeclareLaunchArgument('hover_thrust', default_value=''),
         # Feeds both the rendered <camera> block and image_features' intrinsics from one table.
@@ -449,7 +449,8 @@ def build(mode='sitl'):
                 '%s not found. Build PX4 first:  make -C %s px4_sitl_default' % (binary, px4_dir))
         if not os.path.isfile(agent):
             raise RuntimeError(
-                '%s not found. Pass xrce_agent:=<path to MicroXRCEAgent>.' % agent)
+                '%s not found. Build the external/Micro-XRCE-DDS-Agent submodule '
+                '(RUNNING_SIM.md) or pass xrce_agent:=<path to MicroXRCEAgent>.' % agent)
 
         # STANDALONE stops PX4 starting its own gz server; MODEL_NAME binds it to the F450
         # this world already contains. See PX4's init.d-posix/px4-rc.gzsim.
@@ -498,7 +499,8 @@ def build(mode='sitl'):
         agent = LaunchConfiguration('xrce_agent').perform(context)
         if not os.path.isfile(agent):
             raise RuntimeError(
-                '%s not found. Pass xrce_agent:=<path to MicroXRCEAgent>.' % agent)
+                '%s not found. Build the external/Micro-XRCE-DDS-Agent submodule '
+                '(RUNNING_SIM.md) or pass xrce_agent:=<path to MicroXRCEAgent>.' % agent)
         device = LaunchConfiguration('agent_device').perform(context)
         if not os.path.exists(device):
             raise RuntimeError('%s not found - is the TELEM2 USB-UART plugged in? Pass '
