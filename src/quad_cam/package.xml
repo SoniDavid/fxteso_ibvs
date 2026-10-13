@@ -3,14 +3,7 @@
 <package format="3">
   <name>quad_cam</name>
   <version>0.1.0</version>
-  <description>
-    Raspberry Pi Camera Module 3 Wide publisher for the IBVS stack. Publishes bgr8
-    frames on /quad/camera/image_raw, ISP-downscaled to the module3wide_2304 render
-    size so image_features runs unchanged from simulation. Backend is picamera2
-    (the RaspberryPi libcamera fork built to /usr/local); picamera2 has no rosdep
-    key and is satisfied out-of-band - see RUNNING.md. Carries no simulation
-    dependency, so it ships to the aircraft.
-  </description>
+  <description>Raspberry Pi Camera Module 3 Wide publisher (picamera2) and the Pi benchmark tools.</description>
   <maintainer email="losfansdepalomino@proton.me">SoniDavid</maintainer>
   <license>MIT</license>
 

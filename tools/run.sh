@@ -4,15 +4,8 @@
 #     tools/run.sh -- target_profile:=line target_speed:=0.7 venue:=indoor
 #     tools/run.sh -n 1 -- venue:=indoor          # one attempt, for measuring the race
 #
-# A Gazebo sensor stream (imu, magnetometer or barometer) intermittently fails to reach PX4's
-# gz_bridge: the subscribe succeeds, no message ever arrives, and arming is blocked for the whole
-# run. gz_bridge re-subscribes three times before giving up, so most of those heal in ~2 s and
-# never reach this script. This catches the rest.
-#
-# A successful flight returns on the first attempt, so this is the entry point for every run, not
-# just flaky ones. Anything that is not the sensor race - a bad launch argument, an unbuilt PX4,
-# a hover_thrust mismatch - exits immediately with the launch's own status.
-#
+# Retries only the gz sensor-attach race that gz_bridge's own re-subscribe did not heal; any
+# other failure exits with the launch's status.
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,10 +31,7 @@ if ! command -v ros2 >/dev/null 2>&1; then
     exit 1
 fi
 
-# Ctrl-C must stop the whole thing, not count as a failed attempt and relaunch. A terminal delivers
-# it to the whole foreground group, but anything signalling this script alone (a supervisor, kill
-# -INT) would leave the launch running and this script waiting on it forever - so forward it and
-# let the launch tear down before returning.
+# Ctrl-C stops everything rather than relaunching; forwarded, in case only this script got it.
 INTERRUPTED=0
 LAUNCH_PID=
 on_interrupt() {
@@ -78,10 +68,7 @@ for attempt in $(seq "$MAX_ATTEMPTS"); do
 
     ros2 launch quad_px4 sitl.launch.py "$@" > >(tee "$log") 2>&1 &
     LAUNCH_PID=$!
-    # Polled, not `wait`: traps run between commands, so this reacts to Ctrl-C promptly and still
-    # sees the launch all the way through its own shutdown. Once interrupted the wait is bounded -
-    # ros2 launch has been seen shut all its nodes down and then never exit itself, which would
-    # otherwise hang this script forever.
+    # Polled, not `wait`, so traps run promptly; bounded once interrupted, as ros2 launch can hang.
     grace=0
     while kill -0 "$LAUNCH_PID" 2>/dev/null; do
         sleep 1

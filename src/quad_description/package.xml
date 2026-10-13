@@ -3,11 +3,7 @@
 <package format="3">
   <name>quad_description</name>
   <version>0.1.0</version>
-  <description>
-    SDF models and meshes: the F450 airframe with its onboard camera, and the four-marker
-    ArUco target. Assets only, no nodes. Consumers resolve model:// URIs by putting this
-    package's share/models on GZ_SIM_RESOURCE_PATH.
-  </description>
+  <description>SDF models and meshes (F450 with camera, ArUco target) and the camera preset table.</description>
   <maintainer email="losfansdepalomino@proton.me">SoniDavid</maintainer>
   <license>MIT</license>
 

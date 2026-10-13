@@ -9,24 +9,8 @@
 
     python3 camera_module3_wide_test.py --doctor            # environment preflight only
 
-Standalone on purpose - scp it to the Pi and run it. Nothing here imports ROS or this
-workspace, and the only non-stdlib dependency is picamera2.
-
-On Raspberry Pi OS picamera2 is preinstalled and the tests just run. On Ubuntu 24.04 they
-cannot: noble ships upstream libcamera 0.2.0, whose libcamera-ipa package contains
-ipa_rpi_vc4.so and no ipa_rpi_pisp.so, and the Pi 5's ISP is PiSP. There is no
-python3-picamera2 and no rpicam-apps in the archive either. So on Ubuntu the camera stack
-has to be built from Raspberry Pi's libcamera fork first - run --doctor, which reports
-exactly which link of that chain is missing, and tools/setup_pi5_ubuntu_camera.sh, which
-builds it.
-
-The thresholds are not invented. They are src/quad_description/config/cameras.yaml's
-module3wide_2304 preset, which quad_px4/launch/hardware.launch.py flies by default. That
-preset exists because 2304x1296 is the widest Module 3 mode that clears the 50 Hz
-image_features/fixed_eso loop - and if the hardware misses it, the loop just repeats frames
-and nothing anywhere reports that. Gazebo renders at a free 50 fps, so the sim cannot catch
-it either. This script is the only place the real number gets checked.
-
+Standalone (stdlib + picamera2) so it can be scp'd to the Pi. Thresholds mirror cameras.yaml's
+module3wide_2304 preset. On Ubuntu build the camera stack first: tools/setup_pi5_ubuntu_camera.sh.
 Exit status is 0 only if every check passed.
 """
 import argparse
@@ -55,9 +39,7 @@ except ImportError as exc:
     Picamera2 = Preview = H264Encoder = FfmpegOutput = FileOutput = libcontrols = None
 
 
-# --- the spec, mirrored from src/quad_description/config/cameras.yaml ------------------------
-# Kept as literals rather than read from the YAML so the file stays scp-able on its own.
-# If cameras.yaml changes, change these too - they are the whole point of the script.
+# --- the spec: literals mirrored from cameras.yaml, so the file stays standalone ---------------
 
 LOOP_HZ = 50.0            # image_features and fixed_eso both run here (camera_presets.py:35)
 MODEL = 'imx708_wide'     # what separates the Wide from the standard Module 3 (imx708)
@@ -77,11 +59,7 @@ TESTS = ('detect', 'modes', 'fov', 'rate', 'still', 'focus', 'video', 'metadata'
 # --- reporting --------------------------------------------------------------------------
 
 class Report:
-    """Every assertion, printed as it happens and again as a table at the end.
-
-    A check prints what was measured next to what was required and where the requirement
-    came from, because a bare FAIL on a bench test tells you nothing you can act on.
-    """
+    """Every assertion: measured vs required and its source, printed live and as a final table."""
 
     def __init__(self):
         self.checks = []
@@ -150,17 +128,8 @@ def find_mode(modes, size):
 
 
 def video_config(cam, spec, mode):
-    """A video configuration with the SENSOR MODE pinned, not merely the output size.
-
-    Asking for a 2304x1296 main stream is not the same as asking the sensor for its
-    2304x1296 readout: libcamera is free to serve it by scaling a different mode, which
-    changes both the field of view and the achievable rate. The `sensor=` argument is the
-    explicit way to say which readout, and predates nothing older than picamera2 0.3.18 -
-    hence the raw= fallback.
-
-    FrameRate collapses FrameDurationLimits to a fixed budget, which also caps how far
-    auto-exposure may stretch a frame. Without it a dim room silently halves the rate.
-    """
+    """A video configuration with the sensor mode pinned (sensor=, raw= before picamera2 0.3.18).
+    FrameRate also caps auto-exposure, or a dim room halves the rate."""
     main = {'size': tuple(spec['size']), 'format': 'RGB888'}
     ctrls = {'FrameRate': spec['fps']}
     try:
@@ -185,11 +154,7 @@ def restart(cam, config):
 
 
 def start_preview(cam):
-    """QTGL on a desktop session, DRM on the bare console, nothing over plain ssh.
-
-    A preview must never be the reason the suite dies - it is an operator convenience, and
-    the same script has to run headless from an ssh checklist.
-    """
+    """QTGL on a desktop session, DRM on the bare console, nothing over ssh; never fatal."""
     if os.environ.get('WAYLAND_DISPLAY') or os.environ.get('DISPLAY'):
         order = [('QTGL', Preview.QTGL), ('QT', Preview.QT)]
     else:
@@ -214,9 +179,7 @@ def vcgencmd(arg):
         return 'unavailable (%s)' % exc
 
 
-# --- environment preflight ---------------------------------------------------------------
-# Everything here is read-only and works with picamera2 absent, because on Ubuntu that is
-# the normal starting state and "ImportError" on its own tells you nothing actionable.
+# --- environment preflight: read-only, and works with picamera2 absent ----------------------
 
 def _read(path):
     try:
@@ -235,13 +198,7 @@ def _run(cmd):
 
 
 def _ipa_hits(pattern):
-    """IPA modules matching `pattern`, wherever this machine keeps them.
-
-    The nesting is not stable across versions: libcamera 0.7 installs to
-    <libdir>/libcamera/ipa/, while Ubuntu's packaged 0.2 puts them directly in
-    <libdir>/libcamera/. Searching only one level reports a perfectly good build as broken,
-    which is exactly what this function got wrong before.
-    """
+    """IPA modules matching `pattern`, in <libdir>/libcamera/ipa/ (0.7) or <libdir>/libcamera/ (0.2)."""
     bases = []
     for root in ('/usr/lib', '/usr/local/lib'):
         bases += glob.glob(os.path.join(root, '*', 'libcamera'))
@@ -256,9 +213,7 @@ def _ipa_hits(pattern):
     return sorted(set(hits))
 
 
-# The only directories meson or apt ever install the bindings into. Enumerated rather than
-# walked: a recursive glob over /usr/lib takes minutes, and --doctor is the first thing anyone
-# runs on a broken machine.
+# Where meson or apt install the bindings; enumerated, as a recursive glob takes minutes.
 _BINDING_GLOBS = (
     '/usr/local/lib/python3/dist-packages/libcamera/_libcamera*.so',
     '/usr/local/lib/python3.*/dist-packages/libcamera/_libcamera*.so',
@@ -277,11 +232,7 @@ def _find_bindings():
 
 
 def doctor():
-    """Report which link of the camera chain is missing, in the order it breaks.
-
-    Returns the number of hard failures. Written for Ubuntu, harmless on Pi OS - on Pi OS
-    every line simply says OK.
-    """
+    """Report which link of the camera chain is missing, in order; returns the hard failures."""
     hard = 0
 
     def line(ok, label, detail, fix='', fatal=True):
@@ -341,9 +292,7 @@ def doctor():
          'No /dev/media* means the CFE/PiSP drivers did not load.')
     line(True, 'video devices', ', '.join(video) or 'none', fatal=False)
 
-    # libpisp is checked BEFORE the IPA because it is the usual reason the IPA is absent:
-    # libcamera resolves it through pkg-config and, when it is missing, quietly configures
-    # the pisp pipeline out instead of failing the build.
+    # libpisp first: without it libcamera quietly builds no pisp pipeline, hence no IPA.
     pisp_lib = (glob.glob('/usr/local/lib/*/libpisp.so*') + glob.glob('/usr/lib/*/libpisp.so*')
                 + glob.glob('/usr/local/lib/libpisp.so*'))
     line(bool(pisp_lib), 'libpisp', pisp_lib[0] if pisp_lib else 'not installed',
@@ -398,9 +347,7 @@ def doctor():
     except ImportError as exc:
         found = _find_bindings()
         if found:
-            # Installed but unreachable. meson's prefix-relative install directory is often
-            # /usr/local/lib/python3/dist-packages - note "python3", no minor version -
-            # and that exact path is on nobody's sys.path.
+            # Installed but unreachable: meson's .../python3/dist-packages is on nobody's sys.path.
             pkg = os.path.dirname(os.path.dirname(found[0]))
             import site
             targets = [d for d in (site.getsitepackages() or []) if 'dist-packages' in d]
@@ -419,10 +366,7 @@ def doctor():
                  'bindings were never built. libcamera needs -Dpycamera=enabled and\n'
                  'pybind11-dev present at configure time.')
 
-    # Checked before picamera2 because it is a cause, not a symptom: picamera2's
-    # previews/__init__.py does an unconditional `from .drm_preview import DrmPreview`, and
-    # that imports pykms. Without it `import picamera2` fails even headless with no DISPLAY,
-    # and the resulting "No module named 'pykms'" looks like a preview problem when it is not.
+    # Before picamera2: its previews import pykms unconditionally, so without it every import fails.
     import importlib.util as _ilu
     has_pykms = _ilu.find_spec('pykms') is not None
     line(has_pykms, 'pykms (kmsxx)', 'importable' if has_pykms else 'not importable',
@@ -443,9 +387,7 @@ def doctor():
              '         extension whose build fails without those headers. And if the error\n'
              '         above says pykms, the pip install already worked: see that line.')
 
-    # Advisory. start_preview() falls back to headless on its own, so this only sets
-    # expectations for --preview rather than gating anything.
-    # find_spec, not import: loading Qt costs a second and this only needs to know it exists.
+    # Advisory only; find_spec, not import, as loading Qt costs a second.
     import importlib.util
     has_qt = importlib.util.find_spec('PyQt5') is not None
     kmspp = bool(glob.glob('/usr/lib/python3*/dist-packages/pykms*')
@@ -564,12 +506,8 @@ def t_fov(cam, args, out, rep):
 
 
 def measure_rate(cam, spec, mode, frames, rep):
-    """Two cadences for one mode: what the sensor did, and what a subscriber would see.
-
-    capture_request/release is deliberately not capture_array: at 2304x1296 RGB a copy is
-    ~9 MB, and timing the copy instead of the pipeline would measure the wrong thing. The
-    copy cost is sampled separately so it is still visible.
-    """
+    """Two cadences for one mode: the sensor's and a subscriber's. capture_request, not
+    capture_array, so the ~9 MB copy is timed separately from the pipeline."""
     restart(cam, video_config(cam, spec, mode))
     time.sleep(1.5)      # let AE/AWB settle; the first frames are not representative
 
@@ -688,12 +626,7 @@ def t_still(cam, args, out, rep):
 
 
 def t_focus(cam, args, out, rep):
-    """Autofocus, then a manual sweep across the lens' real range.
-
-    The Wide module's near limit (~5 cm) is closer than the standard Module 3's (~10 cm),
-    and it shows up as a larger maximum LensPosition in dioptres. Read the range rather
-    than hardcoding it - it is the honest way to ask the lens what it can do.
-    """
+    """Autofocus, then a manual sweep across the LensPosition range the lens reports."""
     modes = cam.sensor_modes
     mode = find_mode(modes, PRIMARY['size'])
     spec = PRIMARY if mode else FALLBACK
@@ -757,12 +690,7 @@ def t_focus(cam, args, out, rep):
 
 
 def t_video(cam, args, out, rep):
-    """A short clip. Sanity only - deliberately NOT a performance gate.
-
-    The Pi 5 has no hardware H.264 encoder; picamera2 encodes in software here. The IBVS
-    path never encodes anything - image_features consumes raw frames - so a slow encode
-    says nothing about whether the aircraft can fly. The rate subtest is the one that does.
-    """
+    """A short clip, sanity only: the Pi 5 encodes in software and the IBVS path never encodes."""
     try:
         cfg = cam.create_video_configuration(main={'size': (1920, 1080), 'format': 'YUV420'},
                                              controls={'FrameRate': 30.0}, buffer_count=6)
@@ -833,11 +761,7 @@ SUBTESTS = {'detect': t_detect, 'modes': t_modes, 'fov': t_fov, 'rate': t_rate,
 # --- calibration capture ----------------------------------------------------------------
 
 def run_calib(cam, args, out):
-    """Collect checkerboard stills at the flown mode. Capture only - no solving here.
-
-    They must come from 2304x1296 with the full crop, because that is the geometry
-    cameras.yaml:73 describes; coefficients fitted to a different mode do not transfer.
-    """
+    """Checkerboard stills at the flown 2304x1296 full-crop mode; capture only, no solving."""
     modes = cam.sensor_modes
     mode = find_mode(modes, PRIMARY['size'])
     if mode is None:

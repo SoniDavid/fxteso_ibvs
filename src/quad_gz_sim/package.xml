@@ -3,11 +3,7 @@
 <package format="3">
   <name>quad_gz_sim</name>
   <version>0.1.0</version>
-  <description>
-    Simulation only: the world, the ros_gz bridge, both plant backends, the scenario
-    generators, and the gz-sim plugin that applies the wrench inside the physics step.
-    Nothing here exists on the real aircraft.
-  </description>
+  <description>Simulation only: the world, the ros_gz bridge, the plant backends and the scenario generators.</description>
   <maintainer email="losfansdepalomino@proton.me">SoniDavid</maintainer>
   <license>MIT</license>
 
@@ -25,9 +21,7 @@
   <depend>cv_bridge</depend>
   <depend>libopencv-dev</depend>
 
-  <!-- gz_pose_broadcaster links gz-transport/gz-msgs directly; BodyWrenchSystem also
-       needs gz-sim/gz-plugin. On Jazzy these come from ros_gz's vendor packages,
-       not from a system Gazebo install. -->
+  <!-- gz libraries from ros_gz's vendor packages, not a system Gazebo. -->
   <depend>gz_transport_vendor</depend>
   <depend>gz_msgs_vendor</depend>
   <depend>gz_sim_vendor</depend>

@@ -1,7 +1,6 @@
 <?xml version="1.0" ?>
-<!-- Written for plant:=gazebo. gz_sim.launch.py derives the analytic and px4 variants by
-     keeping only the matching ONLY:<plants> blocks, and zeroes gravity for analytic.
-     Plugin ORDER below is load-bearing. -->
+<!-- Written for plant:=gazebo; gz_sim.launch.py derives the other plants' variants from the
+     ONLY:<plants> blocks. Plugin ORDER is load-bearing. -->
 <sdf version="1.9">
   <world name="ibvs">
 
@@ -18,11 +17,8 @@
          away under plant:=px4; inert for the other plants. -->
     <atmosphere type="adiabatic"/>
 
-    <!-- NavSat needs a datum or it produces nothing and EKF2 never gets a fix. Only
-         plant:=px4 reads any of this. ENU puts North on Gazebo +y while the workspace calls
-         +x North; gz-sim 8 rejects the NWU that would have matched, so px4_state_adapter's
-         frame_yaw_offset reconciles it - change this tag and that parameter too.
-         The field has zero declination, matching EKF2_DECL_TYPE 0. -->
+    <!-- plant:=px4: NavSat needs a datum. ENU puts North on +y; px4_state_adapter's frame_yaw_offset
+         reconciles it, so change both together. Zero declination. -->
     <magnetic_field>0 2.3769e-05 -4.2e-05</magnetic_field>
     <spherical_coordinates>
       <surface_model>EARTH_WGS84</surface_model>
@@ -42,9 +38,7 @@
     </plugin>
 
     <!-- ONLY:px4 BEGIN -->
-    <!-- PX4's own sensor systems, listed here because gz-sim ignores its server.config
-         entirely once a world declares any <plugin> of its own - and this one does, above.
-         Omit them and gz_bridge subscribes to topics that never appear, silently. -->
+    <!-- PX4's sensor systems: a world with its own <plugin>s ignores server.config. -->
     <plugin filename="gz-sim-imu-system"           name="gz::sim::systems::Imu"/>
     <plugin filename="gz-sim-air-pressure-system"  name="gz::sim::systems::AirPressure"/>
     <plugin filename="gz-sim-magnetometer-system"  name="gz::sim::systems::Magnetometer"/>
@@ -69,9 +63,7 @@
     <!-- ONLY END -->
 
     <!-- ONLY:px4 BEGIN -->
-    <!-- Disturbance duty only: PX4 owns thrust and torque, so initial_thrust is 0 and
-         bridge_px4.yaml omits /quad_thrust and /quad_torques. /F450/disturbance still
-         applies, so the disturbance experiment is identical across all three plants. -->
+    <!-- Disturbances only: PX4 owns thrust and torque under plant:=px4. -->
     <plugin filename="BodyWrenchSystem" name="quad_gz_sim::BodyWrench">
       <model_name>F450</model_name>
       <link_name>base_link</link_name>
@@ -256,9 +248,7 @@
     <!-- ONLY END -->
 
     <!-- ONLY:px4 BEGIN -->
-    <!-- On the ground: EKF2 must initialise stationary and the land detector must see a
-         landed vehicle before PX4 will arm. The instance name stays F450 - BodyWrench and
-         PX4_GZ_MODEL_NAME both address it by that. -->
+    <!-- On the ground, or PX4 will not arm. BodyWrench and PX4_GZ_MODEL_NAME address it as F450. -->
     <include>
       <uri>model://F450_px4</uri>
       <name>F450</name>

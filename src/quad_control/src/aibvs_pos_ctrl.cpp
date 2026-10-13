@@ -115,9 +115,7 @@ Eigen::Matrix3f Rtp(float roll, float pitch)
 
 float sign(float var)
 {
-    // Initialised, not left to fall through: NaN compares false against >0, <0 and ==0, so
-    // an uninitialised `result` was returned for it - undefined behaviour that surfaced as
-    // an arbitrary finite kick into the integrators rather than a detectable NaN.
+    // Initialised: NaN fails every comparison below.
     float result = 0;
     if(var>0)
     {
@@ -142,9 +140,7 @@ void ibvsDistCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr dist)
     ibvs_dist(3) = dist->w;
 }
 
-// image_features publishes the (0,0,1,0) no-lock sentinel, which is byte-identical to
-// imgFeat_des - so on loss of lock the servo error is exactly zero and the controller reads
-// "converged" while the aircraft coasts. This flag is the only way to tell the two apart.
+// The no-lock sentinel equals imgFeat_des, so only this flag tells loss of lock from convergence.
 bool imgFeat_valid = false;
 
 void imFeatValidCallback(const std_msgs::msg::Bool::ConstSharedPtr v)
@@ -259,16 +255,8 @@ int main(int argc, char *argv[])
 	// default is the simulated F450; a real one must be weighed as flown, battery included.
 	quad_mass = node->declare_parameter<double>("quad_mass", quad_mass);
 	thrust = quad_mass * gravity;
-	// Which velocity feeds the ONE term that consumes it - the Coriolis m*(r x v) below.
-	// td: lin_vel_BF_estimates, td_linear's derivative of EKF2 position. Unaided indoors that
-	//     position dead-reckons to km, so this reads 66x true speed (e83.md). The default,
-	//     bit-identical to every run flown so far.
-	// ekf2: quad_velocity_BF, EKF2's velocity STATE - one integration order less corrupted.
-	// vision: invert the Omega interaction matrix on the observer's feature rates. No EKF2
-	//     position or velocity in the path (attitude is still EKF2's, via Rtp).
-	// off: zero it. The term is worth 0.007 deg of true tilt in hover and 0.45-10 deg of
-	//     spurious; zeroing the vector makes skew(yawVel_e3)*v vanish without touching the
-	//     control line itself. DROPS a thesis term - a deviation, not a default.
+	// Velocity in the Coriolis m*(r x v) term: td (derivative of EKF2 position), ekf2 (its velocity
+	// state), vision (from the feature rates), or off (zero; drops a thesis term).
 	velocity_source = node->declare_parameter<std::string>("velocity_source", velocity_source);
 	if (velocity_source != "td" && velocity_source != "ekf2" &&
 	    velocity_source != "vision" && velocity_source != "off")
@@ -278,9 +266,7 @@ int main(int argc, char *argv[])
 		             velocity_source.c_str());
 		return 1;
 	}
-	// Off by default: this printed a 4-vector every cycle at 50 Hz, and the WARNs that matter -
-	// the lock loss, the handover, PX4 failing safe - scrolled past unreadably behind it.
-	// /error_visual_servoing carries the same numbers into the bag.
+	// Prints the error every cycle; /error_visual_servoing has the same numbers.
 	const bool print_error = node->declare_parameter<bool>("print_error", false);
 RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg, velocity_source = %s",
             zD, quad_mass, velocity_source.c_str());
@@ -431,9 +417,7 @@ imgFeat_des << 0,0,1,0;
     while(rclcpp::ok())
     {
         publishInputAge();
-        // No measurement -> no control. The no-lock sentinel equals imgFeat_des, so servoing on
-        // it reads as converged and the aircraft coasts. Hold every integrator and drop the
-        // stream instead. The control law itself is untouched; this only gates whether it runs.
+        // No measurement -> no control: hold the integrators and drop the stream. Gates the law only.
         if (!imgFeat_valid)
         {
             if (was_valid)
@@ -455,19 +439,15 @@ imgFeat_des << 0,0,1,0;
 ////////////////////// FOR COMPARISON ONLY//////////////////////////////////////////////////
         imgFeatLinear << imgFeat(0),imgFeat(1),imgFeat(2); 
         tgt_vel_VF = (Ryaw(attitudeEstimates(2)).transpose()) * tgt_vel;
-        // The single point where EKF2 reaches the control output; see velocity_source above.
-        // Every arm ends in quad_vel_VF_real, so line "quad_linear_forces_VF = ..." below is
-        // untouched - the control law itself is the object of study.
+        // The single point where EKF2 can reach the control output; see velocity_source above.
         if (velocity_source == "ekf2")
             quad_vel_VF_real = Rtp(attitudeEstimates(0),attitudeEstimates(1)) * quad_vel_BF_ekf2;
         else if (velocity_source == "off")
             quad_vel_VF_real << 0,0,0;
         else if (velocity_source == "vision")
         {
-            // Omega (built below for telemetry) is upper-triangular with diagonal
-            // (-1/zD,-1/zD,-1/zD,-1), so err_dot = Omega*v + kappa inverts in closed form.
-            // Solved against the rows as written: w_z = tgt_YR - xi_dot_psi, then
-            // v = -zD*xi_dot (+/- the yaw cross terms) + tgt_vel_VF.
+            // Omega is upper-triangular (diag -1/zD,-1/zD,-1/zD,-1): invert err_dot = Omega*v + kappa
+            // in closed form, w_z first.
             const float w_z = tgt_YR - imgFeat_dot_est(3);
             quad_vel_VF_real(0) = -zD*imgFeat_dot_est(0) + zD*imgFeat(1)*w_z + tgt_vel_VF(0);
             quad_vel_VF_real(1) = -zD*imgFeat_dot_est(1) - zD*imgFeat(0)*w_z + tgt_vel_VF(1);

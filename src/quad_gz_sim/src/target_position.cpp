@@ -46,9 +46,7 @@ void quadPosCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr quadPos)
 }
 
 
-// ---------------------------------------------------------------------------------------
-// Target velocity profiles. Each writes the globals xp, yp, yawRate (and pos_z, where it
-// moves); the caller integrates them into the pose. Selected by the "profile" parameter.
+// --- target velocity profiles: each writes xp, yp, yawRate (and pos_z); the caller integrates ---
 
 // The thesis trajectory, unchanged and the default: a 0.1 -> 0.9 m/s ramp, a 94 s circle at
 // 1 m/s with 0.1 rad/s of yaw and a vertical bump, then a decelerating return.
@@ -212,15 +210,8 @@ static void hoverProfile()
 	yawRate = 0;
 }
 
-// Straight line ramped at `accel` to `speed` and then held, along a heading measured from +x.
-// Sweeping `speed` to the point of lock loss measures the b1 of Assumption 7.
-//
-// `heading` exists because the camera's footprint is NOT square: at zD 1.2 module3wide_2304
-// covers 2.96 m along the image's long axis and 1.67 m along its short one, and world +x maps to
-// the SHORT one - so a target travelling along +x runs down the tightest direction the sensor
-// has (0.62 m of slack against 1.31 m). heading=90 puts the travel on the wide axis instead,
-// which is the simulation equivalent of mounting the camera rotated 90 degrees. Default 0
-// reproduces every run flown before 2026-09-05.
+// Straight line ramped at `accel` to `speed`, along `heading` from +x. World +x is the camera's
+// narrow axis; heading 90 travels along the wide one.
 static void lineProfile(float speed, float accel, float heading)
 {
 	const float t_ramp = (accel > 0) ? speed / accel : 0;
@@ -278,28 +269,22 @@ int main(int argc, char** argv)
 	// ~25 s, by which time the target has driven out of frame. Default false keeps old timing.
 	const bool hold_until_control =
 		node->declare_parameter<bool>("hold_until_control", false);
-	// The lab's procedure: push the cart only once the aircraft holds station over it. With
-	// this set the target also waits, after control starts, until the features have sat within
-	// settle_offset (qx, qy) and settle_depth (qz - 1) for settle_time, or settle_timeout passes.
+	// Release once the features sit within settle_offset/settle_depth for settle_time (or timeout).
 	const bool release_when_settled =
 		node->declare_parameter<bool>("release_when_settled", false);
-	// Loose on purpose: at hover qz settles ~5% off 1, and unaided the standing offset is ~0.15
-	// (E96 smoke), so tighter bounds only ever release on the timeout.
+	// Loose: at hover qz settles ~5% off 1, so tight bounds would only release on the timeout.
 	const float settle_offset = node->declare_parameter<double>("settle_offset", 0.2);
 	const float settle_depth = node->declare_parameter<double>("settle_depth", 0.1);
 	const float settle_time = node->declare_parameter<double>("settle_time", 5.0);
 	const float settle_min = node->declare_parameter<double>("settle_min", 10.0);
 	const float settle_timeout = node->declare_parameter<double>("settle_timeout", 30.0);
 
-	// Trajectory selection. "thesis" is the default and is the trajectory every recorded bag
-	// was flown on; the others exist to sweep the Assumption 7 bounds and are inert until asked
-	// for. speed/yaw_rate/accel are ignored by "thesis" and "hover".
+	// Trajectory; speed/yaw_rate/accel are ignored by "thesis" and "hover".
 	const std::string profile = node->declare_parameter<std::string>("profile", "thesis");
 	const float speed = node->declare_parameter<double>("speed", 1.0);
 	const float yaw_rate = node->declare_parameter<double>("yaw_rate", 0.1);
 	const float accel = node->declare_parameter<double>("accel", 0.5);
-	// Direction of travel for `line`, degrees from +x. 0 is the short (tight) image axis and is
-	// what every pre-2026-09-05 run flew; 90 is the wide axis. See lineProfile.
+	// Direction of travel for `line`, degrees from +x: 0 is the narrow image axis, 90 the wide one.
 	const float heading =
 		node->declare_parameter<double>("heading", 0.0) * static_cast<float>(M_PI) / 180.0f;
 	// Hide the target for a window to exercise the lock-loss path. Needs > 1.3 s (bridge

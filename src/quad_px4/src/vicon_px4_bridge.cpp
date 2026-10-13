@@ -1,7 +1,5 @@
-// Vicon -> EKF2. A mocap PoseStamped becomes VehicleOdometry on /fmu/in/vehicle_visual_odometry,
-// the mirror of px4_state_adapter. Published only while the loop does NOT have the aircraft:
-// under aiding_policy:=gated the stream stops at the handover, so no ground truth reaches the
-// estimator during the window the run is scored on.
+// Vicon -> EKF2: mocap PoseStamped as VehicleOdometry on /fmu/in/vehicle_visual_odometry.
+// aiding_policy decides whether the stream stops while the loop has the aircraft.
 #include <rclcpp/rclcpp.hpp>
 #include "quad_px4/px4_topic.hpp"
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -43,12 +41,8 @@ int main(int argc, char **argv)
 	// reads to EKF2 as a perfect measurement and fights the IMU.
 	const double max_pose_age = node->declare_parameter<double>("max_pose_age", 0.15);
 
-	// DIAGNOSTIC, default off. An Odometry whose BODY-frame twist is published to EKF2 as EV
-	// velocity with position left NaN, so EKF2 gets a velocity reference and NO position one -
-	// which is what an optical flow sensor supplies. Exists to answer, before any flow hardware
-	// is bought, whether velocity alone bounds EKF2's tilt error: every result showing aiding
-	// works (E85, E88) used mocap POSITION. Pair with EKF2_EV_CTRL=4 (bit 2, 3D velocity).
-	// Ground truth in, so it is contaminated by construction and is never a GPS-denied result.
+	// DIAGNOSTIC: body-frame twist as EV velocity with NaN position, as optical flow would give.
+	// Pair with EKF2_EV_CTRL=4. Ground truth in, so never a GPS-denied result.
 	const std::string velocity_topic =
 		node->declare_parameter<std::string>("velocity_topic", "");
 	const double velocity_sd = node->declare_parameter<double>("velocity_sd", 0.05);
@@ -83,9 +77,8 @@ int main(int argc, char **argv)
 	// withhold aiding for the rest of the flight, so a stale status reads as "not OFFBOARD".
 	const double status_timeout = node->declare_parameter<double>("status_timeout", 1.0);
 
-	// A wrong vicon_frame/body_frame/yaw_offset is SILENT: a rotated but self-consistent frame
-	// makes EKF2 re-anchor to it and report ~zero innovation. The only witness is EKF2's own
-	// attitude, which is why EV yaw is deliberately not fused (EKF2_EV_CTRL=1).
+	// A wrong frame is innovation-silent (EKF2 re-anchors to it), so check it against EKF2's own
+	// heading before the first sample.
 	const bool frame_check = node->declare_parameter<bool>("frame_check", true);
 	// 30 deg, not 15: the smallest gross frame error is 90 deg, while EKF2's mag heading carries a
 	// real bias of a few degrees. This separates the two with margin at both ends.
@@ -142,9 +135,7 @@ int main(int argc, char **argv)
 	// One rotation from the Vicon world to the workspace NED, so position and attitude cannot disagree.
 	const tf2::Quaternion qToNed = qYaw * qWorld;
 
-	// The system clock, never node->now(): under use_sim_time the node clock is Gazebo's, and PX4
-	// translates an inbound stamp against the uXRCE-DDS agent host's OS clock. sim_pilot.cpp records
-	// what a sim-time stamp costs - the sample looks ~56 years old and is discarded in silence.
+	// The system clock, never node->now(): PX4 maps inbound stamps from the agent host's OS clock.
 	rclcpp::Clock sys_clock(RCL_SYSTEM_TIME);
 	auto sysNowUs = [&]() { return sys_clock.now().nanoseconds() / 1000; };
 
@@ -368,9 +359,7 @@ int main(int argc, char **argv)
 			if (q.w() < 0.0)
 				q = tf2::Quaternion(-q.x(), -q.y(), -q.z(), -q.w());
 
-			// --- frame guard ---------------------------------------------------------------
-			// Checked once, then latched: an in-flight heading drift must never cut aiding out
-			// from under the aircraft. Until it passes, nothing is published.
+			// --- frame guard: checked once, then latched; nothing is published until it passes ---
 			if (!frame_validated)
 			{
 				if (!have_ekf_att || !yaw_aligned ||

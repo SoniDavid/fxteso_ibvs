@@ -4,8 +4,7 @@ knows which one ran.
   plant:=analytic  uav_dynamics integrates the aircraft; Gazebo is a camera only.
   plant:=gazebo    DART integrates it; gz_state_adapter converts the odometry to NED.
 
-plant:=px4 is not served from here: PX4 SITL needs its own process and agent alongside the
-state adapter, so quad_px4/launch/sitl.launch.py replaces this file wholesale.
+plant:=px4 is quad_px4's sitl.launch.py instead.
 """
 import importlib.util
 import os

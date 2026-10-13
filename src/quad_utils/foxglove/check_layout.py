@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
-"""Check fxteso_ibvs.json against the topics the stack actually publishes.
-
-A message path pointing at something that does not exist draws nothing rather than
-erroring, which looks identical to a genuinely flat signal. Run after editing the layout:
+"""Check fxteso_ibvs.json against the topics the sources publish; a bad path draws nothing.
 
     python3 src/quad_utils/foxglove/check_layout.py
-
-Source-tree only: it reads the .cpp files across every sibling package, not the install.
 """
 import glob
 import json
@@ -42,11 +37,7 @@ def publishers():
         src = re.sub(r'//[^\n]*', '', open(path).read())
         for m in re.finditer(r'create_publisher<([^>]+)>\(\s*"([^"]+)"', src):
             found['/' + m.group(2).lstrip('/')] = m.group(1)
-    # Not matched by the regex above: image_raw and camera_info are bridged in from Gazebo
-    # (config/bridge.yaml), and camera_distort publishes to a topic held in a parameter rather
-    # than a string literal. image_distorted exists only for presets with non-zero distortion
-    # (gz_sim.launch.py _distort), which is what image_features is remapped onto - the Vision
-    # tab follows it, so on an undistorted preset that one panel is deliberately blank.
+    # Bridged from Gazebo or held in a parameter, so the regex above misses them.
     found['/quad/camera/image_raw'] = 'sensor_msgs::msg::Image'
     found['/quad/camera/image_distorted'] = 'sensor_msgs::msg::Image'
     found['/quad/camera/camera_info'] = 'sensor_msgs::msg::CameraInfo'
@@ -120,9 +111,7 @@ def check(path, pubs):
     # Every panel in the mosaic is configured, and every configured panel is placed.
     refs = set()
 
-    # The root is a mosaic, not necessarily a single Tab panel: anything that must keep
-    # streaming while you are looking elsewhere has to sit OUTSIDE the tab group, because
-    # Foxglove unmounts inactive tabs and drops their subscriptions.
+    # Foxglove unmounts inactive tabs, so always-on panels sit outside the tab group.
     tab_ids = set()
 
     def walk(node):

@@ -39,17 +39,12 @@ def generate_launch_description():
         # true holds the target on its start pose until pos_ctrl publishes. plant:=px4 needs
         # it, because arming and taking off cost sim time the other plants do not spend.
         DeclareLaunchArgument('hold_target', default_value='false'),
-        # hold_target only. 'control' starts the target on pos_ctrl's first command; 'settled'
-        # waits until the loop holds it centred at servo depth - the cart pushed after the
-        # aircraft holds station.
+        # hold_target only: release on pos_ctrl's first command, or once the loop holds it centred.
         DeclareLaunchArgument('target_release', default_value='control',
                               description='control | settled'),
-        # settled only: |qx|, |qy| the features must hold before release. 0.2 is E96's loose
-        # bound; 0.05 waits for a centred aircraft, so the cart does not start 0.26 m off.
+        # settled only: |qx|, |qy| to hold before release; 0.05 waits for a centred aircraft.
         DeclareLaunchArgument('target_settle_offset', default_value='0.2'),
-        # Target trajectory. 'thesis' is what every recorded bag was flown on; the rest sweep
-        # the Assumption 7 bounds. The target_ prefix keeps these clear of the disturbances
-        # node's own 'profile' parameter, which is a different thing fed by 'disturbance'.
+        # Target trajectory (target_ prefix: the disturbances node has its own 'profile').
         DeclareLaunchArgument('target_profile', default_value='thesis',
                               description='thesis | hover | line | circle | steps'),
         DeclareLaunchArgument('target_speed', default_value='1.0',
@@ -61,10 +56,7 @@ def generate_launch_description():
         # Travel direction for target_profile:=line, degrees from +x. 0 is the camera's tight
         # axis, 90 the wide one. Rotates the TARGET's travel, not the camera.
         DeclareLaunchArgument('target_heading', default_value='0.0'),
-        # Wind DIRECTION, m/s per axis, scaled by wind_scale. Exposed 2026-09-06 because the
-        # default [0.8, 0.4, 0] points down the camera's TIGHT axis (0.62 m of slack at zD 1.2
-        # against 1.31 m on the long one), and E60 showed wind failure there is FOV-limited -
-        # so the axis the wind blows along should matter as much as its magnitude.
+        # Wind velocity, m/s per axis, scaled by wind_scale; the default blows along the narrow axis.
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # Seconds for the mean wind to ramp on; 0 steps it on in full.
         DeclareLaunchArgument('wind_ramp', default_value='0.0'),

@@ -1,9 +1,5 @@
-"""The F450 airframe as every plant sees it, derived from one SDF.
-
-One implementation, because three plants must integrate the same body: gz_sim.launch.py writes
-the derived F450_base that DART flies under plant:=gazebo and plant:=px4, and uav_dynamics
-integrates its composite mass and inertia under plant:=analytic. Loaded through importlib, as
-camera_presets.py is.
+"""The F450 airframe as every plant sees it, derived from one SDF (DART under gazebo/px4, its
+composite mass and inertia under analytic). Loaded by path, as camera_presets.py is.
 """
 import math
 import os
@@ -56,9 +52,7 @@ def rewrite_mass(sdf, quad_mass):
 
 
 def weld_rotors(sdf):
-    """Rotor joints revolute -> fixed. Under DART a joint velocity command is a SERVO constraint,
-    so a spinning rotor pushes rotor inertia x delta-omega into the airframe; the wrench-driven
-    plant models no rotor, so its rotors carry mass and inertia but must not spin."""
+    """Rotor joints revolute -> fixed: a DART joint velocity command is a real torque on the body."""
     for name in ROTOR_JOINTS:
         sdf = _sub_once(
             sdf, r"<joint name='%s' type='revolute'>(.*?)\s*<axis>.*?</axis>" % name,

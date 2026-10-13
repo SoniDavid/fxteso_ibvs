@@ -3,10 +3,7 @@
 
     python3 make_markers.py 4x4          # writes models/aruco_target/meshes_4x4/
 
-gz_sim.launch.py's marker_dict:= argument symlinks the derived aruco_target's meshes/ at the
-directory this writes, so the filenames and the Target2.dae beside them must match the original
-exactly - the DAE references the JPEGs by bare filename.
-
+Filenames must match the original: Target2.dae references the JPEGs by bare name.
 """
 import os
 import shutil

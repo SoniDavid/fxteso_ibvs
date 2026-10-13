@@ -1,13 +1,7 @@
-"""TF, trajectory trails, markers, and optionally the Foxglove bridge.
+"""TF, trajectory trails, markers and optionally the Foxglove bridge; safe against a live sim or
+a bag replay. Prints the Studio layout for camera:=.
 
-Pure consumer, so it is safe to restart against a live sim or a bag replay:
-
-  ros2 bag play bags/ibvs_20260817_120000 --clock
-  ros2 launch quad_utils viz.launch.py foxglove:=true
-
-Layout for Studio: quad_utils/foxglove/. There is more than one, because the Vision tab shows
-what image_features actually consumes and that topic depends on the camera preset - so this
-prints the path to import for the preset in use. Pass camera:= to get the right one.
+  ros2 launch quad_utils viz.launch.py foxglove:=true [camera:=...]
 """
 import importlib.util
 import os

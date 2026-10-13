@@ -1,6 +1,5 @@
-// Disturbance-force generator. Publishes /disturbances at 100 Hz as an INERTIAL-FRAME FORCE
-// IN NEWTONS, applied by uav_dynamics.cpp as "- R(eta)' * dist" (note the sign).
-// Tuning: config/disturbances.yaml. 
+// Disturbance-force generator: /disturbances at 100 Hz, an inertial-frame force in newtons.
+// Tuning: config/disturbances.yaml.
 
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
@@ -65,11 +64,7 @@ static Eigen::Vector3d toVec3(const vector<double> &v, const char *what,
 }
 
 // --- thesis Table 5.2 wind ------------------------------------------------------------------
-// The thesis' own wind, which nothing in this project had ever flown: the mean reverses
-// direction, carries a -4 m/s downdraft, and is removed at t > 190 s so convergence can be
-// shown afterwards. Held in the source rather than the YAML because it is a specification to
-// reproduce - a run with edited intervals is not Table 5.2 - while the knobs that are
-// legitimately variable (altitude, turbulence scale, on/off times) are parameters.
+// A specification to reproduce, so it lives here rather than in the YAML.
 struct MeanInterval { double until; double mu[3]; };      // s, m/s, inertial frame
 static const MeanInterval kTable52Mean[] = {
     { 55.0, { 2.0,  2.0,  0.0}},
@@ -86,11 +81,8 @@ static const TurbInterval kTable52Turb[] = {
     {190.0, 15.43},   // moderate
 };
 
-// Von Karman shaping filters, Eqs. 2.27-2.29, driven by white noise of PSD pi - NOT 1.
-// The thesis' spectra are one-sided in Omega and integrate to sigma^2 over [0, inf), while an
-// Euler simulation of a filter driven by unit noise realises (1/2pi) times the integral over
-// (-inf, inf). The factor is exactly pi. With it the analytic H2 norm of both filters below is
-// 0.98*sigma, which is the rational approximations' own error and not a bug.
+// Von Karman shaping filters, Eqs. 2.27-2.29, driven by white noise of PSD pi, not 1: the
+// thesis' spectra are one-sided, which makes the factor exactly pi.
 static const double kNoisePsd = M_PI;
 // The vertical filter's fastest pole is ~15 rad/s against this node's 10 ms tick, which plain
 // Euler will not hold. Integrate the filter states in substeps.
@@ -173,9 +165,7 @@ int main(int argc, char *argv[])
     const Eigen::Vector3d gust_sigma = gust_scale * toVec3(
         node->declare_parameter<vector<double>>("gust_sigma", {0.4, 0.4, 0.2}),
         "gust_sigma", log);
-    // Correlation time of the OU gust. Sweepable because the FxTESO's estimate was measured
-    // trailing the disturbance by ~1.5 s - exactly this value - and whether the lag follows
-    // tau or stays put is what separates an observer-bandwidth limit from a coincidence.
+    // Correlation time of the OU gust.
     const double gust_tau = node->declare_parameter<double>("gust_tau", 1.5);
     const int seed = node->declare_parameter<int>("seed", 0);
 
@@ -198,10 +188,7 @@ int main(int argc, char *argv[])
         "wind_turbulence", log);
     const double wind_turbulence_tau = node->declare_parameter<double>("wind_turbulence_tau", 2.0);
 
-    // 'table52': the thesis' own wind (above). Superseding rather than extending 'wind', so
-    // every bag recorded against wind_velocity stays reproducible.
-    // turbulence_scale multiplies the Von Karman sigmas only: 0 leaves the mean schedule alone,
-    // which separates what the structure costs from what the gusting costs.
+    // turbulence_scale multiplies the table52 Von Karman sigmas only; 0 flies the mean schedule.
     const double turbulence_scale = node->declare_parameter<double>("turbulence_scale", 1.0);
     // Eqs. 2.30-2.33 are altitude-dependent; the thesis evaluates them at the servoing depth.
     const double table52_altitude = node->declare_parameter<double>("table52_altitude", 2.5);
@@ -210,11 +197,8 @@ int main(int argc, char *argv[])
     // The table's means are themselves white Gaussian signals, s.d. sigma_g, held at 10 Hz.
     const double table52_sigma_g = node->declare_parameter<double>("table52_sigma_g", 0.1);
     const double table52_mean_rate = node->declare_parameter<double>("table52_mean_rate", 10.0);
-    // The Von Karman coefficients all scale with airspeed, so a step in V steps every
-    // coefficient while the filter states stay where they were, and the output jumps. Measured
-    // before this existed: a 40 m/s spike in the first 0.1 s of every run, which through the z
-    // drag is ~98 N on a 2 kg aircraft. Low-passing V leaves the coefficients only ever
-    // drifting, slowly enough that the filter tracks quasi-statically.
+    // Low-pass on airspeed: the Von Karman coefficients scale with V, and a step in V makes the
+    // output jump.
     const double table52_airspeed_tau =
         node->declare_parameter<double>("table52_airspeed_tau", 10.0);
 
@@ -311,9 +295,8 @@ int main(int argc, char *argv[])
     std::normal_distribution<double> gaussian(0.0, 1.0);
     Eigen::Vector3d gust(0, 0, 0);
     Eigen::Vector3d wind_turb(0, 0, 0);
-    // Von Karman filter states, one canonical triple per axis, and the 10 Hz mean draw.
-    // The filters run from t=0 even though the wind is gated on at table52_start, so they are
-    // stationary by the time their output is used - L_u/V is ~6 s of settling.
+    // Von Karman filter states, one triple per axis; they run from t=0 so they are stationary at
+    // table52_start.
     double vk_state[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
     Eigen::Vector3d table52_mean_noise(0, 0, 0);
     // Seeded at the first interval's airspeed, not at zero: the warm-up must charge the filters
@@ -383,9 +366,7 @@ int main(int argc, char *argv[])
             // the thesis switches it off at t > 190 s to show the state converging afterwards.
             const bool blowing = (t >= table52_start && t <= table52_end);
 
-            // Evaluated even while the wind is off: the filters warm up through the whole
-            // pre-start window, and warming them at a floored airspeed charges them at the
-            // wrong scale - which is what produced the 40 m/s onset spike.
+            // Evaluated even while the wind is off, so the filters warm up at the right scale.
             Eigen::Vector3d v_mean(kTable52Mean[0].mu[0], kTable52Mean[0].mu[1],
                                    kTable52Mean[0].mu[2]);
             for (const MeanInterval &iv : kTable52Mean)
@@ -405,9 +386,7 @@ int main(int argc, char *argv[])
                 v_mean += table52_mean_noise;
             }
 
-            // Airspeed drives the filter coefficients. Taken against the MEAN wind, not the
-            // turbulent one, so the turbulence cannot feed back into its own bandwidth; floored
-            // because V sits in every denominator below; low-passed so it never steps.
+            // Airspeed against the MEAN wind (no turbulence feedback), floored, and low-passed.
             table52_airspeed += ((v_mean - quad_vel_IF.cast<double>()).norm() - table52_airspeed)
                                 * kStep / table52_airspeed_tau;
             const double V = max(0.5, table52_airspeed);

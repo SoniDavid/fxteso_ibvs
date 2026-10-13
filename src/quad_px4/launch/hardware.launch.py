@@ -3,10 +3,8 @@ Nothing simulated - no Gazebo, no PX4 SITL, no sim_pilot.
 
   ros2 launch quad_px4 hardware.launch.py
 
-Differs from SITL in ways that are not tuning, and every one fails silently: use_sim_time is
-false, frame_yaw_offset is zero, the camera is subscribed BEST_EFFORT, and the handover needs a
-person. att_ctrl stays off; PX4 owns the inner loop. camera_driver:=false leaves the camera to an
-external driver already publishing on camera_topic.
+Differs from SITL, silently if wrong: no sim time, frame_yaw_offset 0, a BEST_EFFORT camera, and
+a person consents to the handover.
 """
 import datetime
 import importlib.util
@@ -136,9 +134,7 @@ def generate_launch_description():
         # Barometer-only height. The SITL barometer is 300x quieter than PX4's own model.
         DeclareLaunchArgument('takeoff_tolerance', default_value='0.20'),
 
-        # --- Vicon external-vision aiding ---------------------------------------
-        # The receiver runs on the LAPTOP - the Vicon SDK is x86-64 only - and must be started
-        # with FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA, or nothing here receives it.
+        # --- Vicon aiding: the receiver runs on the laptop (x86-64 SDK) with LARGE_DATA transport ---
         DeclareLaunchArgument('vicon', default_value='false',
                               description='feed Vicon to EKF2 as external vision'),
         DeclareLaunchArgument('vicon_topic', default_value='/vicon/quad/quad',
@@ -158,10 +154,7 @@ def generate_launch_description():
         DeclareLaunchArgument('stamp_source', default_value='header',
                               choices=['header', 'receipt']),
 
-        # --- the workspace datum ------------------------------------------------
-        # Zero, unlike SITL's -pi/2: that encodes the Gazebo world's ENU convention. Stays zero
-        # under vicon:=true as well - EV yaw makes EKF2's heading relative to what the bridge feeds,
-        # so the datum is applied there as vicon_yaw_offset instead.
+        # --- the workspace datum: zero (SITL's -pi/2 is Gazebo's ENU); Vicon uses vicon_yaw_offset ---
         DeclareLaunchArgument('frame_yaw_offset', default_value='0.0'),
 
         # --- recording ----------------------------------------------------------

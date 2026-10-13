@@ -3,10 +3,7 @@
     ros2 run quad_cam probe_detect
     ros2 run quad_cam probe_detect --ros-args -p marker_dict:=7x7 -p image_qos:=sensor_data
 
-Reports cv2.aruco.detectMarkers cost (p50/p95/p99), which IDs are seen, and the fraction
-of frames that would give image_features a valid lock (exactly the IDs {4,6,8,10}). This is
-the opencv reference arm: image_features flies aruco_nano and logs its own detect timing,
-which is the number that must sit under the 20 ms loop budget.
+Reports the OpenCV detect cost (p50/p95/p99), the IDs seen and the lock fraction (exactly {4,6,8,10}).
 """
 
 import os

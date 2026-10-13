@@ -1,24 +1,9 @@
-"""The estimation + control stack on the Pi with the real camera and no PX4 - a compute benchmark.
+"""Compute benchmark: the real camera, estimation and control on the Pi, no PX4 and no gates.
 
-  quad_cam/camera_node -> /quad/camera/image_raw
-        |
-  quad_control/estimation: image_features / td_linear / td_attitude / td_attitude_desired
-        |
-        +---> fixed_eso ---> pos_ctrl   (att_ctrl only if attitude_controller:=true)
+  ros2 launch quad_cam bench.launch.py [load:=synthetic|plate|none] [camera:=...] [zD:=1.2]
 
-For flight use quad_px4's hardware.launch.py; this one has no gates and no PX4 link.
-use_sim_time is false throughout - there is no /clock here and SimRate would hang.
-
-  ros2 launch quad_cam bench.launch.py [load:=synthetic|plate|none] [attitude_controller:=false]
-                                       [camera:=module3wide_2304] [zD:=1.2]
-                                       [detector_backend:=nano]
-
-load:
-  synthetic  bench_feeder fakes the plant, target and a marker lock; image_features still runs,
-             its outputs moved to *_probe so the feeder drives the chain. No printed target. (default)
-  plate      bench_feeder fakes the plant and target only; a printed {4,6,8,10} 7x7 plate in
-             front of the camera drives image_features for real.
-  none       no feeder - fixed_eso / pos_ctrl stay idle (gated on ImFeat_valid).
+load: synthetic fakes plant, target and lock (default); plate drives image_features from a printed
+plate; none leaves fixed_eso/pos_ctrl idle.
 """
 import importlib.util
 import os
