@@ -16,11 +16,11 @@ python3 tools/camera_module3_wide_test.py --doctor
 
 # 2. OpenCV + cv_bridge, as in RUNNING.md, with the Pi's CPU_FLAGS
 
-# 3. MicroXRCEAgent on PATH - hardware.launch.py runs `MicroXRCEAgent serial`
-git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
-cmake -S Micro-XRCE-DDS-Agent -B Micro-XRCE-DDS-Agent/build
-cmake --build Micro-XRCE-DDS-Agent/build -j$(nproc)
-sudo cmake --install Micro-XRCE-DDS-Agent/build && sudo ldconfig
+# 3. MicroXRCEAgent on PATH - hardware.launch.py runs `MicroXRCEAgent serial`. Pinned as a submodule.
+git submodule update --init external/Micro-XRCE-DDS-Agent
+cmake -S external/Micro-XRCE-DDS-Agent -B external/Micro-XRCE-DDS-Agent/build
+cmake --build external/Micro-XRCE-DDS-Agent/build -j$(nproc)
+sudo cmake --install external/Micro-XRCE-DDS-Agent/build && sudo ldconfig
 
 # 4. The workspace, without the simulator and without sim_pilot (it arms the aircraft)
 git submodule update --init src/px4_msgs

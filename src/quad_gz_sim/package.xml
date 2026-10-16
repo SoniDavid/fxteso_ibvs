@@ -38,6 +38,10 @@
   <exec_depend>ros_gz_bridge</exec_depend>
   <!-- bridge.yaml maps /clock -->
   <exec_depend>rosgraph_msgs</exec_depend>
+  <!-- hitl_bridge.py. gz.transport13/gz.msgs10 are python3-gz-transport13 and python3-gz-msgs10
+       (OSRF apt, no rosdep key); pymavlink has no rosdep key either: pip install pymavlink. -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
   <!-- worlds/ibvs.sdf resolves model://F450 and model://aruco_target from here -->
   <exec_depend>quad_description</exec_depend>
 

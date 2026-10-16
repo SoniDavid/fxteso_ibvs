@@ -53,6 +53,10 @@ install(TARGETS ${PX4_NODES}
 install(DIRECTORY launch params
   DESTINATION share/${PROJECT_NAME})
 
+# HITL start gate: waits for quad_gz_sim's hitl_bridge before hitl_flight.launch.py arms anything.
+install(PROGRAMS scripts/hitl_wait.py
+  DESTINATION lib/${PROJECT_NAME})
+
 # The SITL airframe lives in the PX4 fork's ROMFS, not here. params/ is its hardware
 # counterpart: a real FC cannot load an init.d-posix autostart.
 

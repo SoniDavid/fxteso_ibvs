@@ -6,6 +6,7 @@ in their launch file: `sitl.launch.py` or `hardware.launch.py` and in what feeds
 
 - [**RUNNING_SIM.md**](RUNNING_SIM.md) — dev desktop, PX4 SITL, disturbances, the observer alone.
 - [**RUNNING_HW.md**](RUNNING_HW.md) — the Raspberry Pi, the real UAV, bench testing.
+- [**RUNNING_HITL.md**](RUNNING_HITL.md) — the real Pixhawk flying the Gazebo plant: `hitl_world.launch.py` (Gazebo + the USB link to the FC) and `hitl_flight.launch.py` (the companion computer's stack).
 
 ## Setup the environment
 
@@ -146,7 +147,7 @@ exhaustive list of all arguments available in `sitl.launch.py`, which `hardware.
 - `hover_thrust:=<float>` — `MPC_THR_HOVER`; empty derives it from `prop`, `battery_cells` and `quad_mass`, and an explicit value must agree (default: empty).
 - `offboard_recovery:=<bool>` — Attempt offboard recovery on lock-loss (default: `false`).
 - `px4_dir:=<path>` — Path to the PX4 fork submodule.
-- `xrce_agent:=<path>` — Path to the MicroXRCEAgent binary.
+- `xrce_agent:=<path>` — Path to the MicroXRCEAgent binary (default: the `external/Micro-XRCE-DDS-Agent` submodule's build).
 
 ## Camera Presets
 

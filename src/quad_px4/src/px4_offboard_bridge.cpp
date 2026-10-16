@@ -283,7 +283,17 @@ int main(int argc, char **argv)
 		});
 
 	// --- helpers --------------------------------------------------------------
-	auto stamp = [&]() { return static_cast<uint64_t>(node->now().nanoseconds() / 1000); };
+	// ros: node->now(). system: the OS clock PX4's timesync maps (HITL, where ros time is gz's).
+	const std::string stamp_clock = node->declare_parameter<std::string>("stamp_clock", "ros");
+	if (stamp_clock != "ros" && stamp_clock != "system") {
+		RCLCPP_FATAL(node->get_logger(), "stamp_clock must be ros or system, got '%s'", stamp_clock.c_str());
+		return 1;
+	}
+	rclcpp::Clock sys_clock(RCL_SYSTEM_TIME);
+	auto stamp = [&]() {
+		const rclcpp::Time t = stamp_clock == "system" ? sys_clock.now() : node->now();
+		return static_cast<uint64_t>(t.nanoseconds() / 1000);
+	};
 
 	auto sendCommand = [&](uint32_t command, float p1 = 0.f, float p2 = 0.f, float p3 = 0.f)
 	{

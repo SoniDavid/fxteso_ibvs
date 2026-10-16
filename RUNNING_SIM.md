@@ -9,6 +9,10 @@ The dev-desktop / PX4 SITL side of [RUNNING.md](RUNNING.md); shared setup, the l
 git clone https://github.com/SoniDavid/fxteso_ibvs
 git submodule update --init --recursive
 
+# MicroXRCEAgent, pinned as a submodule; the superbuild fetches its own Fast-DDS (a few minutes)
+cmake -S external/Micro-XRCE-DDS-Agent -B external/Micro-XRCE-DDS-Agent/build
+cmake --build external/Micro-XRCE-DDS-Agent/build -j$(nproc)
+
 # OpenCV + cv_bridge first (RUNNING.md), then building
 colcon build --symlink-install --allow-overriding cv_bridge image_geometry
 
