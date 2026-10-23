@@ -43,7 +43,8 @@ ESTIMATION_ARGS = ('gamma1_xy', 'gamma2_xy', 'gamma3_xy', 'gamma3_yaw', 'gamma1_
                    'observer_omega', 'initial_estimate_offset', 'quad_mass', 'marker_dict',
                    'detector_backend', 'nano_error_correction', 'nano_border_error_rate',
                    'nano_box_filter', 'nano_max_revisited', 'roi_margin',
-                   'use_aruco3_detection', 'cv_num_threads')
+                   'use_aruco3_detection', 'cv_num_threads', 'target_layout',
+                   'target_marker_id', 'corner_refinement')
 
 
 def camera_presets():
@@ -128,6 +129,9 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
         # Camera and target; see quad_description/config/cameras.yaml.
         arg('camera', presets.DEFAULT_CAMERA),
         arg('target_scale', '0.5'),
+        # four_markers | single_marker (one marker on US letter; target_scale does not apply).
+        arg('target_layout', 'four_markers', choices=['four_markers', 'single_marker']),
+        arg('target_marker_id', '4'),
         arg('marker_dict', '7x7'),
         # Above zero, renders at this rate instead of the SDF's 50.
         arg('camera_rate', '0.0'),
@@ -141,6 +145,8 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
         arg('use_aruco3_detection', 'false'),
         arg('aruco3_margin', '0.7'),
         arg('cv_num_threads', '1'),
+        # opencv path only: none | subpix | contour.
+        arg('corner_refinement', 'none', choices=['none', 'subpix', 'contour']),
 
         # Disturbance; magnitudes in quad_gz_sim/config/disturbances.yaml. Profiles compose.
         arg('disturbance', 'none'),
@@ -218,7 +224,8 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
         return [
             include(SIM_PKG, 'gz_sim.launch.py',
                     dict(_lc(('headless', 'world', 'camera', 'target_scale', 'marker_dict',
-                              'camera_rate', 'quad_mass', 'start_altitude')), plant=p)),
+                              'camera_rate', 'quad_mass', 'start_altitude', 'target_layout')),
+                         plant=p)),
             include(SIM_PKG, 'plant.launch.py', plant_args),
             include(SIM_PKG, 'scenario.launch.py', _lc(SCENARIO_ARGS)),
         ]
@@ -228,10 +235,16 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
         # computed from the preset, target_scale and zD.
         zD = f('zD', context)
         scale = f('target_scale', context)
-        cam = presets.resolve(LaunchConfiguration('camera').perform(context), scale, zD)
+        layout = LaunchConfiguration('target_layout').perform(context)
+        mdict = LaunchConfiguration('marker_dict').perform(context)
+        cam = presets.resolve(LaunchConfiguration('camera').perform(context), scale, zD,
+                              layout, mdict)
         z_des = LaunchConfiguration('eso_z_des').perform(context).strip()
         return [
             LogInfo(msg=presets.summary(cam, zD, f('camera_rate', context))),
+            LogInfo(msg='target %s, %s%s' % (
+                layout, mdict, ', target_scale ignored' if layout == 'single_marker'
+                else ', scale %g' % scale)),
             include(CTRL_PKG, 'estimation.launch.py',
                     dict(_lc(ESTIMATION_ARGS),
                          z_des='%.6f' % (float(z_des) if z_des else zD),
@@ -241,7 +254,7 @@ def build(plant=None, defaults=None, mode='closed', bag_prefix='ibvs_'):
                          camera_distortion=str(cam['distortion']),
                          aD='%.12g' % cam['aD'],
                          min_marker_length_ratio='%.6f' % presets.min_marker_ratio(
-                             cam, scale, zD, f('aruco3_margin', context)),
+                             cam, scale, zD, f('aruco3_margin', context), layout, mdict),
                          camera_topic=('/quad/camera/image_distorted'
                                        if any(cam['distortion'])
                                        else '/quad/camera/image_raw'))),

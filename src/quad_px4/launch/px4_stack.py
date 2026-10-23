@@ -202,6 +202,9 @@ def build(mode='sitl'):
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
         # 0.5 = printed target, 450×375 mm — the sheet that exists, not a tuned value.
         DeclareLaunchArgument('target_scale', default_value='0.5'),
+        # four_markers | single_marker (one marker on US letter; target_scale does not apply).
+        DeclareLaunchArgument('target_layout', default_value='four_markers'),
+        DeclareLaunchArgument('target_marker_id', default_value='4'),
         DeclareLaunchArgument('marker_dict', default_value='7x7'),
         # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last
         # detection). aruco3 only applies to opencv.
@@ -218,6 +221,8 @@ def build(mode='sitl'):
         DeclareLaunchArgument('aruco3_margin', default_value='0.7'),
         # OpenCV threads; at 1 its idle pool stops burning CPU next to nano.
         DeclareLaunchArgument('cv_num_threads', default_value='1'),
+        # opencv path only: none | subpix | contour.
+        DeclareLaunchArgument('corner_refinement', default_value='none'),
         DeclareLaunchArgument('camera_rate', default_value='0.0'),
         # Degrees from +x. 90 = the camera's wide axis (~2x the budget), as the lab cart runs.
         DeclareLaunchArgument('target_heading', default_value='90.0'),
@@ -340,6 +345,7 @@ def build(mode='sitl'):
                  'camera': LaunchConfiguration('camera'),
                  'target_scale': LaunchConfiguration('target_scale'),
                  'marker_dict': LaunchConfiguration('marker_dict'),
+                 'target_layout': LaunchConfiguration('target_layout'),
                  'camera_rate': LaunchConfiguration('camera_rate'),
                  'quad_mass': LaunchConfiguration('quad_mass')}),
         include(SIM_PKG, 'scenario.launch.py',
@@ -741,14 +747,19 @@ def build(mode='sitl'):
     def _estimation_include(context):
         # Resolved, not substituted: image_features takes intrinsics and aD, and aD is
         # computed from the preset, target_scale and zD.
+        layout = LaunchConfiguration('target_layout').perform(context)
+        mdict = LaunchConfiguration('marker_dict').perform(context)
+        scale = float(LaunchConfiguration('target_scale').perform(context))
         cam = presets.resolve(
-            LaunchConfiguration('camera').perform(context),
-            float(LaunchConfiguration('target_scale').perform(context)),
-            float(LaunchConfiguration('zD').perform(context)))
+            LaunchConfiguration('camera').perform(context), scale,
+            float(LaunchConfiguration('zD').perform(context)), layout, mdict)
         return [
             LogInfo(msg=presets.summary(
                 cam, float(LaunchConfiguration('zD').perform(context)),
                 float(LaunchConfiguration('camera_rate').perform(context)))),
+            LogInfo(msg='target %s, %s%s' % (
+                layout, mdict, ', target_scale ignored' if layout == 'single_marker'
+                else ', scale %g' % scale)),
             include(CTRL_PKG, 'estimation.launch.py',
                     {'initial_estimate_offset': LaunchConfiguration('initial_estimate_offset'),
                      'quad_mass': LaunchConfiguration('quad_mass'),
@@ -778,10 +789,13 @@ def build(mode='sitl'):
                      'roi_margin': LaunchConfiguration('roi_margin'),
                      'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
                      'cv_num_threads': LaunchConfiguration('cv_num_threads'),
+                     'target_layout': layout,
+                     'target_marker_id': LaunchConfiguration('target_marker_id'),
+                     'corner_refinement': LaunchConfiguration('corner_refinement'),
                      'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
-                         cam, float(LaunchConfiguration('target_scale').perform(context)),
-                         float(LaunchConfiguration('zD').perform(context)),
-                         float(LaunchConfiguration('aruco3_margin').perform(context))),
+                         cam, scale, float(LaunchConfiguration('zD').perform(context)),
+                         float(LaunchConfiguration('aruco3_margin').perform(context)),
+                         layout, mdict),
                      'attitude_topic': ('attitude_estimates_reference'
                                         if _oracle(context) in ('derotation', 'both', 'replay')
                                         else 'attitude_estimates'),

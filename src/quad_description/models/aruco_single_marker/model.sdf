@@ -1,0 +1,43 @@
+<?xml version='1.0'?>
+<!-- One ArUco marker (ID 4) on a US letter sheet, 0.2159 x 0.2794 m. Derived into the aruco_target
+     slot by gz_sim.launch.py target_layout:=single_marker; keep the name 'aruco_Target'. -->
+<sdf version='1.9'>
+  <model name='aruco_Target'>
+    <link name='link_aruco'>
+      <pose>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>0.2</mass>
+        <inertia>
+          <ixx>0.001301</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000777</iyy>
+          <iyz>0</iyz>
+          <izz>0.002078</izz>
+        </inertia>
+      </inertial>
+      <self_collide>0</self_collide>
+
+      <collision name='Collision'>
+        <geometry>
+          <box>
+            <size>0.2159 0.2794 0.001</size>
+          </box>
+        </geometry>
+      </collision>
+
+      <visual name='visual'>
+        <geometry>
+          <mesh>
+            <uri>model://aruco_target/meshes/SingleMarker.dae</uri>
+            <scale>1 1 1</scale>
+          </mesh>
+        </geometry>
+        <cast_shadows>0</cast_shadows>
+        <transparency>0</transparency>
+      </visual>
+    </link>
+    <static>0</static>
+    <allow_auto_disable>0</allow_auto_disable>
+  </model>
+</sdf>

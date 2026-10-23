@@ -21,8 +21,13 @@ FOCAL_LENGTH = 0.00304
 # mu20+mu02 of the marker centroids at unit scale and depth: 4*(0.225^2 + 0.300^2).
 CENTROID_MOMENT = 0.5625
 
-# Marker ink, black edge to black edge, at target_scale 1.0. The printed 0.5 plate carries 122.2 mm.
+# Marker ink, black edge to black edge, at target_scale 1.0. The printed 0.5 target has 122.2 mm.
 MARKER_INK = 0.2445
+
+# target_layout single_marker: one marker on US letter paper, quiet zone one module wide inside it.
+US_LETTER_SHEET = (0.2159, 0.2794)
+DICT_BITS = {'4x4': 4, '5x5': 5, '6x6': 6, '7x7': 7}
+LAYOUTS = ('four_markers', 'single_marker')
 
 # The rate image_features and fixed_eso both run at.
 LOOP_HZ = 50.0
@@ -35,9 +40,24 @@ def table():
         return yaml.safe_load(fh)['cameras']
 
 
-def resolve(camera, target_scale=1.0, zD=2.5):
-    """Everything the launch files need for one (preset, target scale, servoing depth).
-    aD = CENTROID_MOMENT * scale^2 * (f/zD)^2; aD, not zD, decides where the aircraft settles."""
+def target_geometry(target_layout='four_markers', target_scale=1.0, marker_dict='7x7'):
+    """mu20+mu02 of the feature points at unit depth, and the marker ink side. single_marker is
+    a fixed sheet, so target_scale does not apply to it; its points are the corners, 2*ink^2."""
+    if target_layout == 'four_markers':
+        return {'moment': CENTROID_MOMENT * target_scale ** 2, 'ink': MARKER_INK * target_scale}
+    if target_layout == 'single_marker':
+        if marker_dict not in DICT_BITS:
+            raise RuntimeError('marker_dict:=%s is not one of %s.'
+                               % (marker_dict, ', '.join(DICT_BITS)))
+        bits = DICT_BITS[marker_dict]
+        ink = US_LETTER_SHEET[0] * (bits + 2) / (bits + 4)
+        return {'moment': 2.0 * ink ** 2, 'ink': ink}
+    raise RuntimeError('target_layout:=%s is not one of %s.' % (target_layout, ', '.join(LAYOUTS)))
+
+
+def resolve(camera, target_scale=1.0, zD=2.5, target_layout='four_markers', marker_dict='7x7'):
+    """Everything the launch files need for one (preset, target, servoing depth).
+    aD = moment * (f/zD)^2; aD, not zD, decides where the aircraft settles."""
     presets = table()
     if camera not in presets:
         raise RuntimeError('camera:=%s is not one of %s.' % (camera, ', '.join(presets)))
@@ -58,18 +78,21 @@ def resolve(camera, target_scale=1.0, zD=2.5):
         'fx': width / (2.0 * math.tan(hfov / 2.0)),
         'fps': cam['fps'],
         'native': list(cam['native']),
-        'aD': CENTROID_MOMENT * target_scale ** 2 * (FOCAL_LENGTH / zD) ** 2,
+        'aD': target_geometry(target_layout, target_scale, marker_dict)['moment']
+              * (FOCAL_LENGTH / zD) ** 2,
     }
 
 
-def marker_px(cam, target_scale, zD):
+def marker_px(cam, target_scale, zD, target_layout='four_markers', marker_dict='7x7'):
     """Nominal marker side in pixels at the servoing depth, at the width cam['fx'] was sized for."""
-    return MARKER_INK * target_scale * cam['fx'] / zD
+    return target_geometry(target_layout, target_scale, marker_dict)['ink'] * cam['fx'] / zD
 
 
-def min_marker_ratio(cam, target_scale, zD, margin=0.7):
+def min_marker_ratio(cam, target_scale, zD, margin=0.7, target_layout='four_markers',
+                     marker_dict='7x7'):
     """aruco3's minMarkerLengthRatioOriginalImg: margin x the nominal marker, over the long side."""
-    return margin * marker_px(cam, target_scale, zD) / max(cam['width'], cam['height'])
+    return (margin * marker_px(cam, target_scale, zD, target_layout, marker_dict)
+            / max(cam['width'], cam['height']))
 
 
 def summary(cam, zD, camera_rate=0.0):
