@@ -68,9 +68,9 @@ def generate_launch_description():
                               description='servoing depth, m. The lab rig sets this.'),
         DeclareLaunchArgument('takeoff_alt', default_value=str(DEFAULT_TAKEOFF_ALT),
                               description='altitude the pilot flies to before the handover, m'),
-        # 0.5 = the printed 450x375 mm plate. aD scales with its square.
+        # 0.5 = the printed 450x375 mm four-marker target. aD scales with its square.
         DeclareLaunchArgument('target_scale', default_value='0.5',
-                              description='printed plate size relative to the reference target'),
+                              description='printed target size relative to the reference target'),
 
         # --- the airframe -------------------------------------------------------
         # Weighed as flown, battery included. 2.0 is the thesis vehicle's; the 3S build is ~1.3 kg.
@@ -247,7 +247,7 @@ def generate_launch_description():
                          LaunchConfiguration('takeoff_tolerance'), value_type=float),
                      'require_gnss': False}])
 
-    # require_target false: tgt_position is the simulator's, and the target here is a plate.
+    # require_target false: tgt_position is the simulator's, and the target here is a printed one.
     gate = Node(
         package=CTRL_PKG, executable='ibvs_gate', name='ibvs_gate', output='screen',
         parameters=[{'use_sim_time': False,

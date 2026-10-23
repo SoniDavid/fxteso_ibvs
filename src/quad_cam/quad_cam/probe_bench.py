@@ -30,7 +30,7 @@ try:
 except ImportError:  # pragma: no cover
     psutil = None
 
-# node label -> (topic, msg type, target Hz). load:=plate|none: pass -p imfeat_topic:=/ImFeat_valid.
+# node label -> (topic, msg type, target Hz). load:=target|none: pass -p imfeat_topic:=/ImFeat_valid.
 _LOOPS = [
     ('td_attitude',         '/attitude_td_error',       Vector3,   100.0),
     ('td_linear',           '/position_td_error',       Vector3,   100.0),

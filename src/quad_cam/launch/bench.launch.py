@@ -1,9 +1,9 @@
 """Compute benchmark: the real camera, estimation and control on the Pi, no PX4 and no gates.
 
-  ros2 launch quad_cam bench.launch.py [load:=synthetic|plate|none] [camera:=...] [zD:=1.2]
+  ros2 launch quad_cam bench.launch.py [load:=synthetic|target|none] [camera:=...] [zD:=1.2]
 
-load: synthetic fakes plant, target and lock (default); plate drives image_features from a printed
-plate; none leaves fixed_eso/pos_ctrl idle.
+load: synthetic fakes plant, target and lock (default); target drives image_features from a printed
+four-marker target; none leaves fixed_eso/pos_ctrl idle.
 """
 import importlib.util
 import os
@@ -71,8 +71,8 @@ def generate_launch_description():
 
     def _stack(context, *a, **k):
         load = LaunchConfiguration('load').perform(context).lower()
-        if load not in ('synthetic', 'plate', 'none'):
-            raise RuntimeError('load:=%s is not synthetic, plate or none.' % load)
+        if load not in ('synthetic', 'target', 'none'):
+            raise RuntimeError('load:=%s is not synthetic, target or none.' % load)
         synthetic = load == 'synthetic'
 
         zD = float(LaunchConfiguration('zD').perform(context))

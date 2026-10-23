@@ -720,7 +720,7 @@ def build(mode='sitl'):
                              'timeout': ParameterValue(
                                  LaunchConfiguration('gate_timeout'), value_type=float),
                              # tgt_position is the simulator's scenario generator; on hardware
-                             # the target is a printed plate and no such topic exists.
+                             # the target is a printed one and no such topic exists.
                              'require_target': ParameterValue(
                                  PythonExpression(["'", LaunchConfiguration('venue'),
                                                    "' == 'outdoor'"]), value_type=bool)}])

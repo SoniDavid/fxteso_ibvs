@@ -68,7 +68,7 @@ These add to the shared reference in [RUNNING.md](RUNNING.md#launch-arguments-re
   `receipt` carries the transport latency in `EKF2_EV_DELAY` instead (default: `header`).
 
 ### Bench (`bench.launch.py`)
-- `load:=<synthetic|plate|none>` — What drives the chain without PX4 (default: `synthetic`).
+- `load:=<synthetic|target|none>` — What drives the chain without PX4 (default: `synthetic`).
 - `attitude_controller:=<bool>` — Add `att_ctrl` to the load (default: `false`).
 - `image_qos:=<sensor_data|reliable>` — Camera and `image_features` QoS together (default: `sensor_data`).
 - `camera`, `zD`, `target_scale`, `marker_dict`, `quad_mass`, `af_mode`, `lens_position`, `camera_cpu` and the vision arguments — as in RUNNING.md.
@@ -159,7 +159,7 @@ Before the first Vicon flight:
   sample age is meaningless; use `stamp_source:=receipt` if you cannot.
 - Set `EKF2_EV_DELAY` from the bridge's own `EV stream: ... age mean` line, then reboot again.
 - Measure `EKF2_EV_POS_X/Y/Z`: the Vicon marker centroid relative to the CoG, body FRD.
-- Confirm the frames by hand before arming — carry the airframe over the plate and check N/E/D
+- Confirm the frames by hand before arming — carry the airframe over the target and check N/E/D
   signs and heading in `/fmu/out/vehicle_odometry`. `vicon_frame` and `body_frame` are assumptions
   until this is done, and a wrong `body_frame` is a sign error in pitch and yaw that flies.
   The bridge now checks this itself: it **refuses to publish** until the converted Vicon attitude
@@ -200,7 +200,7 @@ Then the stack, one-shot — launch, `probe_bench`, and a `bench_<timestamp>.log
 ```sh
 ./src/quad_cam/scripts/bench.sh --load synthetic --duration 120
 ./src/quad_cam/scripts/bench.sh --load synthetic --att true --duration 120   # + att_ctrl
-./src/quad_cam/scripts/bench.sh --load plate --duration 120                   # real ArUco plate
+./src/quad_cam/scripts/bench.sh --load target --duration 120                  # real ArUco target
 ./src/quad_cam/scripts/bench.sh --load synthetic --backend opencv             # detector A/B
 ./src/quad_cam/scripts/bench.sh --load synthetic --backend hybrid --nano-ec 0.3 --nano-border 0.35 --cv-threads 1
 ./src/quad_cam/scripts/bench.sh --load synthetic --backend nano --nano-ec 0.3 --nano-border 0.35       # tuned nano alone
@@ -212,7 +212,7 @@ ros2 run quad_cam probe_bench
 
 - `load:=synthetic` needs no printed target: `bench_feeder` fakes the plant, the target and a marker
   lock; `image_features` still runs for its real cost, its outputs moved to `*_probe`.
-- `load:=plate` drives the real vision chain from a printed `{4,6,8,10}` 7×7 plate ~1.2 m from the lens.
+- `load:=target` drives the real vision chain from a printed `{4,6,8,10}` 7×7 four-marker target ~1.2 m from the lens.
 - `load:=none` leaves `fixed_eso` and `pos_ctrl` idle.
 
 A loop passes when `achieved >= 0.98 * target` with few overruns. The report collects each node's

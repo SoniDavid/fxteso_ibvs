@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot IBVS-stack real-time benchmark for the Pi.
 #
-#   src/quad_cam/scripts/bench.sh [--load synthetic|plate|none] [--att true|false]
+#   src/quad_cam/scripts/bench.sh [--load synthetic|target|none] [--att true|false]
 #                                 [--duration SECONDS] [--camera PRESET] [--cv-threads N]
 #                                 [--backend nano|opencv|hybrid] [--nano-ec R] [--nano-border R]
 #
@@ -57,7 +57,7 @@ echo ">> warm-up (18 s: camera AE + node stagger)"
 sleep 18
 
 echo ">> probe_bench for ${DURATION}s"
-# synthetic load remaps image_features' output aside; plate/none leave it on /ImFeat_valid
+# synthetic load remaps image_features' output aside; target/none leave it on /ImFeat_valid
 IMFEAT=/ImFeat_valid_probe
 [ "$LOAD" = synthetic ] || IMFEAT=/ImFeat_valid
 ros2 run quad_cam probe_bench --ros-args \

@@ -108,7 +108,7 @@ exhaustive list of all arguments available in `sitl.launch.py`, which `hardware.
 - `target_yaw_rate:=<float>` — Target yaw rate (default: `0.1`).
 - `target_accel:=<float>` — Target acceleration (default: `0.5`).
 - `target_heading:=<float>` — Target direction of travel in degrees (default: `0.0`).
-- `target_scale:=<float>` — Size of the target; `0.5` is the printed 450 × 375 mm plate (default: `0.5`).
+- `target_scale:=<float>` — Size of the target; `0.5` is the printed 450 × 375 mm four-marker target (default: `0.5`).
 - `marker_dict:=<str>` — ArUco marker dictionary (default: `7x7`).
 - `blackout_at:=<float>` — Time in seconds to hide the target (default: `0.0`).
 - `blackout_for:=<float>` — Duration in seconds to hide the target (default: `3.0`).
