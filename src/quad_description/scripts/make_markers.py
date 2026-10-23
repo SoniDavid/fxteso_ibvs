@@ -3,6 +3,7 @@
 
     python3 make_markers.py 4x4                 # writes models/aruco_target/meshes_4x4/
     python3 make_markers.py single_marker 4x4   # writes models/aruco_single_marker/meshes_4x4/
+    python3 make_markers.py single_marker 7x7 --print   # + print/single_marker_7x7.pdf, true size
 
 Filenames must match the original: Target2.dae references the JPEGs by bare name.
 """
@@ -28,6 +29,8 @@ SINGLE_MARKER_ID = 4
 US_LETTER_SHEET = (0.2159, 0.2794)
 BITS = {'4x4': 4, '5x5': 5, '6x6': 6, '7x7': 7}
 SHEET_PX = 960
+# Print module, px: ~600 dpi on letter. Any integer works; the PDF's dpi carries the true size.
+PRINT_MODULE_PX = 460
 
 SINGLE_MARKER_DAE = """<?xml version="1.0" encoding="utf-8"?>
 <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
@@ -104,10 +107,9 @@ SINGLE_MARKER_DAE = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 
-def single_marker(name):
-    """The whole sheet as one texture: white, the marker centred, a one-module quiet zone."""
+def _sheet(name, module):
+    """The whole sheet, white, the marker centred with a one-module quiet zone: (canvas, ink px)."""
     bits = BITS[name]
-    module = SHEET_PX // (bits + 4)
     width = module * (bits + 4)
     height = int(round(width * US_LETTER_SHEET[1] / US_LETTER_SHEET[0]))
     ink = module * (bits + 2)
@@ -116,6 +118,13 @@ def single_marker(name):
     top = (height - ink) // 2
     canvas[top:top + ink, module:module + ink] = cv2.aruco.drawMarker(dictionary, SINGLE_MARKER_ID,
                                                                       ink)
+    return canvas, ink
+
+
+def single_marker(name):
+    """The sheet as one Gazebo texture."""
+    canvas, ink = _sheet(name, SHEET_PX // (BITS[name] + 4))
+    height, width = canvas.shape
 
     out = os.path.normpath(os.path.join(SINGLE_MARKER, 'meshes_%s' % name))
     os.makedirs(out, exist_ok=True)
@@ -128,12 +137,29 @@ def single_marker(name):
           % (path, width, height, 1000 * US_LETTER_SHEET[0] * ink / width, SINGLE_MARKER_ID))
 
 
+def single_marker_print(name):
+    """One US letter page at true size: the dpi is set so the image spans exactly 215.9 mm, which
+    makes the ink exactly the size camera_presets.target_geometry assumes. Bilevel, so lossless."""
+    from PIL import Image  # print only; the textures need cv2 alone
+    canvas, ink = _sheet(name, PRINT_MODULE_PX)
+    width = canvas.shape[1]
+    dpi = width / (US_LETTER_SHEET[0] / 0.0254)
+    out = os.path.normpath(os.path.join(SINGLE_MARKER, 'print'))
+    os.makedirs(out, exist_ok=True)
+    path = os.path.join(out, 'single_marker_%s.pdf' % name)
+    Image.fromarray(canvas).convert('1').save(path, 'PDF', resolution=dpi)
+    print('wrote %s (%.1f dpi, ink %.1f mm, ID %d): print at actual size, not fit to page'
+          % (path, dpi, 1000 * US_LETTER_SHEET[0] * ink / width, SINGLE_MARKER_ID))
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'single_marker':
-        name = sys.argv[2] if len(sys.argv) > 2 else '4x4'
+        name = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] != '--print' else '4x4'
         if name not in DICTS:
             raise SystemExit('dictionary %r is not one of %s' % (name, ', '.join(DICTS)))
         single_marker(name)
+        if '--print' in sys.argv:
+            single_marker_print(name)
         return
     name = sys.argv[1] if len(sys.argv) > 1 else '4x4'
     if name not in DICTS:

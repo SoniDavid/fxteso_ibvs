@@ -108,7 +108,9 @@ exhaustive list of all arguments available in `sitl.launch.py`, which `hardware.
 - `target_yaw_rate:=<float>` — Target yaw rate (default: `0.1`).
 - `target_accel:=<float>` — Target acceleration (default: `0.5`).
 - `target_heading:=<float>` — Target direction of travel in degrees (default: `0.0`).
-- `target_scale:=<float>` — Size of the target; `0.5` is the printed 450 × 375 mm four-marker target (default: `0.5`).
+- `target_layout:=<four_markers|single_marker>` — `four_markers` is the board with markers 4/6/8/10, whose centroids are the four points. `single_marker` is one marker on a US letter sheet with a one-module quiet zone; its four corners are the points and yaw comes from its edges. It ignores `target_scale` (default: `four_markers`). The printable sheet is in [RUNNING_HW.md](RUNNING_HW.md#single-marker-target).
+- `target_marker_id:=<int>` — `single_marker` only: the ID that counts as the target; other IDs are ignored, the same ID twice is not a lock (default: `4`).
+- `target_scale:=<float>` — Size of the four-marker target; `0.5` is the printed 450 × 375 mm board (default: `0.5`).
 - `marker_dict:=<str>` — ArUco marker dictionary (default: `7x7`).
 - `blackout_at:=<float>` — Time in seconds to hide the target (default: `0.0`).
 - `blackout_for:=<float>` — Duration in seconds to hide the target (default: `3.0`).
@@ -120,6 +122,7 @@ exhaustive list of all arguments available in `sitl.launch.py`, which `hardware.
 - `roi_margin:=<float>` — `roi` backends: margin around the last target box, as a fraction of its size (default: `0.5`).
 - `use_aruco3_detection:=<bool>` — `opencv` only: search marker candidates on a downscaled image (default: `false`). **Broken at this geometry:** with the derived ratio it decoded no markers on OpenCV 4.6 or 4.14 (0/3 locked in SITL), and decoding is gone once the ratio passes ~0.015. Leave it off.
 - `aruco3_margin:=<float>` — Fraction of the nominal marker size aruco3 must still find; the ratio itself is derived from `camera`, `target_scale` and `zD` (default: `0.7`).
+- `corner_refinement:=<none|subpix|contour>` — `opencv` path only; nano always refines with cornerSubPix. Neither refinement removed `single_marker`'s +2% `qz` bias in E105 (contour made it +3.4%) (default: `none`).
 - `cv_num_threads:=<int>` — OpenCV thread count, `0` leaves it alone. At `0` OpenCV's idle pool burns ~0.9 cores next to the hybrid; `1` removes that, but single-threaded fallback frames are slower (worst ~19 ms of the 20 ms budget in SITL), so check the Pi's worst frame with `bench.sh --cv-threads 1` and `2` (default: `1`).
 - `image_features_cpu:=<core>` — Pin `image_features` to a core, empty leaves it unpinned (default: empty; hardware and bench only).
 
@@ -159,7 +162,8 @@ output **and** `image_features`. Either way, what is seen and what is modelled c
 `zD:=` likewise drives `aD` and PX4's `MIS_TAKEOFF_ALT` together:
 
 ```
-aD = 0.5625 * target_scale^2 * (0.00304 / zD)^2
+aD = 0.5625 * target_scale^2 * (0.00304 / zD)^2     four_markers
+aD = 2 * ink^2 * (0.00304 / zD)^2                   single_marker, ink = 0.2159 * (N+2)/(N+4) m
 ```
 
 It is `aD`, not `zD`, that decides where the aircraft settles.
