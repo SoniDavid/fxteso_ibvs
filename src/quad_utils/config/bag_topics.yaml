@@ -27,7 +27,7 @@ plant_and_target:
   # plant:=px4 only. An EKF2 reset steps quad_position; the td_linear spike is not motion.
   - /quad_estimator_reset
   # venue:=vicon only: 6-DoF ground truth, and when Vicon was feeding EKF2.
-  - /vicon/quad/quad
+  - /vicon/fxteso_f450quad/fxteso_f450quad
   - /vicon_px4_bridge/aiding_active
   # plant:=px4 only. cs_ev_pos is how a run proves the EV stream was actually fused rather than
   # merely published; cs_fake_pos is EKF2 admitting it has no horizontal aiding.

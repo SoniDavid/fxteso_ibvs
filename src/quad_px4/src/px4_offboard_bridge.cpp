@@ -249,6 +249,23 @@ int main(int argc, char **argv)
 			});
 	}
 
+	// Consent alone does not hand over during the estimators' start-up transient: the marker must
+	// have been locked continuously this long (s). 0 disables, as SITL has no human to wait for.
+	const double min_lock_s = node->declare_parameter<double>("min_lock_before_handover", 0.0);
+	rclcpp::Time lock_since(0, 0, RCL_ROS_TIME);
+	bool locked = false;
+	auto lockSub = node->create_subscription<std_msgs::msg::Bool>(
+		"ImFeat_valid", 10,
+		[&](const std_msgs::msg::Bool::ConstSharedPtr v)
+		{
+			if (v->data && !locked)
+				lock_since = node->now();
+			locked = v->data;
+		});
+	auto lockSettled = [&]() {
+		return min_lock_s <= 0.0 || (locked && (node->now() - lock_since).seconds() >= min_lock_s);
+	};
+
 	auto handoverSrv = node->create_service<std_srvs::srv::Trigger>(
 		"~/handover",
 		[&](const std_srvs::srv::Trigger::Request::SharedPtr,
@@ -483,6 +500,15 @@ int main(int argc, char **argv)
 			// Passive: no arm, no mode command until the pilot is armed, at height, and
 			// consenting. Streaming will not switch mode until setpoint_fresh anyway.
 			if (arming_state == VehicleStatus::ARMING_STATE_ARMED &&
+			    altitude >= takeoff_altitude - altitude_tolerance &&
+			    consentGiven() && !lockSettled())
+			{
+				RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 2000,
+				                     "Consent given, holding the handover until the marker has been "
+				                     "locked for %.1f s (locked %.1f s).", min_lock_s,
+				                     locked ? (node->now() - lock_since).seconds() : 0.0);
+			}
+			else if (arming_state == VehicleStatus::ARMING_STATE_ARMED &&
 			    altitude >= takeoff_altitude - altitude_tolerance &&
 			    consentGiven())
 			{

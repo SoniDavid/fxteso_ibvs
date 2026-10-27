@@ -99,6 +99,18 @@ def generate_launch_description():
         DeclareLaunchArgument('nano_max_revisited', default_value='0.05'),
         # roi backend: margin on each side of the last target box, as a fraction of its size.
         DeclareLaunchArgument('roi_margin', default_value='0.5'),
+        # s without a new frame before the lock is reported lost; 0 keeps the last frame forever.
+        DeclareLaunchArgument('image_timeout', default_value='0.0'),
+        # topic: frames over DDS from camera_topic. libcamera: image_features opens the Pi camera.
+        DeclareLaunchArgument('image_source', default_value='topic', choices=['topic', 'libcamera']),
+        # libcamera only: sensor mode, rate, orientation, focus, and a low-rate grey debug image.
+        DeclareLaunchArgument('camera_sensor_width', default_value='2304'),
+        DeclareLaunchArgument('camera_sensor_height', default_value='1296'),
+        DeclareLaunchArgument('camera_fps', default_value='56.0'),
+        DeclareLaunchArgument('camera_rotate180', default_value='true'),
+        DeclareLaunchArgument('af_mode', default_value='manual'),
+        DeclareLaunchArgument('lens_position', default_value='0.83'),
+        DeclareLaunchArgument('debug_image_hz', default_value='0.0'),
     ]
 
     def params(exe):
@@ -135,7 +147,11 @@ def generate_launch_description():
                 LaunchConfiguration('cv_num_threads'), value_type=int)
             for name, kind in (('nano_error_correction', float), ('nano_border_error_rate', float),
                                ('nano_box_filter', int), ('nano_max_revisited', float),
-                               ('roi_margin', float), ('target_layout', str),
+                               ('roi_margin', float), ('image_timeout', float), ('target_layout', str),
+                               ('image_source', str), ('camera_sensor_width', int),
+                               ('camera_sensor_height', int), ('camera_fps', float),
+                               ('camera_rotate180', bool), ('af_mode', str),
+                               ('lens_position', float), ('debug_image_hz', float),
                                ('target_marker_id', int), ('corner_refinement', str)):
                 p[name] = ParameterValue(LaunchConfiguration(name), value_type=kind)
         if exe == 'fixed_eso':

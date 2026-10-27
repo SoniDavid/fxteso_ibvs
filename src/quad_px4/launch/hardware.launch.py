@@ -82,11 +82,20 @@ def generate_launch_description():
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
         # Must equal MPC_THR_HOVER on the aircraft; read it off a real hover.
         DeclareLaunchArgument('hover_thrust', default_value='0.60'),
+        # Velocity in pos_ctrl's Coriolis term. off, as in SITL: td differentiates EKF2's position,
+        # Vicon-aided in flight and runaway unaided, into the control law.
+        DeclareLaunchArgument('velocity_source', default_value='off',
+                              choices=['td', 'ekf2', 'vision', 'off']),
 
         # --- the camera ---------------------------------------------------------
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
-        # Start quad_cam's picamera2 driver. false = an external driver on camera_topic, which must
-        # run with FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA too or image_features receives nothing.
+        # inprocess: image_features opens the camera itself; no image crosses DDS (2.2 MB frames
+        # through DDS fell to ~3 fps under the full stack). topic: a driver publishes on camera_topic.
+        DeclareLaunchArgument('camera_source', default_value='inprocess', choices=['inprocess', 'topic']),
+        # inprocess only: a grey frame on camera_topic at this rate, for looking. 0 = none.
+        DeclareLaunchArgument('debug_image_hz', default_value='1.0'),
+        # topic only: start quad_cam's picamera2 driver. false = an external driver on camera_topic,
+        # which must run with FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA too or image_features gets nothing.
         DeclareLaunchArgument('camera_driver', default_value='true'),
         # What the driver publishes. Empty = the preset's render size, the one benchmarked at 50 Hz.
         DeclareLaunchArgument('camera_width', default_value=''),
@@ -103,8 +112,11 @@ def generate_launch_description():
         DeclareLaunchArgument('lens_position', default_value='0.83'),
 
         # --- vision compute -----------------------------------------------------
-        # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last detection).
-        DeclareLaunchArgument('detector_backend', default_value='hybrid'),
+        # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last
+        # detection) | nano_roi (nano around the last detection; ~2 ms locked on the Pi vs ~22 ms full frame).
+        DeclareLaunchArgument('detector_backend', default_value='nano_roi'),
+        # A camera that stops sending frames reads as lock lost after this long, not as a frozen lock.
+        DeclareLaunchArgument('image_timeout', default_value='0.2'),
         # aruco_nano tolerances (nano's own 0 / 0 rejects a marker for one mis-read bit).
         # roi_margin: fraction of the target box.
         DeclareLaunchArgument('nano_error_correction', default_value='0.3'),
@@ -133,10 +145,18 @@ def generate_launch_description():
         # --- the handover -------------------------------------------------------
         # 1..6 selects manual_control_setpoint.auxN; needs RC_MAP_AUXn. 0 = service only.
         DeclareLaunchArgument('consent_rc_aux', default_value='0'),
+        # Continuous marker lock (s) before consent hands over: the estimators' start-up transient
+        # put a 4 deg roll step on a handover 0.6 s after the first lock. 0 = consent alone.
+        DeclareLaunchArgument('min_lock_before_handover', default_value='3.0'),
         # Tighter than the node's 0.4 m default, which fires during the climb.
         DeclareLaunchArgument('handover_tolerance', default_value='0.15'),
+        # advisory: pos_ctrl starts with the estimators and ibvs_gate only reports. block: SITL's
+        # ordering. Either way pos_ctrl sends no setpoint without a marker lock.
+        DeclareLaunchArgument('ibvs_gate', default_value='advisory', choices=['advisory', 'block']),
         # ibvs_gate's alignment limit, tuned against a simulated pilot's perfect hover.
         DeclareLaunchArgument('max_feature_error', default_value='0.15'),
+        # The advisory report's limit: hand-held and real-world aiming is rougher than SITL's.
+        DeclareLaunchArgument('advisory_feature_error', default_value='0.5'),
         DeclareLaunchArgument('gate_timeout', default_value='120.0'),
         DeclareLaunchArgument('estimators_ready', default_value='5.0'),
         # Barometer-only height. The SITL barometer is 300x quieter than PX4's own model.
@@ -145,7 +165,7 @@ def generate_launch_description():
         # --- Vicon aiding: the receiver runs on the laptop (x86-64 SDK) with LARGE_DATA transport ---
         DeclareLaunchArgument('vicon', default_value='false',
                               description='feed Vicon to EKF2 as external vision'),
-        DeclareLaunchArgument('vicon_topic', default_value='/vicon/quad/quad',
+        DeclareLaunchArgument('vicon_topic', default_value='/vicon/fxteso_f450quad/fxteso_f450quad',
                               description='PoseStamped from the Vicon receiver'),
         # gated: aided iff the loop does not have the aircraft, so the scored window is unaided.
         # always: bring-up and shadow flights. oneshot: until the first handover. manual: service.
@@ -191,8 +211,12 @@ def generate_launch_description():
         cam['fx'] = cam['width'] / (2.0 * math.tan(cam['hfov'] / 2.0))
         return cam
 
+    def _inprocess(context):
+        return LaunchConfiguration('camera_source').perform(context) == 'inprocess'
+
     def _camera_driver(context, *a, **k):
-        if LaunchConfiguration('camera_driver').perform(context).lower() != 'true':
+        # inprocess: image_features holds the camera, and a second opener would find it busy.
+        if _inprocess(context) or LaunchConfiguration('camera_driver').perform(context).lower() != 'true':
             return []
         cam = _camera(context)
         best_effort = LaunchConfiguration('sensor_qos').perform(context).lower() == 'true'
@@ -214,9 +238,12 @@ def generate_launch_description():
         if LaunchConfiguration('vicon').perform(context).lower() != 'true':
             return []
         return [
-            LogInfo(msg='vicon: EKF2 external-vision aiding ON, policy %s. Load the EKF2_EV_* '
-                        'block from params/hardware.params and REBOOT the FC first.'
-                        % LaunchConfiguration('aiding_policy').perform(context)),
+            LogInfo(msg='vicon: EKF2 external-vision aiding ON, policy %s. Load params/hardware.params%s '
+                        'and REBOOT the FC first.'
+                        % (LaunchConfiguration('aiding_policy').perform(context),
+                           ' then params/hardware_vicon.params'
+                           if LaunchConfiguration('aiding_policy').perform(context) == 'always'
+                           else '')),
             Node(package=PKG, executable='vicon_px4_bridge', name='vicon_px4_bridge',
                  output='screen',
                  parameters=[{'use_sim_time': False,
@@ -257,17 +284,6 @@ def generate_launch_description():
                          LaunchConfiguration('takeoff_tolerance'), value_type=float),
                      'require_gnss': False}])
 
-    # require_target false: tgt_position is the simulator's, and the target here is a printed one.
-    gate = Node(
-        package=CTRL_PKG, executable='ibvs_gate', name='ibvs_gate', output='screen',
-        parameters=[{'use_sim_time': False,
-                     'max_feature_error': ParameterValue(
-                         LaunchConfiguration('max_feature_error'), value_type=float),
-                     'estimators_ready': ParameterValue(
-                         LaunchConfiguration('estimators_ready'), value_type=float),
-                     'timeout': ParameterValue(
-                         LaunchConfiguration('gate_timeout'), value_type=float),
-                     'require_target': False}])
 
     def _bridge(context, *a, **k):
         return [Node(
@@ -289,6 +305,8 @@ def generate_launch_description():
                          'require_consent': True,
                          'consent_rc_aux': ParameterValue(
                              LaunchConfiguration('consent_rc_aux'), value_type=int),
+                         'min_lock_before_handover': ParameterValue(
+                             LaunchConfiguration('min_lock_before_handover'), value_type=float),
                          # Known harmful: it defeats the offboard-loss failsafe.
                          'offboard_recovery': False,
                          'frame_yaw_offset': ParameterValue(
@@ -330,6 +348,14 @@ def generate_launch_description():
                 'nano_box_filter': LaunchConfiguration('nano_box_filter'),
                 'nano_max_revisited': LaunchConfiguration('nano_max_revisited'),
                 'roi_margin': LaunchConfiguration('roi_margin'),
+                'image_timeout': LaunchConfiguration('image_timeout'),
+                'image_source': 'libcamera' if _inprocess(context) else 'topic',
+                'camera_sensor_width': str(cam['native'][0]),
+                'camera_sensor_height': str(cam['native'][1]),
+                'camera_fps': str(cam['fps']),
+                'af_mode': LaunchConfiguration('af_mode'),
+                'lens_position': LaunchConfiguration('lens_position'),
+                'debug_image_hz': LaunchConfiguration('debug_image_hz'),
                 'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
                 'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
                     cam, scale, zD, _float('aruco3_margin', context), layout, mdict),
@@ -347,22 +373,50 @@ def generate_launch_description():
         'use_sim_time': 'false',
         'zD': LaunchConfiguration('zD'),
         'quad_mass': LaunchConfiguration('quad_mass'),
+        'velocity_source': LaunchConfiguration('velocity_source'),
     })
 
-    # px4_takeoff_gate -> estimation, then ibvs_gate -> pos_ctrl. Same ordering as SITL.
+    def _gated_control(context):
+        """ibvs_gate, and pos_ctrl either beside it (advisory) or on its exit (block)."""
+        advisory = LaunchConfiguration('ibvs_gate').perform(context) == 'advisory'
+        limit = 'advisory_feature_error' if advisory else 'max_feature_error'
+        # require_target false: tgt_position is the simulator's, and the target here is a printed one.
+        gate = Node(
+            package=CTRL_PKG, executable='ibvs_gate', name='ibvs_gate', output='screen',
+            parameters=[{'use_sim_time': False,
+                         'max_feature_error': ParameterValue(
+                             LaunchConfiguration(limit), value_type=float),
+                         'estimators_ready': ParameterValue(
+                             LaunchConfiguration('estimators_ready'), value_type=float),
+                         'timeout': ParameterValue(
+                             LaunchConfiguration('gate_timeout'), value_type=float),
+                         'require_target': False}])
+        if advisory:
+            report = RegisterEventHandler(OnProcessExit(
+                target_action=gate,
+                on_exit=lambda event, context: [LogInfo(msg=(
+                    'ibvs_gate (advisory): OK - aligned marker lock within %s.'
+                    if event.returncode == 0 else
+                    'ibvs_gate (advisory): no aligned lock within %s before its timeout; '
+                    'pos_ctrl is running regardless.') % LaunchConfiguration(limit).perform(context))]))
+            return [LogInfo(msg='ibvs_gate advisory: pos_ctrl starts now and servos on any marker '
+                                'lock; OFFBOARD still needs consent and a live lock.'),
+                    control, gate, report]
+        on_gate = RegisterEventHandler(OnProcessExit(
+            target_action=gate,
+            on_exit=lambda event, context: (
+                [control] if event.returncode == 0 else
+                [LogInfo(msg='ibvs_gate failed - pos_ctrl will NOT be started, because it would '
+                             'servo on the no-lock feature vector.')])))
+        return [gate, on_gate]
+
+    # px4_takeoff_gate -> estimation, then ibvs_gate and pos_ctrl as ibvs_gate:= says.
     estimation = RegisterEventHandler(OnProcessExit(
         target_action=takeoff_gate,
         on_exit=lambda event, context: (
-            _estimation(context) + [gate, control_on_gate]
+            _estimation(context) + _gated_control(context)
             if event.returncode == 0 else
             [LogInfo(msg='px4_takeoff_gate failed - the estimators will NOT be started.')])))
-
-    control_on_gate = RegisterEventHandler(OnProcessExit(
-        target_action=gate,
-        on_exit=lambda event, context: (
-            [control] if event.returncode == 0 else
-            [LogInfo(msg='ibvs_gate failed - pos_ctrl will NOT be started, because it would '
-                         'servo on the no-lock feature vector.')])))
 
     def _bag(context, *a, **k):
         if LaunchConfiguration('rosbag').perform(context).lower() != 'true':

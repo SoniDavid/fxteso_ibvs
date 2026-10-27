@@ -1,0 +1,13 @@
+# Vicon flight overlay: load AFTER hardware.params, then reboot. Only the values that differ.
+# Vicon aids EKF2 for the whole flight (flight.launch.py, aiding_policy:=always), so a position
+# exists and the failsafe may use it. Back to the bench (no Vicon): reload hardware.params alone.
+# QGC format: <sysid> <compid> <name> <value> <type>; type 6 = INT32, 9 = REAL32.
+
+# Horizontal position (bit0), height (bit1) and yaw (bit3); velocity stays off.
+# Yaw makes the Vicon frame EKF2's heading datum: vicon_px4_bridge's frame check against the
+# magnetometer heading, before the first sample, is the guard against a rotated frame.
+1	1	EKF2_EV_CTRL	11	6
+# Vision height. Never cut under aiding_policy:=always; the baro read 1.9 m on the table after a reboot.
+1	1	EKF2_HGT_REF	3	6
+# Offboard loss -> Hold: a marker lock loss holds the Vicon position instead of drifting in Altitude.
+1	1	COM_OBL_RC_ACT	5	6

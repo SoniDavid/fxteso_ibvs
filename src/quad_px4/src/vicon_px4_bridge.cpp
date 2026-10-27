@@ -35,7 +35,7 @@ int main(int argc, char **argv)
 	auto node = rclcpp::Node::make_shared("vicon_px4_bridge");
 
 	const std::string vicon_topic =
-		node->declare_parameter<std::string>("vicon_topic", "/vicon/quad/quad");
+		node->declare_parameter<std::string>("vicon_topic", "/vicon/fxteso_f450quad/fxteso_f450quad");
 	const double rate = node->declare_parameter<double>("rate", 50.0);
 	// Older than this and the stream stops rather than repeating the last pose: a frozen sample
 	// reads to EKF2 as a perfect measurement and fights the IMU.

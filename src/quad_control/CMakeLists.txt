@@ -53,6 +53,20 @@ target_include_directories(image_features PUBLIC ${EIGEN3_INCLUDE_DIRS} ${OpenCV
 target_link_libraries(image_features ${OpenCV_LIBRARIES})
 ament_target_dependencies(image_features rclcpp std_msgs geometry_msgs sensor_msgs cv_bridge quad_common)
 
+# image_source:=libcamera, the aircraft's in-process camera. Built only where libcamera is installed.
+find_package(PkgConfig)
+if(PkgConfig_FOUND)
+  pkg_check_modules(LIBCAMERA IMPORTED_TARGET libcamera)
+endif()
+if(LIBCAMERA_FOUND)
+  message(STATUS "image_features: libcamera ${LIBCAMERA_VERSION} - image_source:=libcamera available")
+  target_sources(image_features PRIVATE src/libcamera_source.cpp)
+  target_link_libraries(image_features PkgConfig::LIBCAMERA)
+  target_compile_definitions(image_features PRIVATE QUAD_HAVE_LIBCAMERA)
+else()
+  message(STATUS "image_features: no libcamera - image_source:=topic only")
+endif()
+
 install(TARGETS ${IBVS_NODES} pos_ctrl image_features ibvs_gate
   DESTINATION lib/${PROJECT_NAME})
 
