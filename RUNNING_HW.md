@@ -56,7 +56,7 @@ These add to the shared reference in [RUNNING.md](RUNNING.md#launch-arguments-re
 
 ### Vicon (`hardware.launch.py`)
 - `vicon:=<bool>` — Start `vicon_px4_bridge` and aid EKF2 with mocap (default: `false`).
-- `vicon_topic:=<str>` — The receiver's `PoseStamped` (default: `/vicon/quad/quad`).
+- `vicon_topic:=<str>` — The receiver's `PoseStamped` (default: `/vicon/fxteso_f450quad/fxteso_f450quad`).
 - `aiding_policy:=<gated|always|oneshot|manual>` — `gated` aids EKF2 only while the loop does
   **not** have the aircraft, so the scored OFFBOARD window is unaided. `always` is for bring-up
   and shadow flights. `manual` is the `~/vicon_aiding` service (default: `gated`).

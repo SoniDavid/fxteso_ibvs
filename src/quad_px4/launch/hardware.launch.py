@@ -161,7 +161,7 @@ def generate_launch_description():
         # --- Vicon aiding: the receiver runs on the laptop (x86-64 SDK) with LARGE_DATA transport ---
         DeclareLaunchArgument('vicon', default_value='false',
                               description='feed Vicon to EKF2 as external vision'),
-        DeclareLaunchArgument('vicon_topic', default_value='/vicon/quad/quad',
+        DeclareLaunchArgument('vicon_topic', default_value='/vicon/fxteso_f450quad/fxteso_f450quad',
                               description='PoseStamped from the Vicon receiver'),
         # gated: aided iff the loop does not have the aircraft, so the scored window is unaided.
         # always: bring-up and shadow flights. oneshot: until the first handover. manual: service.

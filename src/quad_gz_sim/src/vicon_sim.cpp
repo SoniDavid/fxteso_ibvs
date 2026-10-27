@@ -19,7 +19,7 @@ int main(int argc, char **argv)
 	const std::string state_topic =
 		node->declare_parameter<std::string>("state_topic", "quad_state");
 	const std::string vicon_topic =
-		node->declare_parameter<std::string>("vicon_topic", "/vicon/quad/quad");
+		node->declare_parameter<std::string>("vicon_topic", "/vicon/fxteso_f450quad/fxteso_f450quad");
 	// A real Vicon system streams faster than the bridge resamples it.
 	const double rate = node->declare_parameter<double>("rate", 100.0);
 
