@@ -2,8 +2,10 @@
 
     ros2 run quad_cam probe_detect
     ros2 run quad_cam probe_detect --ros-args -p marker_dict:=7x7 -p image_qos:=sensor_data
+    ros2 run quad_cam probe_detect --ros-args -p target_layout:=single_marker
 
-Reports the OpenCV detect cost (p50/p95/p99), the IDs seen and the lock fraction (exactly {4,6,8,10}).
+Reports the OpenCV detect cost (p50/p95/p99), the IDs seen and the lock fraction, by image_features'
+rule: exactly {4,6,8,10} for four_markers, the target ID exactly once for single_marker.
 """
 
 import os
@@ -60,6 +62,11 @@ class ProbeDetect(Node):
         topic = self.declare_parameter("image_topic", "/quad/camera/image_raw").value
         qos_kind = self.declare_parameter("image_qos", "reliable").value
         dict_key = self.declare_parameter("marker_dict", "7x7").value
+        self._layout = self.declare_parameter("target_layout", "four_markers").value
+        if self._layout not in ("four_markers", "single_marker"):
+            raise SystemExit("target_layout:=%s is not one of four_markers, single_marker"
+                             % self._layout)
+        self._marker_id = int(self.declare_parameter("target_marker_id", 4).value)
         self._report_every = float(self.declare_parameter("report_period_s", 5.0).value)
 
         # Off by default: with it on, apt's cv2 4.6 decoded no markers on SITL frames that it
@@ -85,8 +92,8 @@ class ProbeDetect(Node):
         self._ids_seen = {}
         self.create_timer(self._report_every, self._report)
         self.get_logger().info(
-            "probing %s, DICT_%s_50, aruco3=%s%s"
-            % (topic, dict_key.upper(), use_aruco3,
+            "probing %s, DICT_%s_50, %s, aruco3=%s%s"
+            % (topic, dict_key.upper(), self._layout, use_aruco3,
                " ratio=%.4f" % min_marker_ratio if use_aruco3 else ""))
 
     def _cb(self, msg: Image):
@@ -101,10 +108,15 @@ class ProbeDetect(Node):
         self._ms.append((time.perf_counter() - t0) * 1e3)
         self._n += 1
 
-        flat = set(int(i) for i in ids.flatten()) if ids is not None else set()
+        seen = [int(i) for i in ids.flatten()] if ids is not None else []
+        flat = set(seen)
         for i in flat:
             self._ids_seen[i] = self._ids_seen.get(i, 0) + 1
-        if flat == _REQUIRED_IDS:
+        if self._layout == "single_marker":
+            locked = seen.count(self._marker_id) == 1
+        else:
+            locked = len(seen) == 4 and flat == _REQUIRED_IDS
+        if locked:
             self._n_lock += 1
 
     def _report(self):

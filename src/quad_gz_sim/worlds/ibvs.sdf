@@ -135,7 +135,7 @@
       <shadows>false</shadows>
     </scene>
 
-    <!-- 2 cm down so z=0 does not z-fight the 1 mm ArUco plate. The collision makes ground
+    <!-- 2 cm down so z=0 does not z-fight the 1 mm ArUco target. The collision makes ground
          contact real; the plugin's NaN guard stops a divergence becoming a DART assert. -->
     <model name="ground_plane">
       <static>true</static>

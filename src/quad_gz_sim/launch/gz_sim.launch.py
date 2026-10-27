@@ -28,9 +28,10 @@ PKG = 'quad_gz_sim'
 
 PLANTS = ('analytic', 'gazebo', 'px4')
 
-# Marker dictionaries image_features can be pointed at, and the meshes directory that carries
+# Per target layout: the source model and, per marker dictionary, the meshes directory carrying
 # the matching textures. Same IDs either way, so the corner-ordering branches never change.
-MARKER_DICTS = {'7x7': 'meshes', '4x4': 'meshes_4x4'}
+TARGETS = {'four_markers': ('aruco_target', {'7x7': 'meshes', '4x4': 'meshes_4x4'}),
+           'single_marker': ('aruco_single_marker', {'7x7': 'meshes_7x7', '4x4': 'meshes_4x4'})}
 
 
 def _load(name):
@@ -69,6 +70,9 @@ def generate_launch_description():
         # Scales the ArUco target. Smaller markers buy field-of-view slack and cost decode
         # pixels; footprint.py prints both sides of that trade.
         DeclareLaunchArgument('target_scale', default_value='1.0'),
+        # four_markers: markers 4/6/8/10 on one board. single_marker: one marker on a US letter
+        # sheet; ignores target_scale.
+        DeclareLaunchArgument('target_layout', default_value='four_markers'),
         DeclareLaunchArgument('marker_dict', default_value='7x7',
                               description='7x7 (the thesis, and every recorded bag) or 4x4, '
                                           'which decodes at about two thirds the pixel size'),
@@ -160,9 +164,10 @@ def generate_launch_description():
                 'removed; fix the SDF or this launch file before running.' % what)
         return out
 
-    def _derive_model(name, rewrite, meshes_from=None):
-        """Write a rewritten copy of models/<name>/ into the derived tree; meshes/ is symlinked."""
-        src = os.path.join(models, name)
+    def _derive_model(name, rewrite, meshes_from=None, source=None):
+        """Write a rewritten copy of models/<source or name>/ into the derived tree as <name>;
+        meshes/ is symlinked."""
+        src = os.path.join(models, source or name)
         dst = os.path.join(derived_models, name)
         shutil.rmtree(dst, ignore_errors=True)
         os.makedirs(dst)
@@ -179,15 +184,20 @@ def generate_launch_description():
                                'quad_description/scripts/make_markers.py.' % meshes)
         os.symlink(meshes, os.path.join(dst, 'meshes'))
 
-    def _models_for(plant, camera, target_scale, marker_dict, camera_rate, quad_mass):
+    def _models_for(plant, camera, target_scale, marker_dict, camera_rate, quad_mass,
+                    target_layout='four_markers'):
         """Derive F450_base (camera preset, mass, welded rotors under gazebo), F450 (no rotor
-        spin under gazebo) and aruco_target (scale, marker dictionary)."""
+        spin under gazebo) and aruco_target (layout, scale, marker dictionary)."""
         if camera not in cameras:
             raise RuntimeError('camera:=%s is not one of %s.'
                                % (camera, ', '.join(cameras)))
-        if marker_dict not in MARKER_DICTS:
+        if target_layout not in TARGETS:
+            raise RuntimeError('target_layout:=%s is not one of %s.'
+                               % (target_layout, ', '.join(TARGETS)))
+        target_source, marker_meshes = TARGETS[target_layout]
+        if marker_dict not in marker_meshes:
             raise RuntimeError('marker_dict:=%s is not one of %s.'
-                               % (marker_dict, ', '.join(MARKER_DICTS)))
+                               % (marker_dict, ', '.join(marker_meshes)))
         if target_scale <= 0:
             raise RuntimeError('target_scale:=%g must be positive.' % target_scale)
         cam = cameras[camera]
@@ -221,7 +231,7 @@ def generate_launch_description():
             return sdf[:m.start()] + blk + sdf[m.end():]
 
         def target_block(sdf):
-            if target_scale == 1.0:
+            if target_scale == 1.0 or target_layout == 'single_marker':
                 return sdf
             sdf = _sub_once(sdf, r'<scale>[^<]*</scale>',
                             '<scale>%g %g %g</scale>'
@@ -238,7 +248,7 @@ def generate_launch_description():
         _derive_model('F450_base', lambda sdf: weld(
             airframe.rewrite_mass(camera_block(sdf), quad_mass)))
         _derive_model('F450', airframe.strip_rotor_spin if gazebo else (lambda x: x), False)
-        _derive_model('aruco_target', target_block, MARKER_DICTS[marker_dict])
+        _derive_model('aruco_target', target_block, marker_meshes[marker_dict], target_source)
 
     def _world_for(plant, start_altitude=4.0, quad_mass=2.0):
         """Derive the world for `plant`: filter ONLY blocks, zero gravity for analytic, and
@@ -294,7 +304,8 @@ def generate_launch_description():
                     float(LaunchConfiguration('target_scale').perform(context)),
                     LaunchConfiguration('marker_dict').perform(context),
                     float(LaunchConfiguration('camera_rate').perform(context)),
-                    float(LaunchConfiguration('quad_mass').perform(context)))
+                    float(LaunchConfiguration('quad_mass').perform(context)),
+                    LaunchConfiguration('target_layout').perform(context))
         cam = cameras[camera]
         # Logged because the sensor mode is a hardware constraint the sim otherwise hides:
         # Module 2's full-FOV mode runs at 41.85 fps against a 50 Hz loop.

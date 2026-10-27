@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 	const double estimators_ready =
 		node->declare_parameter<double>("estimators_ready", 5.0);
 
-	// tgt_position is the simulator's; on hardware the target is a printed plate and no such
+	// tgt_position is the simulator's; on hardware the target is a printed one and no such
 	// topic exists. Only its arrival is tested, never its value.
 	const bool require_target = node->declare_parameter<bool>("require_target", true);
 

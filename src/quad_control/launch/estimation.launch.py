@@ -55,8 +55,14 @@ def generate_launch_description():
         # Brown-Conrady k1,k2,p1,p2,k3. All zero keeps undistortPoints out of the path; it only
         # ever touches the four marker centroids, so it costs microseconds, not a frame.
         DeclareLaunchArgument('camera_distortion', default_value='[0.0, 0.0, 0.0, 0.0, 0.0]'),
-        # Image moment at the desired depth, aD = 0.5625 * target_scale^2 * (f/zD)^2.
+        # Image moment at the desired depth, aD = moment * (f/zD)^2 (camera_presets.target_geometry).
         DeclareLaunchArgument('aD', default_value='0.00000076589'),
+        # four_markers: centroids of markers 4/6/8/10. single_marker: one marker's corners, yaw
+        # from its edges.
+        DeclareLaunchArgument('target_layout', default_value='four_markers'),
+        DeclareLaunchArgument('target_marker_id', default_value='4'),
+        # opencv path only (nano always refines): none | subpix | contour.
+        DeclareLaunchArgument('corner_refinement', default_value='none'),
         DeclareLaunchArgument('marker_dict', default_value='7x7',
                               description='must match the textures gz_sim.launch.py selected'),
         # The camera topic image_features reads, so a distortion node or a real driver can sit
@@ -129,7 +135,8 @@ def generate_launch_description():
                 LaunchConfiguration('cv_num_threads'), value_type=int)
             for name, kind in (('nano_error_correction', float), ('nano_border_error_rate', float),
                                ('nano_box_filter', int), ('nano_max_revisited', float),
-                               ('roi_margin', float)):
+                               ('roi_margin', float), ('target_layout', str),
+                               ('target_marker_id', int), ('corner_refinement', str)):
                 p[name] = ParameterValue(LaunchConfiguration(name), value_type=kind)
         if exe == 'fixed_eso':
             p['gamma1_xy'] = ParameterValue(LaunchConfiguration('gamma1_xy'), value_type=float)

@@ -1,9 +1,10 @@
 """Compute benchmark: the real camera, estimation and control on the Pi, no PX4 and no gates.
 
-  ros2 launch quad_cam bench.launch.py [load:=synthetic|plate|none] [camera:=...] [zD:=1.2]
+  ros2 launch quad_cam bench.launch.py [load:=synthetic|target|none] [camera:=...] [zD:=1.2]
+                                       [target_layout:=four_markers|single_marker]
 
-load: synthetic fakes plant, target and lock (default); plate drives image_features from a printed
-plate; none leaves fixed_eso/pos_ctrl idle.
+load: synthetic fakes plant, target and lock (default); target drives image_features from a printed
+four-marker target; none leaves fixed_eso/pos_ctrl idle.
 """
 import importlib.util
 import os
@@ -45,6 +46,10 @@ def generate_launch_description():
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
         DeclareLaunchArgument('zD', default_value='1.2'),
         DeclareLaunchArgument('target_scale', default_value='0.5'),
+        # four_markers | single_marker (one marker on US letter; target_scale does not apply).
+        DeclareLaunchArgument('target_layout', default_value='four_markers',
+                              choices=['four_markers', 'single_marker']),
+        DeclareLaunchArgument('target_marker_id', default_value='4'),
         DeclareLaunchArgument('marker_dict', default_value='7x7'),
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
         DeclareLaunchArgument('af_mode', default_value='manual'),
@@ -67,25 +72,32 @@ def generate_launch_description():
         DeclareLaunchArgument('use_aruco3_detection', default_value='false'),
         DeclareLaunchArgument('aruco3_margin', default_value='0.7'),
         DeclareLaunchArgument('cv_num_threads', default_value='1'),
+        # opencv path only: none | subpix | contour.
+        DeclareLaunchArgument('corner_refinement', default_value='none',
+                              choices=['none', 'subpix', 'contour']),
     ]
 
     def _stack(context, *a, **k):
         load = LaunchConfiguration('load').perform(context).lower()
-        if load not in ('synthetic', 'plate', 'none'):
-            raise RuntimeError('load:=%s is not synthetic, plate or none.' % load)
+        if load not in ('synthetic', 'target', 'none'):
+            raise RuntimeError('load:=%s is not synthetic, target or none.' % load)
         synthetic = load == 'synthetic'
 
         zD = float(LaunchConfiguration('zD').perform(context))
         scale = float(LaunchConfiguration('target_scale').perform(context))
         margin = float(LaunchConfiguration('aruco3_margin').perform(context))
-        cam = presets.resolve(LaunchConfiguration('camera').perform(context), scale, zD)
+        layout = LaunchConfiguration('target_layout').perform(context)
+        mdict = LaunchConfiguration('marker_dict').perform(context)
+        cam = presets.resolve(LaunchConfiguration('camera').perform(context), scale, zD,
+                              layout, mdict)
         image_qos = LaunchConfiguration('image_qos').perform(context)
 
         out = [
             LogInfo(msg=presets.summary(cam, zD)),
-            LogInfo(msg='bench: load=%s, detector %s, marker ~%.0f px, use_sim_time false'
-                        % (load, LaunchConfiguration('detector_backend').perform(context),
-                           presets.marker_px(cam, scale, zD))),
+            LogInfo(msg='bench: load=%s, target %s, detector %s, marker ~%.0f px, '
+                        'use_sim_time false'
+                        % (load, layout, LaunchConfiguration('detector_backend').perform(context),
+                           presets.marker_px(cam, scale, zD, layout, mdict))),
             include(CAM_PKG, 'camera.launch.py', {
                 'width': str(cam['width']),
                 'height': str(cam['height']),
@@ -117,8 +129,11 @@ def generate_launch_description():
                 'roi_margin': LaunchConfiguration('roi_margin'),
                 'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
                 'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
-                    cam, scale, zD, margin),
+                    cam, scale, zD, margin, layout, mdict),
                 'cv_num_threads': LaunchConfiguration('cv_num_threads'),
+                'target_layout': layout,
+                'target_marker_id': LaunchConfiguration('target_marker_id'),
+                'corner_refinement': LaunchConfiguration('corner_refinement'),
             }),
             include(CTRL_PKG, 'control.launch.py', {
                 'use_sim_time': 'false',

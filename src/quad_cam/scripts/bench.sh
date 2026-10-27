@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # One-shot IBVS-stack real-time benchmark for the Pi.
 #
-#   src/quad_cam/scripts/bench.sh [--load synthetic|plate|none] [--att true|false]
+#   src/quad_cam/scripts/bench.sh [--load synthetic|target|none] [--att true|false]
 #                                 [--duration SECONDS] [--camera PRESET] [--cv-threads N]
 #                                 [--backend nano|opencv|hybrid] [--nano-ec R] [--nano-border R]
+#                                 [--layout four_markers|single_marker]
 #
 # Launches quad_cam/bench.launch.py + probe_bench, then writes bench_<ts>.log with the
 # per-node SimRate 'loop:' lines, image_features' detect timing and probe_bench's table.
@@ -18,6 +19,7 @@ CVT=1
 BACKEND=hybrid
 NANO_EC=0.3
 NANO_BORDER=0.35
+LAYOUT=four_markers
 while [ $# -gt 0 ]; do
     case "$1" in
         --load) LOAD=$2; shift 2 ;;
@@ -28,6 +30,7 @@ while [ $# -gt 0 ]; do
         --backend) BACKEND=$2; shift 2 ;;
         --nano-ec) NANO_EC=$2; shift 2 ;;
         --nano-border) NANO_BORDER=$2; shift 2 ;;
+        --layout) LAYOUT=$2; shift 2 ;;
         *) echo "unknown arg: $1"; exit 2 ;;
     esac
 done
@@ -45,10 +48,11 @@ export FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA
 echo ">> cleanup"
 ( cd "$WS" && ./cleanup.sh ) || true
 
-echo ">> launch: bench.launch.py load:=$LOAD attitude_controller:=$ATT camera:=$CAMERA cv_num_threads:=$CVT detector_backend:=$BACKEND nano_error_correction:=$NANO_EC nano_border_error_rate:=$NANO_BORDER"
+echo ">> launch: bench.launch.py load:=$LOAD attitude_controller:=$ATT camera:=$CAMERA cv_num_threads:=$CVT detector_backend:=$BACKEND nano_error_correction:=$NANO_EC nano_border_error_rate:=$NANO_BORDER target_layout:=$LAYOUT"
 ros2 launch quad_cam bench.launch.py \
     load:="$LOAD" attitude_controller:="$ATT" camera:="$CAMERA" cv_num_threads:="$CVT" \
     detector_backend:="$BACKEND" nano_error_correction:="$NANO_EC" nano_border_error_rate:="$NANO_BORDER" \
+    target_layout:="$LAYOUT" \
     > "$LAUNCH_LOG" 2>&1 &
 LAUNCH_PID=$!
 trap 'kill $LAUNCH_PID 2>/dev/null; ( cd "$WS" && ./cleanup.sh ) >/dev/null 2>&1' EXIT
@@ -57,7 +61,7 @@ echo ">> warm-up (18 s: camera AE + node stagger)"
 sleep 18
 
 echo ">> probe_bench for ${DURATION}s"
-# synthetic load remaps image_features' output aside; plate/none leave it on /ImFeat_valid
+# synthetic load remaps image_features' output aside; target/none leave it on /ImFeat_valid
 IMFEAT=/ImFeat_valid_probe
 [ "$LOAD" = synthetic ] || IMFEAT=/ImFeat_valid
 ros2 run quad_cam probe_bench --ros-args \
@@ -69,7 +73,7 @@ sleep 2
 
 {
     echo "# IBVS stack benchmark  $TS"
-    echo "# load=$LOAD  attitude_controller=$ATT  camera=$CAMERA  duration=${DURATION}s  cv_num_threads=$CVT  detector_backend=$BACKEND  nano_ec=$NANO_EC  nano_border=$NANO_BORDER"
+    echo "# load=$LOAD  attitude_controller=$ATT  camera=$CAMERA  duration=${DURATION}s  cv_num_threads=$CVT  detector_backend=$BACKEND  nano_ec=$NANO_EC  nano_border=$NANO_BORDER  target_layout=$LAYOUT"
     echo "# git: $(git -C "$WS" rev-parse --short HEAD 2>/dev/null || echo n/a)"
     echo "# $(uname -srm)   model: $(tr -d '\0' < /proc/device-tree/model 2>/dev/null)"
     echo "# baseline: $(vcgencmd measure_temp 2>/dev/null)  $(vcgencmd get_throttled 2>/dev/null)"
@@ -79,6 +83,9 @@ sleep 2
     echo
     echo "=== image_features detect timing ==="
     grep -E 'detectMarkers \(' "$LAUNCH_LOG" || echo "(none - check $LAUNCH_LOG)"
+    echo
+    echo "=== image_features decode rate ==="
+    grep -E 'markers/frame' "$LAUNCH_LOG" || echo "(none - no frames decoded, or load:=synthetic)"
     echo
     echo "=== probe_bench ==="
     cat "$PROBE_LOG"

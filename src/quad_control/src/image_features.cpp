@@ -330,14 +330,46 @@ int main(int argc, char *argv[])
 	if (cv_num_threads > 0)
 		cv::setNumThreads(cv_num_threads);
 
+	// four_markers: the centroids of markers 4/6/8/10. single_marker: one marker's four corners.
+	const std::string target_layout = node->declare_parameter<std::string>("target_layout", "four_markers");
+	if (target_layout != "four_markers" && target_layout != "single_marker")
+	{
+		RCLCPP_FATAL(node->get_logger(), "target_layout:=%s is not one of four_markers, single_marker.",
+		             target_layout.c_str());
+		return 1;
+	}
+	const bool single_marker = (target_layout == "single_marker");
+	const int target_marker_id =
+		static_cast<int>(node->declare_parameter<int>("target_marker_id", 4));
+	const int target_markers = single_marker ? 1 : 4;
+
+	// opencv path only; nano always refines with cornerSubPix.
+	const std::string corner_refinement =
+		node->declare_parameter<std::string>("corner_refinement", "none");
+	const std::map<std::string, cv::aruco::CornerRefineMethod> kRefine = {
+		{"none", cv::aruco::CORNER_REFINE_NONE}, {"subpix", cv::aruco::CORNER_REFINE_SUBPIX},
+		{"contour", cv::aruco::CORNER_REFINE_CONTOUR}};
+	if (kRefine.find(corner_refinement) == kRefine.end())
+	{
+		RCLCPP_FATAL(node->get_logger(), "corner_refinement:=%s is not one of none, subpix, contour.",
+		             corner_refinement.c_str());
+		return 1;
+	}
+
 	cv::aruco::DetectorParameters parameters;
 	parameters.useAruco3Detection = use_aruco3;
 	parameters.minMarkerLengthRatioOriginalImg = static_cast<float>(min_marker_ratio);
+	parameters.cornerRefinementMethod = kRefine.at(corner_refinement);
 	cv::aruco::ArucoDetector detector(dictionary, parameters);
 	if (!use_nano || detector_backend == "hybrid")
-		RCLCPP_INFO(node->get_logger(), "aruco detector: opencv, aruco3 %s (ratio %.4f)",
-		            use_aruco3 ? "on" : "off", min_marker_ratio);
-	const auto exact_target = [](const std::vector<int> &ids) {
+		RCLCPP_INFO(node->get_logger(), "aruco detector: opencv, aruco3 %s (ratio %.4f), corners %s",
+		            use_aruco3 ? "on" : "off", min_marker_ratio, corner_refinement.c_str());
+	RCLCPP_INFO(node->get_logger(), "target layout %s%s", target_layout.c_str(),
+	            single_marker ? (", marker ID " + std::to_string(target_marker_id)).c_str() : "");
+	// single_marker: other IDs are ignored, but the target ID twice is a misdecode and not a lock.
+	const auto exact_target = [&](const std::vector<int> &ids) {
+		if (single_marker)
+			return std::count(ids.begin(), ids.end(), target_marker_id) == 1;
 		return ids.size() == 4 && std::set<int>(ids.begin(), ids.end()) == std::set<int>{4, 6, 8, 10};
 	};
 	cv::Rect roi_box;
@@ -430,8 +462,9 @@ int main(int argc, char *argv[])
 				if (have_roi)
 				{
 					std::vector<cv::Point2f> all;
-					for (const auto &marker : markerCorners)
-						all.insert(all.end(), marker.begin(), marker.end());
+					for (size_t i = 0; i < markerCorners.size(); ++i)
+						if (!single_marker || markerIds[i] == target_marker_id)
+							all.insert(all.end(), markerCorners[i].begin(), markerCorners[i].end());
 					roi_box = cv::boundingRect(all);
 				}
 			}
@@ -464,22 +497,35 @@ int main(int argc, char *argv[])
 		}
 
 		// Identity, not just count: a wrong or duplicated ID would keep last frame's centroids.
-		const bool ids_ok = (markerIds.size() == 4) &&
-			(std::set<int>(markerIds.begin(), markerIds.end()) == std::set<int>{4, 6, 8, 10});
+		const bool ids_ok = exact_target(markerIds);
 
         //If no arucos are detected, then print on screen
 		if (!ids_ok)
 		{
 			// Counted, not printed. One line per frame at 50 Hz buried every WARN in the console;
 			// the 10 s report below carries the same information with p already fitted.
-			if (markerIds.size() > 4)
-				++spurious_n;
+			if (single_marker)
+			{
+				const long n_target = std::count(markerIds.begin(), markerIds.end(), target_marker_id);
+				if (n_target > 1)
+					++spurious_n;
+				else
+					++marker_hist[0];
+				if (markerIds.size() > static_cast<size_t>(n_target))
+					++wrong_ids_n;
+				im_feat_sources.data = 0;
+			}
 			else
-				++marker_hist[markerIds.size()];
-			if (markerIds.size() == 4)
-				++wrong_ids_n;
-			// What was measured, so a bag can tell "target left the frame" from "did not decode".
-			im_feat_sources.data = static_cast<uint8_t>(std::min<size_t>(markerIds.size(), 4));
+			{
+				if (markerIds.size() > 4)
+					++spurious_n;
+				else
+					++marker_hist[markerIds.size()];
+				if (markerIds.size() == 4)
+					++wrong_ids_n;
+				// What was measured, so a bag can tell "target left the frame" from "did not decode".
+				im_feat_sources.data = static_cast<uint8_t>(std::min<size_t>(markerIds.size(), 4));
+			}
 			qx = 0;
 			qy = 0;
 			qz = 1;
@@ -501,176 +547,36 @@ int main(int argc, char *argv[])
 
 		else
         {
-			++marker_hist[4];
+			++marker_hist[target_markers];
 
-			// Assignment of Point 1
-			if (markerIds[0] == 6)
+			// four_markers: p1..p4 are the centroids of markers 6, 4, 8, 10 (the moments' order).
+			// single_marker: the target marker's own corners, in ArUco's order.
+			float pu[4], pn[4];
+			if (single_marker)
 			{
-				cv::Point2f p11 = markerCorners[0].at(0);
-				cv::Point2f p21 = markerCorners[0].at(1);
-				cv::Point2f p31 = markerCorners[0].at(2);
-				cv::Point2f p41 = markerCorners[0].at(3);
-				// Centroid
-				ug1 = (p11.x + p21.x + p31.x + p41.x) / 4.0f;
-				ng1 = (p11.y + p21.y + p31.y + p41.y) / 4.0f;
+				const auto &c = markerCorners[std::find(markerIds.begin(), markerIds.end(),
+				                                        target_marker_id) - markerIds.begin()];
+				for (int i = 0; i < 4; ++i)
+				{
+					pu[i] = c[i].x;
+					pn[i] = c[i].y;
+				}
 			}
-			else if (markerIds[1] == 6)
+			else
 			{
-				cv::Point2f p11 = markerCorners[1].at(0);
-				cv::Point2f p21 = markerCorners[1].at(1);
-				cv::Point2f p31 = markerCorners[1].at(2);
-				cv::Point2f p41 = markerCorners[1].at(3);
-				// Centroid
-				ug1 = (p11.x + p21.x + p31.x + p41.x) / 4.0f;
-				ng1 = (p11.y + p21.y + p31.y + p41.y) / 4.0f;
+				const int kOrder[4] = {6, 4, 8, 10};
+				for (int i = 0; i < 4; ++i)
+				{
+					const auto &c = markerCorners[std::find(markerIds.begin(), markerIds.end(),
+					                                        kOrder[i]) - markerIds.begin()];
+					pu[i] = (c[0].x + c[1].x + c[2].x + c[3].x) / 4.0f;
+					pn[i] = (c[0].y + c[1].y + c[2].y + c[3].y) / 4.0f;
+				}
 			}
-			else if (markerIds[2] == 6)
-			{
-				cv::Point2f p11 = markerCorners[2].at(0);
-				cv::Point2f p21 = markerCorners[2].at(1);
-				cv::Point2f p31 = markerCorners[2].at(2);
-				cv::Point2f p41 = markerCorners[2].at(3);
-				// Centroid
-				ug1 = (p11.x + p21.x + p31.x + p41.x) / 4.0f;
-				ng1 = (p11.y + p21.y + p31.y + p41.y) / 4.0f;
-			}
-			else if (markerIds[3] == 6)
-			{
-				cv::Point2f p11 = markerCorners[3].at(0);
-				cv::Point2f p21 = markerCorners[3].at(1);
-				cv::Point2f p31 = markerCorners[3].at(2);
-				cv::Point2f p41 = markerCorners[3].at(3);
-				// Centroid
-				ug1 = (p11.x + p21.x + p31.x + p41.x) / 4.0f;
-				ng1 = (p11.y + p21.y + p31.y + p41.y) / 4.0f;
-			}
-
-			// Assignment of Point 2
-			if (markerIds[0] == 4)
-			{
-				cv::Point2f p12 = markerCorners[0].at(0);
-				cv::Point2f p22 = markerCorners[0].at(1);
-				cv::Point2f p32 = markerCorners[0].at(2);
-				cv::Point2f p42 = markerCorners[0].at(3);
-				// Centroid
-				ug2 = (p12.x + p22.x + p32.x + p42.x) / 4.0f;
-				ng2 = (p12.y + p22.y + p32.y + p42.y) / 4.0f;
-			}
-			else if (markerIds[1] == 4)
-			{
-				cv::Point2f p12 = markerCorners[1].at(0);
-				cv::Point2f p22 = markerCorners[1].at(1);
-				cv::Point2f p32 = markerCorners[1].at(2);
-				cv::Point2f p42 = markerCorners[1].at(3);
-				// Centroid
-				ug2 = (p12.x + p22.x + p32.x + p42.x) / 4.0f;
-				ng2 = (p12.y + p22.y + p32.y + p42.y) / 4.0f;
-			}
-			else if (markerIds[2] == 4)
-			{
-				cv::Point2f p12 = markerCorners[2].at(0);
-				cv::Point2f p22 = markerCorners[2].at(1);
-				cv::Point2f p32 = markerCorners[2].at(2);
-				cv::Point2f p42 = markerCorners[2].at(3);
-				// Centroid
-				ug2 = (p12.x + p22.x + p32.x + p42.x) / 4.0f;
-				ng2 = (p12.y + p22.y + p32.y + p42.y) / 4.0f;
-			}
-			else if (markerIds[3] == 4)
-			{
-				cv::Point2f p12 = markerCorners[3].at(0);
-				cv::Point2f p22 = markerCorners[3].at(1);
-				cv::Point2f p32 = markerCorners[3].at(2);
-				cv::Point2f p42 = markerCorners[3].at(3);
-				// Centroid
-				ug2 = (p12.x + p22.x + p32.x + p42.x) / 4.0f;
-				ng2 = (p12.y + p22.y + p32.y + p42.y) / 4.0f;
-			}
-			///////////////////////////////////////////////////////////////////////////////77
-			//Assignment of Point 3
-			if (markerIds[0] == 8)
-			{
-				
-				cv::Point2f p13 = markerCorners[0].at(0);
-				cv::Point2f p23 = markerCorners[0].at(1);
-cv::Point2f p33 = markerCorners[0].at(2);
-				cv::Point2f p43 = markerCorners[0].at(3);
-				// Centroid
-				ug3 = (p13.x + p23.x + p33.x + p43.x) / 4.0f;
-				ng3 = (p13.y + p23.y + p33.y + p43.y) / 4.0f;
-			}
-			else if (markerIds[1] == 8)
-			{
-				cv::Point2f p13 = markerCorners[1].at(0);
-				cv::Point2f p23 = markerCorners[1].at(1);
-				cv::Point2f p33 = markerCorners[1].at(2);
-				cv::Point2f p43 = markerCorners[1].at(3);
-				// Centroid
-				ug3 = (p13.x + p23.x + p33.x + p43.x) / 4.0f;
-				ng3 = (p13.y + p23.y + p33.y + p43.y) / 4.0f;
-			}
-			else if (markerIds[2] == 8)
-			{
-				cv::Point2f p13 = markerCorners[2].at(0);
-				cv::Point2f p23 = markerCorners[2].at(1);
-				cv::Point2f p33 = markerCorners[2].at(2);
-				cv::Point2f p43 = markerCorners[2].at(3);
-				// Centroid
-				ug3 = (p13.x + p23.x + p33.x + p43.x) / 4.0f;
-				ng3 = (p13.y + p23.y + p33.y + p43.y) / 4.0f;
-			}
-			else if (markerIds[3]==8)
-			{
-				cv::Point2f p13 = markerCorners[3].at(0);
-				cv::Point2f p23 = markerCorners[3].at(1);
-				cv::Point2f p33 = markerCorners[3].at(2);
-				cv::Point2f p43 = markerCorners[3].at(3);
-				// Centroid
-				ug3 = (p13.x + p23.x + p33.x + p43.x) / 4.0f;
-				ng3 = (p13.y + p23.y + p33.y + p43.y) / 4.0f;
-			}
-
-			// Assignment of Point 4
-			if (markerIds[0] == 10)
-			{
-         		cv::Point2f p14 = markerCorners[0].at(0);
-				cv::Point2f p24 = markerCorners[0].at(1);
-				cv::Point2f p34 = markerCorners[0].at(2);
-				cv::Point2f p44 = markerCorners[0].at(3);
-				// Centroid
-				ug4 = (p14.x + p24.x + p34.x + p44.x) / 4.0f;
-				ng4 = (p14.y + p24.y + p34.y + p44.y) / 4.0f;
-			}
-			else if (markerIds[1] == 10)
-			{
-				cv::Point2f p14 = markerCorners[1].at(0);
-				cv::Point2f p24 = markerCorners[1].at(1);
-				cv::Point2f p34 = markerCorners[1].at(2);
-				cv::Point2f p44 = markerCorners[1].at(3);
-				// Centroid
-				ug4 = (p14.x + p24.x + p34.x + p44.x) / 4.0f;
-				ng4 = (p14.y + p24.y + p34.y + p44.y) / 4.0f;
-			}
-			else if (markerIds[2] == 10)
-			{
-				cv::Point2f p14 = markerCorners[2].at(0);
-				cv::Point2f p24 = markerCorners[2].at(1);
-				cv::Point2f p34 = markerCorners[2].at(2);
-				cv::Point2f p44 = markerCorners[2].at(3);
-				// Centroid
-				ug4 = (p14.x + p24.x + p34.x + p44.x) / 4.0f;
-				ng4 = (p14.y + p24.y + p34.y + p44.y) / 4.0f;
-			}
-			else if (markerIds[3] == 10)
-			{
-				cv::Point2f p14 = markerCorners[3].at(0);
-				cv::Point2f p24 = markerCorners[3].at(1);
-				cv::Point2f p34 = markerCorners[3].at(2);
-				cv::Point2f p44 = markerCorners[3].at(3);
-				// Centroid
-				ug4 = (p14.x + p24.x + p34.x + p44.x) / 4.0f;
-				ng4 = (p14.y + p24.y + p34.y + p44.y) / 4.0f;
-			}
+			ug1 = pu[0]; ng1 = pn[0];
+			ug2 = pu[1]; ng2 = pn[1];
+			ug3 = pu[2]; ng3 = pn[2];
+			ug4 = pu[3]; ng4 = pn[3];
 
 			// Target centroid
 			ug = (ug1 + ug2 + ug3 + ug4) / 4;
@@ -745,8 +651,23 @@ cv::Point2f p33 = markerCorners[0].at(2);
 			// atan2, not Eq. 5.8's single-argument atan: that confines the feature to +-pi/4 and
 			// jumps by pi/2 at 45 deg of relative yaw, inverting the yaw feedback.
 			float qpsi_raw = -0.5 * atan2(2*mu11, den);
+			if (single_marker)
+			{
+				// A square's moments are isotropic, so yaw comes from its edges: mean of 4*theta
+				// folds them onto the square's 90-degree symmetry, same sign and zero as above.
+				const Eigen::Vector3f *pv[4] = {&p1_vs_vf, &p2_vs_vf, &p3_vs_vf, &p4_vs_vf};
+				float s4 = 0.0f, c4 = 0.0f;
+				for (int i = 0; i < 4; ++i)
+				{
+					const Eigen::Vector3f e = *pv[(i + 1) % 4] - *pv[i];
+					const float th = atan2f(e(1), e(0));
+					s4 += sinf(4.0f * th);
+					c4 += cosf(4.0f * th);
+				}
+				qpsi_raw = -0.25f * atan2f(s4, c4);
+			}
 			// The moment sign and atan2 wrap jump qpsi in pi/2 steps: snap them out. The seed keeps a
-			// plate with b > a servoing about zero, not +-pi/2.
+			// four-marker target with b > a servoing about zero, not +-pi/2.
 			if (!qpsi_have_prev)
 			{
 				qpsi_turns = -M_PI_2 * std::round(qpsi_raw / M_PI_2);
@@ -779,7 +700,7 @@ cv::Point2f p33 = markerCorners[0].at(2);
             a_val.data = a;			
 
 			im_feat_valid.data = true;
-			im_feat_sources.data = 4;
+			im_feat_sources.data = static_cast<uint8_t>(target_markers);
            	im_feat_pub->publish(im_feat_vec);
 			im_feat_valid_pub->publish(im_feat_valid);
 			im_feat_sources_pub->publish(im_feat_sources);
@@ -814,7 +735,16 @@ cv::Point2f p33 = markerCorners[0].at(2);
 			// frames (p^40), so a soft decline in p looks like a hard floor.
 			const long hist_n = marker_hist[0] + marker_hist[1] + marker_hist[2] + marker_hist[3] +
 			                    marker_hist[4] + spurious_n;
-			if (hist_n > 0)
+			if (hist_n > 0 && single_marker)
+			{
+				const double p = marker_hist[1] / static_cast<double>(std::max(1L, hist_n - spurious_n));
+				RCLCPP_INFO(node->get_logger(),
+				            "markers/frame over %ld frames: 0:%ld 1:%ld (other ids on %ld, target id "
+				            "twice: %ld) | decode rate p=%.3f, gate p^10=%.2e",
+				            hist_n, marker_hist[0], marker_hist[1], wrong_ids_n, spurious_n, p,
+				            std::pow(p, 10));
+			}
+			else if (hist_n > 0)
 			{
 				const double p = (marker_hist[1] + 2.0 * marker_hist[2] + 3.0 * marker_hist[3] +
 				                  4.0 * marker_hist[4]) /

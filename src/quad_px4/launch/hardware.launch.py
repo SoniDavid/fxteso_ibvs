@@ -68,9 +68,14 @@ def generate_launch_description():
                               description='servoing depth, m. The lab rig sets this.'),
         DeclareLaunchArgument('takeoff_alt', default_value=str(DEFAULT_TAKEOFF_ALT),
                               description='altitude the pilot flies to before the handover, m'),
-        # 0.5 = the printed 450x375 mm plate. aD scales with its square.
+        # 0.5 = the printed 450x375 mm four-marker target. aD scales with its square.
         DeclareLaunchArgument('target_scale', default_value='0.5',
-                              description='printed plate size relative to the reference target'),
+                              description='printed target size relative to the reference target; '
+                                          'ignored by single_marker'),
+        # four_markers | single_marker (one marker on US letter; print it with make_markers.py).
+        DeclareLaunchArgument('target_layout', default_value='four_markers',
+                              choices=['four_markers', 'single_marker']),
+        DeclareLaunchArgument('target_marker_id', default_value='4'),
 
         # --- the airframe -------------------------------------------------------
         # Weighed as flown, battery included. 2.0 is the thesis vehicle's; the 3S build is ~1.3 kg.
@@ -110,6 +115,9 @@ def generate_launch_description():
         # opencv arm only: aruco3 must still find markers at this fraction of the nominal size.
         DeclareLaunchArgument('use_aruco3_detection', default_value='false'),
         DeclareLaunchArgument('aruco3_margin', default_value='0.7'),
+        # opencv path only: none | subpix | contour.
+        DeclareLaunchArgument('corner_refinement', default_value='none',
+                              choices=['none', 'subpix', 'contour']),
         # 1 stops OpenCV's idle pool burning CPU; fallback frames get slower, so bench 1 vs 2 on the Pi.
         DeclareLaunchArgument('cv_num_threads', default_value='1'),
         # Core pinning on the 4-core Pi. Empty leaves the node unpinned.
@@ -170,7 +178,9 @@ def generate_launch_description():
         """Preset intrinsics at the resolution the driver actually publishes."""
         cam = presets.resolve(
             LaunchConfiguration('camera').perform(context),
-            _float('target_scale', context), _float('zD', context))
+            _float('target_scale', context), _float('zD', context),
+            LaunchConfiguration('target_layout').perform(context),
+            LaunchConfiguration('marker_dict').perform(context))
         w = LaunchConfiguration('camera_width').perform(context)
         h = LaunchConfiguration('camera_height').perform(context)
         if w:
@@ -247,7 +257,7 @@ def generate_launch_description():
                          LaunchConfiguration('takeoff_tolerance'), value_type=float),
                      'require_gnss': False}])
 
-    # require_target false: tgt_position is the simulator's, and the target here is a plate.
+    # require_target false: tgt_position is the simulator's, and the target here is a printed one.
     gate = Node(
         package=CTRL_PKG, executable='ibvs_gate', name='ibvs_gate', output='screen',
         parameters=[{'use_sim_time': False,
@@ -288,12 +298,18 @@ def generate_launch_description():
         cam = _camera(context)
         zD = _float('zD', context)
         scale = _float('target_scale', context)
+        layout = LaunchConfiguration('target_layout').perform(context)
+        mdict = LaunchConfiguration('marker_dict').perform(context)
         return [
             LogInfo(msg=presets.summary(cam, zD)),
+            LogInfo(msg='target %s, %s%s' % (
+                layout, mdict, ', target_scale ignored' if layout == 'single_marker'
+                else ', scale %g' % scale)),
             LogInfo(msg='hardware: use_sim_time FALSE, frame_yaw_offset %s, camera %dx%d, '
                         'marker ~%.0f px, detector %s'
                         % (LaunchConfiguration('frame_yaw_offset').perform(context),
-                           cam['width'], cam['height'], presets.marker_px(cam, scale, zD),
+                           cam['width'], cam['height'],
+                           presets.marker_px(cam, scale, zD, layout, mdict),
                            LaunchConfiguration('detector_backend').perform(context))),
             include(CTRL_PKG, 'estimation.launch.py', {
                 'use_sim_time': 'false',
@@ -316,9 +332,12 @@ def generate_launch_description():
                 'roi_margin': LaunchConfiguration('roi_margin'),
                 'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
                 'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
-                    cam, scale, zD, _float('aruco3_margin', context)),
+                    cam, scale, zD, _float('aruco3_margin', context), layout, mdict),
                 'cv_num_threads': LaunchConfiguration('cv_num_threads'),
                 'image_features_cpu': LaunchConfiguration('image_features_cpu'),
+                'target_layout': layout,
+                'target_marker_id': LaunchConfiguration('target_marker_id'),
+                'corner_refinement': LaunchConfiguration('corner_refinement'),
             }),
         ]
 

@@ -45,6 +45,7 @@ These add to the shared reference in [RUNNING.md](RUNNING.md#launch-arguments-re
 - `camera_topic:=<str>`, `camera_info_topic:=<str>` — (defaults: `/quad/camera/image_raw`, `/quad/camera/camera_info`).
 - `sensor_qos:=<bool>` — BEST_EFFORT on the driver and on `image_features` together (default: `true`).
 - `camera_distortion:="[k1, k2, p1, p2, k3]"` — From a real calibration; the preset's are an assumption (default: zeros).
+- `target_layout`, `target_marker_id`, `target_scale`, `marker_dict`, `corner_refinement` — as in RUNNING.md; `aD` follows the layout (default: `four_markers`). For `single_marker` see [Single-marker target](#single-marker-target).
 - `af_mode:=<manual|continuous>`, `lens_position:=<float>` — Focus; 0.83 dioptres is ~1.2 m (defaults: `manual`, `0.83`).
 - `camera_cpu:=<core>` — Pin `camera_node` (default: `2`).
 - `agent:=<bool>`, `agent_device:=<path>`, `agent_baud:=<int>` — MicroXRCEAgent on the flight controller's UART (defaults: `true`, `/dev/ttyAMA0`, `921600`).
@@ -68,10 +69,10 @@ These add to the shared reference in [RUNNING.md](RUNNING.md#launch-arguments-re
   `receipt` carries the transport latency in `EKF2_EV_DELAY` instead (default: `header`).
 
 ### Bench (`bench.launch.py`)
-- `load:=<synthetic|plate|none>` — What drives the chain without PX4 (default: `synthetic`).
+- `load:=<synthetic|target|none>` — What drives the chain without PX4 (default: `synthetic`).
 - `attitude_controller:=<bool>` — Add `att_ctrl` to the load (default: `false`).
 - `image_qos:=<sensor_data|reliable>` — Camera and `image_features` QoS together (default: `sensor_data`).
-- `camera`, `zD`, `target_scale`, `marker_dict`, `quad_mass`, `af_mode`, `lens_position`, `camera_cpu` and the vision arguments — as in RUNNING.md.
+- `camera`, `zD`, `target_layout`, `target_marker_id`, `target_scale`, `marker_dict`, `quad_mass`, `af_mode`, `lens_position`, `camera_cpu` and the vision arguments — as in RUNNING.md. `bench.sh --layout single_marker` passes the layout.
 
 ## Running on the UAV
 
@@ -110,6 +111,23 @@ Before flying:
   as `camera_distortion`. Check the image is upright; the driver flips it 180° by default.
 - Build without the simulated pilot — it arms the aircraft and flies on Gazebo ground truth
   (`-DBUILD_SIM_PILOT=OFF`, already in the Pi build above).
+
+### Single-marker target
+
+`target_layout:=single_marker` flies one marker (ID 4) on a US letter sheet instead of the four-marker board. The printable page is generated, not drawn by hand:
+
+```sh
+python3 src/quad_description/scripts/make_markers.py single_marker 7x7 --print
+# -> src/quad_description/models/aruco_single_marker/print/single_marker_7x7.pdf
+ros2 launch quad_px4 hardware.launch.py target_layout:=single_marker ...
+```
+
+- Print at **actual size**, not fit to page. The PDF's dpi makes the page exactly 215.9 × 279.4 mm.
+- Measure the black square edge to edge: **176.6 mm** for 7x7 (161.9 mm for 4x4), ± 1 mm. `aD` assumes exactly that ink, so a 1% scale error moves the hover depth by ~1%, ~12 mm at `zD` 1.2.
+- The white quiet zone is one module (19.6 mm on 7x7). Do not trim it, and keep other markers out of view: other IDs are ignored, but a second ID 4 breaks the lock.
+- Lay it flat and matte. A square defines yaw only modulo 90°, so the aircraft settles to the nearest edge-aligned heading; align an edge with the heading you want.
+- `marker_dict` must match the print (`7x7` is the one E105–E107 flew).
+- **Not yet decoded by the real camera.** Bench it first (`bench.sh --load target --layout single_marker`, below); SITL and HITL are the only evidence so far.
 
 Another camera driver can stand in for `quad_cam`. Start it with the same transport profile, or `image_features` receives nothing: a `LARGE_DATA` subscriber did not receive 2.24 MB frames from a
 default-transport publisher in SITL.
@@ -159,7 +177,7 @@ Before the first Vicon flight:
   sample age is meaningless; use `stamp_source:=receipt` if you cannot.
 - Set `EKF2_EV_DELAY` from the bridge's own `EV stream: ... age mean` line, then reboot again.
 - Measure `EKF2_EV_POS_X/Y/Z`: the Vicon marker centroid relative to the CoG, body FRD.
-- Confirm the frames by hand before arming — carry the airframe over the plate and check N/E/D
+- Confirm the frames by hand before arming — carry the airframe over the target and check N/E/D
   signs and heading in `/fmu/out/vehicle_odometry`. `vicon_frame` and `body_frame` are assumptions
   until this is done, and a wrong `body_frame` is a sign error in pitch and yaw that flies.
   The bridge now checks this itself: it **refuses to publish** until the converted Vicon attitude
@@ -189,6 +207,7 @@ ros2 launch quad_cam camera.launch.py image_qos:=sensor_data
 export FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA   # the probes must share camera_node's transport profile
 ros2 run quad_cam probe_latency --ros-args -p image_qos:=sensor_data   # rate, frame age, jitter
 ros2 run quad_cam probe_detect --ros-args -p image_qos:=sensor_data    # OpenCV detect timing and lock rate
+ros2 run quad_cam probe_detect --ros-args -p image_qos:=sensor_data -p target_layout:=single_marker
 ```
 
 Against SITL's camera (`/quad/camera/image_distorted`) leave the variable unset — the simulator publishes with the default profile.
@@ -200,7 +219,8 @@ Then the stack, one-shot — launch, `probe_bench`, and a `bench_<timestamp>.log
 ```sh
 ./src/quad_cam/scripts/bench.sh --load synthetic --duration 120
 ./src/quad_cam/scripts/bench.sh --load synthetic --att true --duration 120   # + att_ctrl
-./src/quad_cam/scripts/bench.sh --load plate --duration 120                   # real ArUco plate
+./src/quad_cam/scripts/bench.sh --load target --duration 120                  # real ArUco target
+./src/quad_cam/scripts/bench.sh --load target --layout single_marker --duration 120   # the letter sheet
 ./src/quad_cam/scripts/bench.sh --load synthetic --backend opencv             # detector A/B
 ./src/quad_cam/scripts/bench.sh --load synthetic --backend hybrid --nano-ec 0.3 --nano-border 0.35 --cv-threads 1
 ./src/quad_cam/scripts/bench.sh --load synthetic --backend nano --nano-ec 0.3 --nano-border 0.35       # tuned nano alone
@@ -212,7 +232,7 @@ ros2 run quad_cam probe_bench
 
 - `load:=synthetic` needs no printed target: `bench_feeder` fakes the plant, the target and a marker
   lock; `image_features` still runs for its real cost, its outputs moved to `*_probe`.
-- `load:=plate` drives the real vision chain from a printed `{4,6,8,10}` 7×7 plate ~1.2 m from the lens.
+- `load:=target` drives the real vision chain from a printed `{4,6,8,10}` 7×7 four-marker target ~1.2 m from the lens, or with `target_layout:=single_marker` from the printed sheet. The report's `image_features decode rate` section gives the per-frame decode rate.
 - `load:=none` leaves `fixed_eso` and `pos_ctrl` idle.
 
 A loop passes when `achieved >= 0.98 * target` with few overruns. The report collects each node's
