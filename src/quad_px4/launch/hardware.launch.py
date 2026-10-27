@@ -82,6 +82,10 @@ def generate_launch_description():
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
         # Must equal MPC_THR_HOVER on the aircraft; read it off a real hover.
         DeclareLaunchArgument('hover_thrust', default_value='0.60'),
+        # Velocity in pos_ctrl's Coriolis term. off, as in SITL: td differentiates EKF2's position,
+        # Vicon-aided in flight and runaway unaided, into the control law.
+        DeclareLaunchArgument('velocity_source', default_value='off',
+                              choices=['td', 'ekf2', 'vision', 'off']),
 
         # --- the camera ---------------------------------------------------------
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
@@ -366,6 +370,7 @@ def generate_launch_description():
         'use_sim_time': 'false',
         'zD': LaunchConfiguration('zD'),
         'quad_mass': LaunchConfiguration('quad_mass'),
+        'velocity_source': LaunchConfiguration('velocity_source'),
     })
 
     def _gated_control(context):

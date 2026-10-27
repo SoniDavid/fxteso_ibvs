@@ -40,6 +40,7 @@ These add to the shared reference in [RUNNING.md](RUNNING.md#launch-arguments-re
 ### Hardware (`hardware.launch.py`)
 - `quad_mass:=<float>` — Weighed as flown, battery in (default: `2.0`, the thesis vehicle's; the 3S build is ~1.3 kg by parts list).
 - `hover_thrust:=<float>` — `MPC_THR_HOVER` read off a real hover (default: `0.60`; SITL predicts ~0.69 for 3S at 1.30 kg).
+- `velocity_source:=<td|ekf2|vision|off>` — Velocity in `pos_ctrl`'s Coriolis term. `off` keeps EKF2's position, Vicon-aided or drifting, out of the control law; `vision` needs simulator target truth and cannot fly (default: `off`).
 - `camera_driver:=<bool>` — Start `quad_cam`'s picamera2 driver; `false` expects an external one on `camera_topic` (default: `true`).
 - `camera_width:=<int>`, `camera_height:=<int>` — What the driver publishes; empty is the preset's render size, 1152 × 648 for `module3wide_2304` (default: empty).
 - `camera_topic:=<str>`, `camera_info_topic:=<str>` — (defaults: `/quad/camera/image_raw`, `/quad/camera/camera_info`).
