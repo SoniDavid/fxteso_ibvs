@@ -141,10 +141,18 @@ def generate_launch_description():
         # --- the handover -------------------------------------------------------
         # 1..6 selects manual_control_setpoint.auxN; needs RC_MAP_AUXn. 0 = service only.
         DeclareLaunchArgument('consent_rc_aux', default_value='0'),
+        # Continuous marker lock (s) before consent hands over: the estimators' start-up transient
+        # put a 4 deg roll step on a handover 0.6 s after the first lock. 0 = consent alone.
+        DeclareLaunchArgument('min_lock_before_handover', default_value='3.0'),
         # Tighter than the node's 0.4 m default, which fires during the climb.
         DeclareLaunchArgument('handover_tolerance', default_value='0.15'),
+        # advisory: pos_ctrl starts with the estimators and ibvs_gate only reports. block: SITL's
+        # ordering. Either way pos_ctrl sends no setpoint without a marker lock.
+        DeclareLaunchArgument('ibvs_gate', default_value='advisory', choices=['advisory', 'block']),
         # ibvs_gate's alignment limit, tuned against a simulated pilot's perfect hover.
         DeclareLaunchArgument('max_feature_error', default_value='0.15'),
+        # The advisory report's limit: hand-held and real-world aiming is rougher than SITL's.
+        DeclareLaunchArgument('advisory_feature_error', default_value='0.5'),
         DeclareLaunchArgument('gate_timeout', default_value='120.0'),
         DeclareLaunchArgument('estimators_ready', default_value='5.0'),
         # Barometer-only height. The SITL barometer is 300x quieter than PX4's own model.
@@ -269,17 +277,6 @@ def generate_launch_description():
                          LaunchConfiguration('takeoff_tolerance'), value_type=float),
                      'require_gnss': False}])
 
-    # require_target false: tgt_position is the simulator's, and the target here is a printed one.
-    gate = Node(
-        package=CTRL_PKG, executable='ibvs_gate', name='ibvs_gate', output='screen',
-        parameters=[{'use_sim_time': False,
-                     'max_feature_error': ParameterValue(
-                         LaunchConfiguration('max_feature_error'), value_type=float),
-                     'estimators_ready': ParameterValue(
-                         LaunchConfiguration('estimators_ready'), value_type=float),
-                     'timeout': ParameterValue(
-                         LaunchConfiguration('gate_timeout'), value_type=float),
-                     'require_target': False}])
 
     def _bridge(context, *a, **k):
         return [Node(
@@ -301,6 +298,8 @@ def generate_launch_description():
                          'require_consent': True,
                          'consent_rc_aux': ParameterValue(
                              LaunchConfiguration('consent_rc_aux'), value_type=int),
+                         'min_lock_before_handover': ParameterValue(
+                             LaunchConfiguration('min_lock_before_handover'), value_type=float),
                          # Known harmful: it defeats the offboard-loss failsafe.
                          'offboard_recovery': False,
                          'frame_yaw_offset': ParameterValue(
@@ -369,20 +368,47 @@ def generate_launch_description():
         'quad_mass': LaunchConfiguration('quad_mass'),
     })
 
-    # px4_takeoff_gate -> estimation, then ibvs_gate -> pos_ctrl. Same ordering as SITL.
+    def _gated_control(context):
+        """ibvs_gate, and pos_ctrl either beside it (advisory) or on its exit (block)."""
+        advisory = LaunchConfiguration('ibvs_gate').perform(context) == 'advisory'
+        limit = 'advisory_feature_error' if advisory else 'max_feature_error'
+        # require_target false: tgt_position is the simulator's, and the target here is a printed one.
+        gate = Node(
+            package=CTRL_PKG, executable='ibvs_gate', name='ibvs_gate', output='screen',
+            parameters=[{'use_sim_time': False,
+                         'max_feature_error': ParameterValue(
+                             LaunchConfiguration(limit), value_type=float),
+                         'estimators_ready': ParameterValue(
+                             LaunchConfiguration('estimators_ready'), value_type=float),
+                         'timeout': ParameterValue(
+                             LaunchConfiguration('gate_timeout'), value_type=float),
+                         'require_target': False}])
+        if advisory:
+            report = RegisterEventHandler(OnProcessExit(
+                target_action=gate,
+                on_exit=lambda event, context: [LogInfo(msg=(
+                    'ibvs_gate (advisory): OK - aligned marker lock within %s.'
+                    if event.returncode == 0 else
+                    'ibvs_gate (advisory): no aligned lock within %s before its timeout; '
+                    'pos_ctrl is running regardless.') % LaunchConfiguration(limit).perform(context))]))
+            return [LogInfo(msg='ibvs_gate advisory: pos_ctrl starts now and servos on any marker '
+                                'lock; OFFBOARD still needs consent and a live lock.'),
+                    control, gate, report]
+        on_gate = RegisterEventHandler(OnProcessExit(
+            target_action=gate,
+            on_exit=lambda event, context: (
+                [control] if event.returncode == 0 else
+                [LogInfo(msg='ibvs_gate failed - pos_ctrl will NOT be started, because it would '
+                             'servo on the no-lock feature vector.')])))
+        return [gate, on_gate]
+
+    # px4_takeoff_gate -> estimation, then ibvs_gate and pos_ctrl as ibvs_gate:= says.
     estimation = RegisterEventHandler(OnProcessExit(
         target_action=takeoff_gate,
         on_exit=lambda event, context: (
-            _estimation(context) + [gate, control_on_gate]
+            _estimation(context) + _gated_control(context)
             if event.returncode == 0 else
             [LogInfo(msg='px4_takeoff_gate failed - the estimators will NOT be started.')])))
-
-    control_on_gate = RegisterEventHandler(OnProcessExit(
-        target_action=gate,
-        on_exit=lambda event, context: (
-            [control] if event.returncode == 0 else
-            [LogInfo(msg='ibvs_gate failed - pos_ctrl will NOT be started, because it would '
-                         'servo on the no-lock feature vector.')])))
 
     def _bag(context, *a, **k):
         if LaunchConfiguration('rosbag').perform(context).lower() != 'true':
