@@ -28,6 +28,9 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
 #include "quad_control/third_party/aruco_nano.h"
+#ifdef QUAD_HAVE_LIBCAMERA
+#include "quad_control/libcamera_source.hpp"
+#endif
 #include <eigen3/Eigen/Dense>
 
 cv::Mat frame;
@@ -86,6 +89,13 @@ int expect_width = 0;
 int expect_height = 0;
 rclcpp::Time last_image_stamp(0, 0, RCL_ROS_TIME);
 bool have_image_stamp = false;
+// Newest message only, converted in the loop: frames the loop never reaches are never copied.
+sensor_msgs::msg::Image::ConstSharedPtr latest_image;
+bool image_pending = false;
+#ifdef QUAD_HAVE_LIBCAMERA
+// image_source:=libcamera: frames come from the camera in this process, never through DDS.
+std::unique_ptr<quad_control::LibcameraSource> camera_source;
+#endif
 
 void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr info)
 {
@@ -173,24 +183,47 @@ void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr msg)
 	     static_cast<int>(msg->height) != expect_height))
 	{
 		frame = cv::Mat();
+		latest_image.reset();
+		image_pending = false;
 		RCLCPP_ERROR_ONCE(rclcpp::get_logger("image_features"),
 		                  "image is %ux%u but camera_width/height say %dx%d - refusing to servo "
 		                  "on it. Pass the size the driver actually publishes.",
 		                  msg->width, msg->height, expect_width, expect_height);
 		return;
 	}
+	latest_image = msg;
+	image_pending = true;
+}
 
+// Grey: both detectors threshold a grey image, so colour was converted inside them anyway.
+// Copy, not share: a driver's buffer is only borrowed, and frame outlives the message.
+bool takeLatestImage()
+{
+#ifdef QUAD_HAVE_LIBCAMERA
+	if (camera_source)
+	{
+		int64_t stamp_ns = 0;
+		if (!camera_source->takeLatest(frame, stamp_ns))
+			return false;
+		last_image_stamp = rclcpp::Time(stamp_ns, RCL_ROS_TIME);
+		have_image_stamp = true;
+		return true;
+	}
+#endif
+	if (!image_pending)
+		return false;
+	image_pending = false;
 	try
 	{
-		// Copy, not share: a bgr8 driver's buffer is only borrowed, and frame outlives the callback.
-		frame = cv_bridge::toCvCopy(msg, "bgr8")->image;
-		last_image_stamp = rclcpp::Time(msg->header.stamp);
+		frame = cv_bridge::toCvCopy(latest_image, "mono8")->image;
+		last_image_stamp = rclcpp::Time(latest_image->header.stamp);
 		have_image_stamp = last_image_stamp.nanoseconds() != 0;
+		return true;
 	}
-
 	catch(cv_bridge::Exception& e)
 	{
-		RCLCPP_ERROR(rclcpp::get_logger("image_features"), "Couldn't convert from '%s' to 'bgr8'.", msg->encoding.c_str());
+		RCLCPP_ERROR(rclcpp::get_logger("image_features"), "Couldn't convert from '%s' to 'mono8'.", latest_image->encoding.c_str());
+		return false;
 	}
 }
 
@@ -223,14 +256,37 @@ int main(int argc, char *argv[])
 	const std::string caminfo_topic =
 		node->declare_parameter<std::string>("camera_info_topic", "/quad/camera/camera_info");
 	const bool sensor_qos = node->declare_parameter<bool>("sensor_qos", false);
+	// SensorDataQoS's own depth: at depth 1 Fast DDS delivered ~5 of 56 fps of 2.2 MB frames on the
+	// Pi. No backlog either way, as the callback only keeps the newest message.
 	const rclcpp::QoS image_qos =
 		sensor_qos ? rclcpp::QoS(rclcpp::SensorDataQoS()) : rclcpp::QoS(rclcpp::KeepLast(1));
-	RCLCPP_INFO(node->get_logger(), "image: %s (%s), camera_info: %s",
-	            image_topic.c_str(), sensor_qos ? "best-effort" : "reliable",
-	            caminfo_topic.c_str());
+	// A frame not replaced for this long is no measurement: lock is reported lost. 0 disables.
+	const double image_timeout = node->declare_parameter<double>("image_timeout", 0.0);
+	// topic: frames from a driver over DDS (SITL, HITL). libcamera: this process opens the camera.
+	const std::string image_source = node->declare_parameter<std::string>("image_source", "topic");
+	if (image_source != "topic" && image_source != "libcamera")
+	{
+		RCLCPP_FATAL(node->get_logger(), "image_source:=%s is not one of topic, libcamera.",
+		             image_source.c_str());
+		return 1;
+	}
+	// libcamera only: a grey frame republished on image_topic at this rate, for looking. 0 = none.
+	const double debug_image_hz = node->declare_parameter<double>("debug_image_hz", 0.0);
 
-	auto sub = node->create_subscription<sensor_msgs::msg::Image>(
-		image_topic, image_qos, imageCallback);
+	rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub;
+	rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_pub;
+	if (image_source == "topic")
+	{
+		RCLCPP_INFO(node->get_logger(), "image: %s (%s), camera_info: %s",
+		            image_topic.c_str(), sensor_qos ? "best-effort" : "reliable",
+		            caminfo_topic.c_str());
+		sub = node->create_subscription<sensor_msgs::msg::Image>(image_topic, image_qos, imageCallback);
+	}
+	else if (debug_image_hz > 0.0)
+	{
+		debug_pub = node->create_publisher<sensor_msgs::msg::Image>(
+			image_topic, rclcpp::QoS(rclcpp::SensorDataQoS()));
+	}
 	auto attitude_sub = node->create_subscription<geometry_msgs::msg::Twist>("attitude_estimates", 1, attEstCallback);
 	auto caminfo_sub = node->create_subscription<sensor_msgs::msg::CameraInfo>(
 		caminfo_topic, image_qos, cameraInfoCallback);
@@ -244,6 +300,46 @@ int main(int argc, char *argv[])
 		"camera_distortion", {0.0, 0.0, 0.0, 0.0, 0.0});
 	expect_width = p_width;
 	expect_height = p_height;
+
+	// libcamera only. The sensor mode sets the field of view the camera_hfov parameter assumes.
+	const int p_sensor_width = node->declare_parameter<int>("camera_sensor_width", 2304);
+	const int p_sensor_height = node->declare_parameter<int>("camera_sensor_height", 1296);
+	const double p_fps = node->declare_parameter<double>("camera_fps", 56.0);
+	const bool p_rotate180 = node->declare_parameter<bool>("camera_rotate180", true);
+	const std::string p_af_mode = node->declare_parameter<std::string>("af_mode", "manual");
+	const double p_lens_position = node->declare_parameter<double>("lens_position", 0.83);
+	if (image_source == "libcamera")
+	{
+#ifdef QUAD_HAVE_LIBCAMERA
+		quad_control::LibcameraConfig lc;
+		lc.width = p_width;
+		lc.height = p_height;
+		lc.sensor_width = p_sensor_width;
+		lc.sensor_height = p_sensor_height;
+		lc.fps = p_fps;
+		lc.rotate180 = p_rotate180;
+		lc.af_manual = p_af_mode == "manual";
+		lc.lens_position = p_lens_position;
+		camera_source = std::make_unique<quad_control::LibcameraSource>();
+		try
+		{
+			camera_source->start(lc);
+		}
+		catch (const std::exception &e)
+		{
+			RCLCPP_FATAL(node->get_logger(), "image_source:=libcamera: %s", e.what());
+			camera_source.reset();
+			return 1;
+		}
+		RCLCPP_INFO(node->get_logger(), "image: in-process libcamera, %s; debug image %s",
+		            camera_source->description().c_str(),
+		            debug_image_hz > 0.0 ? (std::to_string(debug_image_hz) + " Hz on " + image_topic).c_str()
+		                                 : "off");
+#else
+		RCLCPP_FATAL(node->get_logger(), "image_source:=libcamera, but this build has no libcamera.");
+		return 1;
+#endif
+	}
 	cam_fx = p_width / (2.0 * tan(p_hfov / 2.0));
 	cam_cx = p_width / 2.0f;
 	cam_cy = p_height / 2.0f;
@@ -403,11 +499,108 @@ int main(int argc, char *argv[])
 	// apart from the histogram, because a 5-marker frame is not a 4-marker frame.
 	long spurious_n = 0;
 	auto last_timing_report = std::chrono::steady_clock::now();
+	// Camera stamp to the moment the loop took the frame: queueing and transport, not detection.
+	std::vector<double> frame_age_ms;
+	long no_new_frame_n = 0;
+	rclcpp::Time last_frame_rx(0, 0, RCL_ROS_TIME);
+	rclcpp::Time last_debug_image(0, 0, RCL_ROS_TIME);
+
+	// Detector cost and frame age. Age is a phantom lateral offset, not just latency.
+	const auto reportTiming = [&]()
+	{
+		const auto now_wall = std::chrono::steady_clock::now();
+		if (std::chrono::duration<double>(now_wall - last_timing_report).count() < 10.0)
+			return;
+		last_timing_report = now_wall;
+		double age_p50 = -1.0, age_p95 = -1.0, age_max = -1.0;
+		if (!frame_age_ms.empty())
+		{
+			std::sort(frame_age_ms.begin(), frame_age_ms.end());
+			const size_t n = frame_age_ms.size();
+			age_p50 = frame_age_ms[n / 2];
+			age_p95 = frame_age_ms[std::min(n - 1, static_cast<size_t>(0.95 * n))];
+			age_max = frame_age_ms.back();
+		}
+		RCLCPP_INFO(node->get_logger(),
+		            "detectMarkers (%s) %.1f ms mean / %.1f ms worst over %ld frames "
+		            "(budget %.1f ms); frame age p50 %.0f / p95 %.0f / max %.0f ms; "
+		            "%ld passes without a new frame; opencv fallback on %ld frames",
+		            detector_backend.c_str(), detect_n ? detect_ms_sum / detect_n : 0.0, detect_ms_max, detect_n,
+		            1000.0 / kLoopHz, age_p50, age_p95, age_max, no_new_frame_n, fallback_n);
+		// Decode rate p = mean(k)/4 (Binomial MLE). Lock needs all four (p^4), the gate ten
+		// frames (p^40), so a soft decline in p looks like a hard floor.
+		const long hist_n = marker_hist[0] + marker_hist[1] + marker_hist[2] + marker_hist[3] +
+		                    marker_hist[4] + spurious_n;
+		if (hist_n > 0 && single_marker)
+		{
+			const double p = marker_hist[1] / static_cast<double>(std::max(1L, hist_n - spurious_n));
+			RCLCPP_INFO(node->get_logger(),
+			            "markers/frame over %ld frames: 0:%ld 1:%ld (other ids on %ld, target id "
+			            "twice: %ld) | decode rate p=%.3f, gate p^10=%.2e",
+			            hist_n, marker_hist[0], marker_hist[1], wrong_ids_n, spurious_n, p,
+			            std::pow(p, 10));
+		}
+		else if (hist_n > 0)
+		{
+			const double p = (marker_hist[1] + 2.0 * marker_hist[2] + 3.0 * marker_hist[3] +
+			                  4.0 * marker_hist[4]) /
+			                 (4.0 * std::max(1L, hist_n - spurious_n));
+			RCLCPP_INFO(node->get_logger(),
+			            "markers/frame over %ld frames: 0:%ld 1:%ld 2:%ld 3:%ld 4:%ld "
+			            "(wrong ids %ld, more than 4: %ld) | decode rate p=%.3f, p^4=%.3f, "
+			            "gate p^40=%.2e",
+			            hist_n, marker_hist[0], marker_hist[1], marker_hist[2], marker_hist[3],
+			            marker_hist[4], wrong_ids_n, spurious_n, p, std::pow(p, 4),
+			            std::pow(p, 40));
+		}
+		for (long &h : marker_hist)
+			h = 0;
+		wrong_ids_n = 0;
+		spurious_n = 0;
+		detect_ms_max = 0.0;
+		detect_ms_sum = 0.0;
+		detect_n = 0;
+		fallback_n = 0;
+		frame_age_ms.clear();
+		no_new_frame_n = 0;
+	};
 
     while (rclcpp::ok())
 	{
 		std::vector<std::vector<cv::Point2f>> markerCorners;
 		std::vector<int> markerIds;
+
+		// One detection per new frame. Without one the last features stand, as the observer holds them.
+		if (takeLatestImage())
+		{
+			last_frame_rx = node->now();
+			if (have_image_stamp)
+				frame_age_ms.push_back((last_frame_rx - last_image_stamp).seconds() * 1000.0);
+			if (debug_pub && (last_frame_rx - last_debug_image).seconds() >= 1.0 / debug_image_hz)
+			{
+				last_debug_image = last_frame_rx;
+				std_msgs::msg::Header header;
+				header.stamp = last_image_stamp;
+				header.frame_id = "camera_optical_frame";
+				debug_pub->publish(*cv_bridge::CvImage(header, "mono8", frame).toImageMsg());
+			}
+		}
+		else if (!frame.empty())
+		{
+			if (image_timeout > 0.0 && (node->now() - last_frame_rx).seconds() > image_timeout)
+			{
+				RCLCPP_WARN(node->get_logger(), "no new frame for %.2f s - reporting the lock lost",
+				            image_timeout);
+				frame = cv::Mat();
+			}
+			else
+			{
+				++no_new_frame_n;
+				reportTiming();
+				loop_rate.sleep();
+				continue;
+			}
+		}
 
 		if(!frame.empty())
 		{
@@ -476,7 +669,6 @@ int main(int argc, char *argv[])
 		}
 		else
 		{
-			std::cout << "empty " << std::endl;
 			qx = 0;
 			qy = 0;
 			qz = 1;
@@ -714,62 +906,16 @@ int main(int argc, char *argv[])
 			std::cout << "p3 " << p3_vs_vf(0) << ", " << p3_vs_vf(1) << std::endl;
 			std::cout << "p4 " << p4_vs_vf(0) << ", " << p4_vs_vf(1) << std::endl;
 			std::cout << "mu11 " << mu11 << std::endl;*/
-			std::cout << "OK" << std::endl;
-			
         }
 
-		// Detector cost and frame age. Age is a phantom lateral offset, not just latency.
-		const auto now_wall = std::chrono::steady_clock::now();
-		if (std::chrono::duration<double>(now_wall - last_timing_report).count() >= 10.0)
-		{
-			last_timing_report = now_wall;
-			double age_ms = -1.0;
-			if (have_image_stamp)
-				age_ms = (node->now() - last_image_stamp).seconds() * 1000.0;
-			RCLCPP_INFO(node->get_logger(),
-			            "detectMarkers (%s) %.1f ms mean / %.1f ms worst over %ld frames "
-			            "(budget %.1f ms); frame age %.1f ms; opencv fallback on %ld frames",
-			            detector_backend.c_str(), detect_n ? detect_ms_sum / detect_n : 0.0, detect_ms_max, detect_n,
-			            1000.0 / kLoopHz, age_ms, fallback_n);
-			// Decode rate p = mean(k)/4 (Binomial MLE). Lock needs all four (p^4), the gate ten
-			// frames (p^40), so a soft decline in p looks like a hard floor.
-			const long hist_n = marker_hist[0] + marker_hist[1] + marker_hist[2] + marker_hist[3] +
-			                    marker_hist[4] + spurious_n;
-			if (hist_n > 0 && single_marker)
-			{
-				const double p = marker_hist[1] / static_cast<double>(std::max(1L, hist_n - spurious_n));
-				RCLCPP_INFO(node->get_logger(),
-				            "markers/frame over %ld frames: 0:%ld 1:%ld (other ids on %ld, target id "
-				            "twice: %ld) | decode rate p=%.3f, gate p^10=%.2e",
-				            hist_n, marker_hist[0], marker_hist[1], wrong_ids_n, spurious_n, p,
-				            std::pow(p, 10));
-			}
-			else if (hist_n > 0)
-			{
-				const double p = (marker_hist[1] + 2.0 * marker_hist[2] + 3.0 * marker_hist[3] +
-				                  4.0 * marker_hist[4]) /
-				                 (4.0 * std::max(1L, hist_n - spurious_n));
-				RCLCPP_INFO(node->get_logger(),
-				            "markers/frame over %ld frames: 0:%ld 1:%ld 2:%ld 3:%ld 4:%ld "
-				            "(wrong ids %ld, more than 4: %ld) | decode rate p=%.3f, p^4=%.3f, "
-				            "gate p^40=%.2e",
-				            hist_n, marker_hist[0], marker_hist[1], marker_hist[2], marker_hist[3],
-				            marker_hist[4], wrong_ids_n, spurious_n, p, std::pow(p, 4),
-				            std::pow(p, 40));
-			}
-			for (long &h : marker_hist)
-				h = 0;
-			wrong_ids_n = 0;
-			spurious_n = 0;
-			detect_ms_max = 0.0;
-			detect_ms_sum = 0.0;
-			detect_n = 0;
-			fallback_n = 0;
-		}
-
+		reportTiming();
 		loop_rate.sleep();
 	}
 
+#ifdef QUAD_HAVE_LIBCAMERA
+	// Release the camera before ROS goes down, or the next launch finds it busy.
+	camera_source.reset();
+#endif
     rclcpp::shutdown();
 
     return 0;

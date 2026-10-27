@@ -85,8 +85,13 @@ def generate_launch_description():
 
         # --- the camera ---------------------------------------------------------
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
-        # Start quad_cam's picamera2 driver. false = an external driver on camera_topic, which must
-        # run with FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA too or image_features receives nothing.
+        # inprocess: image_features opens the camera itself; no image crosses DDS (2.2 MB frames
+        # through DDS fell to ~3 fps under the full stack). topic: a driver publishes on camera_topic.
+        DeclareLaunchArgument('camera_source', default_value='inprocess', choices=['inprocess', 'topic']),
+        # inprocess only: a grey frame on camera_topic at this rate, for looking. 0 = none.
+        DeclareLaunchArgument('debug_image_hz', default_value='1.0'),
+        # topic only: start quad_cam's picamera2 driver. false = an external driver on camera_topic,
+        # which must run with FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA too or image_features gets nothing.
         DeclareLaunchArgument('camera_driver', default_value='true'),
         # What the driver publishes. Empty = the preset's render size, the one benchmarked at 50 Hz.
         DeclareLaunchArgument('camera_width', default_value=''),
@@ -103,8 +108,11 @@ def generate_launch_description():
         DeclareLaunchArgument('lens_position', default_value='0.83'),
 
         # --- vision compute -----------------------------------------------------
-        # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last detection).
-        DeclareLaunchArgument('detector_backend', default_value='hybrid'),
+        # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last
+        # detection) | nano_roi (nano around the last detection; ~2 ms locked on the Pi vs ~22 ms full frame).
+        DeclareLaunchArgument('detector_backend', default_value='nano_roi'),
+        # A camera that stops sending frames reads as lock lost after this long, not as a frozen lock.
+        DeclareLaunchArgument('image_timeout', default_value='0.2'),
         # aruco_nano tolerances (nano's own 0 / 0 rejects a marker for one mis-read bit).
         # roi_margin: fraction of the target box.
         DeclareLaunchArgument('nano_error_correction', default_value='0.3'),
@@ -191,8 +199,12 @@ def generate_launch_description():
         cam['fx'] = cam['width'] / (2.0 * math.tan(cam['hfov'] / 2.0))
         return cam
 
+    def _inprocess(context):
+        return LaunchConfiguration('camera_source').perform(context) == 'inprocess'
+
     def _camera_driver(context, *a, **k):
-        if LaunchConfiguration('camera_driver').perform(context).lower() != 'true':
+        # inprocess: image_features holds the camera, and a second opener would find it busy.
+        if _inprocess(context) or LaunchConfiguration('camera_driver').perform(context).lower() != 'true':
             return []
         cam = _camera(context)
         best_effort = LaunchConfiguration('sensor_qos').perform(context).lower() == 'true'
@@ -330,6 +342,14 @@ def generate_launch_description():
                 'nano_box_filter': LaunchConfiguration('nano_box_filter'),
                 'nano_max_revisited': LaunchConfiguration('nano_max_revisited'),
                 'roi_margin': LaunchConfiguration('roi_margin'),
+                'image_timeout': LaunchConfiguration('image_timeout'),
+                'image_source': 'libcamera' if _inprocess(context) else 'topic',
+                'camera_sensor_width': str(cam['native'][0]),
+                'camera_sensor_height': str(cam['native'][1]),
+                'camera_fps': str(cam['fps']),
+                'af_mode': LaunchConfiguration('af_mode'),
+                'lens_position': LaunchConfiguration('lens_position'),
+                'debug_image_hz': LaunchConfiguration('debug_image_hz'),
                 'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
                 'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
                     cam, scale, zD, _float('aruco3_margin', context), layout, mdict),
