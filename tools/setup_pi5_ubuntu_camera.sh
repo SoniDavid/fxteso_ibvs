@@ -6,19 +6,8 @@
 #     bash tools/setup_pi5_ubuntu_camera.sh --skip-libcamera   # resume at the Python steps
 #     bash tools/setup_pi5_ubuntu_camera.sh --jobs 2       # if the Pi runs out of RAM
 #
-# Why this exists. Ubuntu noble/universe ships UPSTREAM libcamera 0.2.0, and its
-# libcamera-ipa package contains ipa_rkisp1.so, ipa_rpi_vc4.so and ipa_vimc.so - there is
-# no ipa_rpi_pisp.so. The Pi 5's ISP is PiSP, so the stock packages cannot drive any camera
-# on a Pi 5, and neither python3-picamera2 nor rpicam-apps exists in the archive at all.
-#
-# THE ORDER MATTERS. libcamera's rpi/pisp pipeline handler and IPA include libpisp headers
-# and resolve it as pkg-config `libpisp`. Pi OS has libpisp-dev; Ubuntu has nothing, so
-# libpisp must be built and installed FIRST. If it is missing, meson does not stop - it
-# configures without the pisp pipeline, the build succeeds, the pisp tuning JSONs still get
-# installed, and you end up with a complete-looking install whose only missing file is
-# ipa_rpi_pisp.so. That failure is the reason this script grew a verification step.
-#
-# Expect 20-45 minutes on a Pi 5, most of it compiling libcamera.
+# Noble's libcamera has no PiSP IPA, so nothing can drive a Pi 5 camera. libpisp must be built
+# FIRST, or meson silently drops the pisp pipeline. Expect 20-45 minutes on a Pi 5.
 set -euo pipefail
 
 JOBS="$(nproc)"
@@ -139,9 +128,7 @@ if [ "${SKIP_LIBCAMERA}" = "0" ]; then
 fi
 
 # --- 5. put the Python bindings on sys.path ----------------------------------------------
-# meson installs them under a prefix-relative site-packages; Ubuntu's interpreter searches
-# dist-packages. Without a bridge the bindings are installed and still not importable, which
-# is the most confusing failure in this whole setup. Locate them rather than assume a path.
+# meson installs into a site-packages Ubuntu's interpreter does not search.
 say "linking the libcamera Python bindings into Ubuntu's sys.path"
 if ! python3 -c 'import libcamera' 2>/dev/null; then
     BIND="$(find /usr/local/lib /usr/lib -maxdepth 4 -name '_libcamera*.so' 2>/dev/null \
@@ -181,11 +168,7 @@ if [ "${WITH_APPS}" = "1" ]; then
 fi
 
 # --- 7. pykms (kmsxx) --------------------------------------------------------------------
-# Not optional, despite sounding like a preview extra: picamera2/previews/__init__.py does an
-# UNCONDITIONAL `from .drm_preview import DrmPreview`, and drm_preview imports pykms. So
-# `import picamera2` fails outright without it - headless, over ssh, with no DISPLAY, always.
-# Pi OS gets this from python3-kms++; Ubuntu has no such package under any name, so it is a
-# source build. Small and quick compared to libcamera.
+# Required: picamera2 imports pykms unconditionally, and Ubuntu does not package it.
 say "building kmsxx for the pykms module"
 if ! command -v meson >/dev/null; then
     sudo apt install -y meson ninja-build libdrm-dev pkg-config python3-dev pybind11-dev
@@ -209,15 +192,9 @@ python3 -c 'import pykms; print("pykms:", pykms.__file__)' \
     || echo "WARNING: pykms still not importable - picamera2 will not import either"
 
 # --- 8. picamera2 ------------------------------------------------------------------------
-# No python3-picamera2 in noble, so pip is the only option, and noble's PEP 668 marks the
-# system interpreter externally managed. --break-system-packages is deliberate: picamera2
-# must share an interpreter with the locally built bindings, which a plain venv cannot see.
+# pip into the system interpreter on purpose: it must see the locally built bindings.
 say "installing picamera2 from pip"
-# python3-prctl matters most here: picamera2 depends on python-prctl, which is a C extension
-# whose sdist build fails with "You need to install libcap development headers". Ubuntu has it
-# prebuilt, so apt sidesteps the build; libcap-dev is kept anyway for any pip fallback.
-# pyqt5/opengl are what picamera2's QtGl preview needs - python3-kms++ is NOT packaged for
-# Ubuntu, so the DRM (console) preview cannot work here and --preview needs a desktop session.
+# python3-prctl prebuilt (its sdist needs libcap headers); pyqt5/opengl for the QtGl preview.
 sudo apt install -y libcap-dev python3-prctl python3-piexif python3-pyqt5 python3-opengl \
     python3-numpy python3-pil python3-av python3-simplejson || true
 pip install --break-system-packages picamera2 \

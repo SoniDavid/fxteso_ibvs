@@ -1,23 +1,6 @@
-"""Raspberry Pi Camera Module 3 Wide publisher for the IBVS stack.
-
-Publishes `sensor_msgs/Image` (bgr8) on `/quad/camera/image_raw` at the sensor mode's
-full rate (~56 Hz), ISP-downscaled to the sim's `module3wide_2304` render size
-(1152x648) so `image_features`' `fx`, `aD` and distortion model carry over from
-simulation unchanged.
-
-Backend is picamera2 (the RaspberryPi libcamera fork + PiSP stack, built to /usr/local
-by tools/setup_pi5_ubuntu_camera.sh). picamera2 has no rosdep key and is NOT declared in
-package.xml - it is satisfied out-of-band and resolves because ROS Jazzy runs on the
-system python3 the /usr/local .pth files bridge onto.
-
-Reliability pattern: the
-capture thread only drops the newest frame into a depth-1 queue and returns; a dedicated
-publisher thread builds and publishes the message. A slow or stalled subscriber therefore
-drops frames (latest wins) instead of back-pressuring capture. `Image.data` is filled from
-an `array.array` to hit rclpy's buffer fast-path rather than its per-byte loop.
-
-`use_sim_time` MUST be false on the aircraft - there is no /clock and the stamp here is
-the ROS system clock at the instant the frame is delivered.
+"""Pi Camera Module 3 Wide publisher: bgr8 on /quad/camera/image_raw at ~56 Hz, downscaled to the
+sim's module3wide_2304 size so image_features' model carries over. picamera2 is not in package.xml.
+Capture and publish are decoupled by a depth-1 queue (latest wins). use_sim_time must be false.
 """
 
 import array

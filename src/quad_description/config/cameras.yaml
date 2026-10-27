@@ -1,7 +1,5 @@
-# Camera presets: one entry per Raspberry Pi module AND sensor mode. hfov_deg is the effective
-# FOV after the mode's crop; fps is the real mode's rate against the 50 Hz image_features loop.
-# render is deliberately HALF the native linear resolution, so a marker is half as many pixels
-# here as on hardware. Offline geometry tools assume that rule - do not change it in isolation.
+# Camera presets: one per Pi module AND sensor mode. hfov_deg is after the mode's crop; render is
+# HALF the native linear resolution, a rule the offline geometry tools assume.
 
 cameras:
 
@@ -49,8 +47,7 @@ cameras:
     distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
 
   # --- Raspberry Pi Camera Module 3 (IMX708, 66 deg) ------------------------------------
-  # 16:9 native. Wider horizontally than Module 2 and NARROWER vertically, and the short axis
-  # is the one that binds, so this is a downgrade for this task. Included to show that.
+  # Narrower than Module 2 on the binding short axis: a downgrade, kept for comparison.
   module3_2304:
     hfov_deg: 66.0
     native: [2304, 1296]
@@ -60,8 +57,7 @@ cameras:
     distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
 
   # --- Raspberry Pi Camera Module 3 Wide (IMX708, 102 deg h / 120 deg diagonal) ---------
-  # The recommendation: full sensor crop at 56.03 fps, so it clears the 50 Hz loop at full
-  # field of view, which Module 2 cannot.
+  # The flown preset: full crop at 56 fps clears the 50 Hz loop at full FOV.
   module3wide_2304:
     hfov_deg: 102.0
     native: [2304, 1296]

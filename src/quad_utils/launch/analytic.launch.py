@@ -1,21 +1,7 @@
-"""FxTESO + adaptive-gain SMC IBVS on the analytic plant: uav_dynamics.cpp integrates the
-aircraft and Gazebo only renders the camera.
+"""FxTESO + adaptive-gain SMC IBVS on the analytic plant: uav_dynamics integrates the aircraft,
+Gazebo only renders the camera. SITL's arguments and defaults; see sim_stack.py.
 
-  quad_gz_sim/scenario  -> tgt_* and /disturbances
-  quad_gz_sim/plant     -> uav_dynamics -> quad_position/quad_attitude/...
-        |                        gz_pose_broadcaster --> Gazebo (renderer only)
-        v                                                    |
-  quad_control/estimation <------------- /quad/camera/image_raw
-        |
-        +---> fixed_eso ---> pos_ctrl ---> att_ctrl ---> quad_torques/quad_thrust
-
-Takes sitl.launch.py's arguments wherever they mean the same thing, with its defaults: zD 1.2,
-the 0.5-scale target holding station, the 1.30 kg 3S build. Arguments: sim_stack.py.
-
-  ros2 launch quad_utils analytic.launch.py [headless:=true] [rosbag:=true] [foxglove:=true]
-                                            [camera:=...] [target_profile:=hover|line|...]
-                                            [disturbance:=none|step|gust|wind|table52|csv]
-                                            [quad_mass:=1.30] [start_altitude:=1.5]
+  ros2 launch quad_utils analytic.launch.py [headless:=true] [rosbag:=true] [disturbance:=...]
 
 Thesis conditions: zD:=2.5 target_scale:=1.0 target_profile:=thesis quad_mass:=2.0
 start_altitude:=4.0 hold_target:=false record_from:=handover sim_hold:=false.

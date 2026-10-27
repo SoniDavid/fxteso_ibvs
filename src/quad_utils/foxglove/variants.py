@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Derive the per-camera layout variants from the canonical fxteso_ibvs.json.
-
-image_features consumes /quad/camera/image_distorted on presets with non-zero distortion and
-/quad/camera/image_raw on the rest, because gz_sim.launch.py only starts camera_distort when
-there is a warp to apply. The Vision tab exists to show what the detector sees, so it has to
-follow that - and a Studio layout is static JSON, so the branch has to happen here instead.
+"""Derive the per-camera layout variants from the canonical fxteso_ibvs.json: the Vision tab
+shows image_distorted or image_raw, whichever the preset's detector consumes.
 
     python3 src/quad_utils/foxglove/variants.py          # rewrite the derived variants
     python3 src/quad_utils/foxglove/variants.py --list   # which preset wants which layout
-
-Everything else is identical across variants by construction: the derived files are a copy of
-the canonical one with a single field replaced, and check_layout.py fails if they have drifted.
 """
 import argparse
 import collections
@@ -26,12 +19,7 @@ CANONICAL = os.path.join(HERE, 'fxteso_ibvs.json')
 
 
 def cameras_yaml():
-    """quad_description's preset table - the same file camera_presets.py reads.
-
-    Install trees are per-package (install/quad_utils/share/quad_utils/foxglove), so the
-    source-tree sibling path does not resolve there; ask ament first. The source path is the
-    fallback so check_layout.py still runs in a bare checkout with no ROS sourced.
-    """
+    """quad_description's preset table: from ament, else the source tree (no ROS sourced)."""
     try:
         from ament_index_python.packages import get_package_share_directory
         return os.path.join(get_package_share_directory('quad_description'), 'config',
@@ -40,10 +28,8 @@ def cameras_yaml():
         return os.path.join(HERE, os.pardir, os.pardir, 'quad_description', 'config',
                             'cameras.yaml')
 
-# The one panel that differs, and what each file points it at. The canonical file is edited by
-# hand and carries the distorted topic, because the wide presets are what gets flown; DERIVED is
-# generated from it and must never be edited directly. Keeping the canonical out of DERIVED is
-# load-bearing - generating a file from itself truncates it before it can be read.
+# The one panel that differs. The canonical file is hand-edited; DERIVED is generated from it and
+# must never contain it (generating a file from itself truncates it).
 VISION_PANEL = 'Image!camera_vision'
 CANONICAL_TOPIC = '/quad/camera/image_distorted'
 DERIVED = collections.OrderedDict([

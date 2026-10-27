@@ -1,9 +1,5 @@
 """The analytic and gazebo stacks, built once for every quad_utils entry point.
-
-Not a launch file: analytic.launch.py, gazebo.launch.py, sim.launch.py and
-observer_only.launch.py load it by path and call build(). The argument set is sitl.launch.py's
-minus what only PX4 has (venue, EKF2, rotor model, takeoff, OFFBOARD, attitude oracle), so the
-three plants take the same arguments wherever the argument means the same thing.
+Loaded by path; its arguments are sitl.launch.py's minus what only PX4 has.
 """
 import importlib.util
 import os

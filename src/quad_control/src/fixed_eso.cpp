@@ -52,9 +52,7 @@ float beta3 = 0;
 float fx = 0;
 float gx_u = 0;
 float quad_mass = 2;   // overridden by the quad_mass parameter; see main()
-// The DESIRED servoing depth, thesis Eq. 5.81's z_d, which sets the input coefficient
-// g_xi = -1/z_d on x/y/z. It has to track pos_ctrl's zD: the thesis' -2.5 m is its own
-// choice of depth, not a constant. Overridden by the z_des parameter; see main().
+// Desired servoing depth, thesis Eq. 5.81's z_d (g_xi = -1/z_d on x/y/z); must track pos_ctrl's zD.
 float z_des = 2.5;
 
 float yawRate_desired = 0;
@@ -73,9 +71,7 @@ Eigen::Matrix3f Ryaw(float yaw)
 
 float sign(float var)
 {
-    // Initialised, not left to fall through: NaN compares false against >0, <0 and ==0, so
-    // an uninitialised `result` was returned for it - undefined behaviour that surfaced as
-    // an arbitrary finite kick into the integrators rather than a detectable NaN.
+    // Initialised: NaN fails every comparison below.
     float result = 0;
     if(var>0)
     {
@@ -161,10 +157,7 @@ const float gamma1_xy = node->declare_parameter<double>("gamma1_xy", 18.0);
     if (x0_offset.size() != 4)
         throw std::runtime_error("initial_estimate_offset needs exactly 4 values (qx,qy,qz,qpsi).");
 
-    // Thesis Eq. 5.81: g_xi,x = g_xi,y = g_xi,z = -1/z_d, with z_d "the desired normal distance
-    // between the UAV and its target". It is the same quantity as pos_ctrl's zD and must be set
-    // to it - a mismatch leaves the part of the command the observer cannot explain to be booked
-    // as disturbance, which pos_ctrl then feeds back in. Yaw is exempt: g_xi,psi = -1, no depth.
+    // A z_des off pos_ctrl's zD books part of the command as disturbance. Yaw is exempt (g = -1).
     z_des = node->declare_parameter<double>("z_des", z_des);
     // Thesis value, 8% above the F450 SDF's 1.852 kg. Exposed for the real airframe; the default
     // changes nothing.
@@ -216,9 +209,7 @@ gamma1 << gamma1_xy, gamma1_xy, 16, gamma1_yaw;
     mu2 = gamma2;
     mu3 = gamma3;
 
-    // The node logged nothing at all until 2026-09-04, which is how a z_des frozen at 2.5 while
-    // zD moved to 1.2 went unnoticed. A bag records neither, and run_matrix deletes a successful
-    // run's launch log, so this line plus the manifest are the record of what was flown.
+    // The record of the gains flown: no bag carries them.
     RCLCPP_INFO(node->get_logger(),
                 "servoing depth z_des = %.3f m, mass = %.3f kg%s", z_des, quad_mass,
                 eso_yaw_sign < 0.0 ? ", yaw g(xi) sign -1 (thesis Eq. 5.81)" : "");
@@ -264,9 +255,7 @@ gamma1 << gamma1_xy, gamma1_xy, 16, gamma1_yaw;
 
     while(rclcpp::ok())
     {
-        // No measurement -> do not step the observer. Every state is held, nothing is reset:
-        // the equations are untouched, they simply are not run on a value that is not a
-        // measurement. See imFeatValidCallback above.
+        // No measurement -> do not step the observer; states are held, nothing is reset.
         if (!imgFeat_valid)
         {
             loop_rate.sleep();   // SimRate spins the executor, so callbacks still run

@@ -1,16 +1,5 @@
-// A stand-in Vicon receiver for SITL: Gazebo ground truth published as the PoseStamped the real
-// receiver produces, so vicon_px4_bridge under test is the one that flies. Simulation only -
-// quad_gz_sim is not built on the Pi, so this can never ship on the aircraft.
-//
-// The gz world is ENU, which is also how a Z-up Vicon volume is calibrated, so the pose is
-// published unrotated and the bridge runs its vicon_frame:=enu path exactly as it will in the lab.
-// Three frames are in play and only the middle one is PX4's:
-//   gz world   ENU                      what /quad_state carries, body FLU
-//   PX4 NED    (y, x, -z) of gz         what EKF2 believes; the bridge must feed THIS
-//   workspace  (x, -y, -z) of gz        = Rz(-pi/2) * PX4 NED, applied by px4_state_adapter
-// An earlier version rotated by +pi/2 here on the belief that gz was NWU. That landed the stream
-// in the workspace frame - 90 deg out - and because a self-consistent wrong frame produces near
-// zero innovations, EKF2 accepted it silently. See vicon_px4_bridge's frame guard.
+// Stand-in Vicon receiver for SITL: gz ground truth as the real receiver's PoseStamped, unrotated
+// (gz is ENU, as a Z-up Vicon volume), so vicon_px4_bridge runs its vicon_frame:=enu path.
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>

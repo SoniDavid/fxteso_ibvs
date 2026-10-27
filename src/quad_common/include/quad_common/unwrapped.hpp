@@ -1,6 +1,4 @@
-// Euler angle unwrapping, shared by every state adapter.
-// The control stack needs unbounded angles; any quaternion-to-RPY conversion returns
-// (-pi, pi].
+// Euler angle unwrapping for every state adapter: the control stack needs unbounded angles.
 
 #ifndef QUAD_COMMON__UNWRAPPED_HPP_
 #define QUAD_COMMON__UNWRAPPED_HPP_
@@ -29,9 +27,7 @@ public:
 		return raw + this->turns;
 	}
 
-	// Take the next sample as a real discontinuity, not a wrap: an estimator that corrects its
-	// heading by more than pi (PX4's EKF2 while converging) must not bank a phantom turn.
-	// Accumulated turns are kept, so a reset does not discard real winding.
+	// Take the next sample as a real jump, not a wrap (an EKF2 heading reset); turns are kept.
 	void reseed(double raw)
 	{
 		this->prev = raw;

@@ -1,7 +1,6 @@
 <?xml version='1.0'?>
-<!-- Moving ArUco target: 0.90 x 0.75 m plate, four DICT_7X7_50 markers, IDs 4/6/8/10.
-     The model name must stay 'aruco_Target' - gz_pose_broadcaster addresses it by that
-     exact string. Target2.dae needs its JPEGs beside it in meshes/. -->
+<!-- ArUco target: 0.90 x 0.75 m, DICT_7X7_50 IDs 4/6/8/10. Keep the name 'aruco_Target'
+     (gz_pose_broadcaster addresses it). -->
 <sdf version='1.9'>
   <model name='aruco_Target'>
     <link name='link_aruco'>

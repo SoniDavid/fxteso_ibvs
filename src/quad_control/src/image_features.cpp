@@ -32,9 +32,7 @@
 
 cv::Mat frame;
 
-// float, not int: these feed mu11/mu20/mu02 directly, and truncating each centroid to a
-// whole pixel puts a systematic ~-0.5 px bias on exactly the quantities the yaw feature
-// is built from.
+// float, not int: truncating centroids biases the moments the yaw feature is built from.
 float ug, ug1, ug2, ug3, ug4;
 float ng, ng1, ng2, ng3, ng4;
 int p1,p2,p3,p4;
@@ -214,9 +212,7 @@ int main(int argc, char *argv[])
     
 	auto im_feat_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("ImFeat_vector",100);
 	auto im_feat_valid_pub = node->create_publisher<std_msgs::msg::Bool>("ImFeat_valid",100);
-	// How many of the four expected markers were MEASURED this frame. ImFeat_valid says only
-	// locked / not locked, which cannot separate the target leaving the frame from the markers
-	// failing to decode - and those two want opposite fixes.
+	// Markers measured this frame: separates the target leaving the frame from a failed decode.
 	auto im_feat_sources_pub = node->create_publisher<std_msgs::msg::UInt8>("ImFeat_sources",100);
     auto a_value_pub = node->create_publisher<std_msgs::msg::Float64>("a_value",100);
 	auto u_coord_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("u_coordinates",100);
@@ -368,9 +364,7 @@ int main(int argc, char *argv[])
 	double detect_ms_max = 0.0;
 	double detect_ms_sum = 0.0;
 	long detect_n = 0;
-	// Markers-per-frame histogram. The per-marker decode rate p is fitted from this - it used to
-	// be counted by hand out of a launch log, one printed line per frame, which is what made the
-	// console unreadable. Reported every 10 s with p already solved.
+	// Markers-per-frame histogram; the per-marker decode rate p is fitted from it every 10 s.
 	long marker_hist[5] = {0, 0, 0, 0, 0};
 	long wrong_ids_n = 0;
 	// More detections than the target has markers: spurious blobs or an ID decoded twice. Counted
@@ -469,9 +463,7 @@ int main(int argc, char *argv[])
 			im_feat_sources_pub->publish(im_feat_sources);
 		}
 
-		// Identity, not just count: the per-point assignment below keys on the IDs, and a
-		// wrong or duplicated one falls through every branch leaving the PREVIOUS frame's
-		// centroids in place - a corrupt reading that still looks like a lock.
+		// Identity, not just count: a wrong or duplicated ID would keep last frame's centroids.
 		const bool ids_ok = (markerIds.size() == 4) &&
 			(std::set<int>(markerIds.begin(), markerIds.end()) == std::set<int>{4, 6, 8, 10});
 
@@ -708,9 +700,7 @@ cv::Point2f p33 = markerCorners[0].at(2);
 			p4x = centroids[3].x-cam_cx;
 			p4y = -(centroids[3].y-cam_cy);
 
-			// Only pixel_size/focal_length = 1/fx enters the model below, so deriving
-			// pixel_size from the reported fx keeps it consistent with the camera actually
-			// rendering. The old hardcoded pair disagreed with the SDF's FOV by 2%.
+			// Only pixel_size/focal_length = 1/fx enters the model, so derive it from the reported fx.
 			pixel_size = focal_length / cam_fx;
 
             //Camera frame point data (u,n,focal_length)
@@ -755,9 +745,8 @@ cv::Point2f p33 = markerCorners[0].at(2);
 			// atan2, not Eq. 5.8's single-argument atan: that confines the feature to +-pi/4 and
 			// jumps by pi/2 at 45 deg of relative yaw, inverting the yaw feedback.
 			float qpsi_raw = -0.5 * atan2(2*mu11, den);
-			// Both the moment sign and atan2's wrap quantise qpsi in pi/2, so snap every
-			// discontinuity to the nearest multiple of it. The seed matters: without it a plate
-			// with b > a servos about +-pi/2 rather than zero.
+			// The moment sign and atan2 wrap jump qpsi in pi/2 steps: snap them out. The seed keeps a
+			// plate with b > a servoing about zero, not +-pi/2.
 			if (!qpsi_have_prev)
 			{
 				qpsi_turns = -M_PI_2 * std::round(qpsi_raw / M_PI_2);
@@ -821,10 +810,8 @@ cv::Point2f p33 = markerCorners[0].at(2);
 			            "(budget %.1f ms); frame age %.1f ms; opencv fallback on %ld frames",
 			            detector_backend.c_str(), detect_n ? detect_ms_sum / detect_n : 0.0, detect_ms_max, detect_n,
 			            1000.0 / kLoopHz, age_ms, fallback_n);
-			// Markers per frame, and the per-marker decode rate it implies. The lock needs all four,
-			// so P(lock) = p^4 and ibvs_gate's ten consecutive frames is p^40 - a soft decline in p
-			// presents as a hard floor. Fitted from the mean of the histogram, which is the maximum
-			// likelihood estimate for Binomial(4, p): p = mean(k)/4.
+			// Decode rate p = mean(k)/4 (Binomial MLE). Lock needs all four (p^4), the gate ten
+			// frames (p^40), so a soft decline in p looks like a hard floor.
 			const long hist_n = marker_hist[0] + marker_hist[1] + marker_hist[2] + marker_hist[3] +
 			                    marker_hist[4] + spurious_n;
 			if (hist_n > 0)

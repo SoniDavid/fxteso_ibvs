@@ -1,14 +1,5 @@
-// The safety pilot, for SITL only: indoors PX4 has no GNSS aiding and cannot fly AUTO_TAKEOFF,
-// so a human takes off in Altitude and hands over. Altitude is selected BEFORE arming, since
-// AUTO_LOITER is position-controlled and the arm would be denied. It keeps flying rather than
-// centring the sticks - a centred stick commands level attitude, not position hold - closing a
-// horizontal loop on /quad_state ground truth, which no part of the IBVS chain reads.
-// The stick stream never stops, because PX4 treats a gap as RC loss.
-// Stamps come off PX4's clock: hrt_absolute_time() here is wall clock, and ROS-stamped
-// samples look ~56 years old and are silently discarded.
-// While the loop OWNS the aircraft it lets go, as a briefed pilot must: stick motion is PX4's
-// override, and it reassigns the mode intent to POSCTL for good. Ownership is nav_state_user_
-// intention, not nav_state: a lock-loss failsafe drops nav_state while PX4 still intends OFFBOARD.
+// SITL safety pilot: takes off in Altitude (no GNSS indoors) on MAVLink sticks, holding position on
+// ground truth, and lets go while the loop owns the aircraft. Stamps use PX4's clock.
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/sim_rate.hpp"
 #include "quad_px4/px4_topic.hpp"
@@ -88,10 +79,8 @@ int main(int argc, char **argv)
 	const bool hands_off = node->declare_parameter<bool>("hands_off_in_offboard", true);
 	// Seconds the sticks stay still after PX4 gives up the intention, before the pilot flies again.
 	const double reaction = node->declare_parameter<double>("pilot_reaction", 0.0);
-	// Ceiling on hands-off while the INTENTION says OFFBOARD but PX4 is not actually flying it.
-	// Without it a permanently stuck intention would strand the aircraft in a failsafe with frozen
-	// sticks. 5 s clears the full hand-back round trip: COM_OF_LOSS_T 1.0 + the bridge's
-	// setpoint_timeout 0.3 + stream_before_switch 1.5 = 2.8 s.
+	// Ceiling on hands-off while the intention says OFFBOARD but PX4 is not flying it (> the 2.8 s
+	// hand-back round trip).
 	const double handback_timeout = node->declare_parameter<double>("handback_timeout", 5.0);
 
 	const rclcpp::QoS px4In = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile();
@@ -132,9 +121,7 @@ int main(int argc, char **argv)
 				altitude = -p->z;      // NED: down is positive
 		});
 
-	// PX4's own time base, advanced by however long ago we last heard from it.
-	// Ground truth, in the same NED workspace frame gz_state_adapter publishes: gz is ENU with an
-	// FLU body, so (x, -y, -z) on both the world position and the body-frame twist.
+	// Ground truth in gz_state_adapter's NED frame: (x, -y, -z) from gz's ENU/FLU.
 	bool have_truth = false;
 	double quad_n = 0, quad_e = 0, yaw_ned = 0, v_fwd = 0, v_right = 0;
 	auto truthSub = node->create_subscription<nav_msgs::msg::Odometry>(
@@ -317,10 +304,8 @@ int main(int argc, char **argv)
 		if (phase == Phase::Climb || phase == Phase::Hold)
 			holdSticks(roll_stick, pitch_stick, yaw_stick);
 
-		// Intention, not nav_state. A lock-loss failsafe drops nav_state to ALTCTL while leaving the
-		// intention at OFFBOARD - PX4 means to give the aircraft back. Flying in that window is read
-		// as a stick override, which reassigns the intention to POSCTL and ends the run: that is what
-		// killed px4_20260918_084714 at t=7.1 s, 10 ms after PX4 had recovered OFFBOARD by itself.
+		// Intention, not nav_state: a lock-loss failsafe keeps the intention at OFFBOARD, and stick
+		// motion then would be an override that reassigns it to POSCTL for good.
 		const rclcpp::Time now = node->now();
 		const bool in_offboard = nav_state == VehicleStatus::NAVIGATION_STATE_OFFBOARD;
 		if (in_offboard)

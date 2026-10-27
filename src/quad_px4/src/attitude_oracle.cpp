@@ -1,8 +1,5 @@
-// SITL-only diagnostic: publishes a reference attitude built from Gazebo ground-truth roll/pitch
-// and EKF2's yaw, so the loop's two attitude paths can be fed truth one at a time.
-//   attitude_reference        PX4 NED/FRD quaternion, for px4_offboard_bridge's setpoint correction
-//   quad_attitude_reference   /quad_attitude's convention, for a second td_attitude -> derotation
-// replay_csv adds a recorded (t, roll_err, pitch_err) series to the truth, t = 0 at the handover.
+// SITL diagnostic: a reference attitude from ground-truth roll/pitch and EKF2 yaw, for the setpoint
+// correction and derotation paths; replay_csv adds a recorded error series.
 #include <rclcpp/rclcpp.hpp>
 #include "quad_common/unwrapped.hpp"
 #include "quad_px4/px4_topic.hpp"

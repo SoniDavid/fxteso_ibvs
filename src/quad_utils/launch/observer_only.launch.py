@@ -1,9 +1,5 @@
-"""Open loop: plant, scenario and the estimation chain, but no controllers.
-
-The observer test - nothing can diverge from a control gain here. Expect /quad_thrust
-and /quad_torques to stay silent. No ibvs_gate either: nothing is being held back, and the
-recorder starts at launch. sitl.launch.py's defaults, as sim.launch.py; the fixed-time sweeps
-flown at the thesis conditions pass them explicitly (sim_stack.py's THESIS).
+"""Open loop: plant, scenario and the estimation chain, no controllers and no gate (the observer
+test). sitl.launch.py's defaults; thesis conditions via sim_stack.py's THESIS.
 
   ros2 launch quad_utils observer_only.launch.py [plant:=gazebo] [disturbance:=gust]
                                                  [rosbag:=true]

@@ -1,8 +1,5 @@
-"""The Raspberry Pi Camera Module 3 Wide driver on /quad/camera/image_raw.
-
-Included by quad_px4's hardware.launch.py and quad_cam's bench.launch.py, which resolve the camera
-preset once and give this driver and image_features the same size and QoS. Run it alone only to
-check the camera (probe_latency, probe_detect).
+"""The Pi Camera Module 3 Wide driver on /quad/camera/image_raw. Included by hardware.launch.py and
+bench.launch.py; run alone only to check the camera.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction

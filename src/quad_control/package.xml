@@ -3,12 +3,7 @@
 <package format="3">
   <name>quad_control</name>
   <version>0.1.0</version>
-  <description>
-    Fixed-time extended state observer, tracking differentiators, ArUco feature
-    extraction and the adaptive-gain sliding-mode position and attitude controllers.
-    Carries no simulation dependency, so it runs unchanged against Gazebo, PX4 SITL
-    or the real aircraft.
-  </description>
+  <description>FxTESO, tracking differentiators, ArUco features and the adaptive-gain SMC controllers.</description>
   <maintainer email="losfansdepalomino@proton.me">SoniDavid</maintainer>
   <license>MIT</license>
 

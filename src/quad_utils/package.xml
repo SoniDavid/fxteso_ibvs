@@ -3,11 +3,7 @@
 <package format="3">
   <name>quad_utils</name>
   <version>0.1.0</version>
-  <description>
-    Bringup and visualisation: the launch files that compose the simulation and control
-    layers into a runnable experiment, the TF/path/marker broadcaster for Foxglove's 3D
-    panel, the Foxglove layout and the rosbag topic list. All pure consumers.
-  </description>
+  <description>Simulation bringup, the TF/marker broadcaster, Foxglove layouts and the bag topic list.</description>
   <maintainer email="losfansdepalomino@proton.me">SoniDavid</maintainer>
   <license>MIT</license>
 

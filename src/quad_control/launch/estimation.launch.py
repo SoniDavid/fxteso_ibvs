@@ -1,12 +1,5 @@
-"""The estimation chain: camera and plant state in, feature and state estimates out.
-
-Safe to run without the controllers - that is the open-loop observer test. Each node
-staggers its own start on sim time, so nothing here needs a launch delay.
-
-The camera arguments are plain numbers on purpose. quad_control carries no simulation
-dependency and does not read the camera preset table; the caller resolves the preset once and
-passes the same values here and to whatever renders or drives the camera. Their defaults are the
-Camera Module 2 geometry image_features had hardcoded, so an unadorned launch is unchanged.
+"""The estimation chain: camera and plant state in, feature and state estimates out. Runs without
+the controllers too. Camera arguments are plain numbers: the caller resolves the preset.
 """
 from typing import List
 
@@ -48,10 +41,7 @@ def generate_launch_description():
         # The observer's g(xi)*u sign on yaw. 1.0 is the as-flown value; -1.0 is
         # thesis Eq. 5.81's g_xi,psi = -1. See fixed_eso.cpp.
         DeclareLaunchArgument('eso_yaw_sign', default_value='1.0'),
-        # The observer's desired servoing depth, thesis Eq. 5.81's z_d, which sets g_xi = -1/z_d
-        # on x/y/z. THE SAME QUANTITY AS pos_ctrl's zD - every composer below passes its own zD
-        # here. The 2.5 default is only for running this file on its own; it matches the zD
-        # default of sim.launch.py and observer_only.launch.py.
+        # Thesis Eq. 5.81's z_d (g_xi = -1/z_d): the same quantity as pos_ctrl's zD.
         DeclareLaunchArgument('z_des', default_value='2.5'),
         DeclareLaunchArgument(
             'initial_estimate_offset', default_value='[0.0, 0.0, 0.0, 0.0]',
@@ -65,9 +55,7 @@ def generate_launch_description():
         # Brown-Conrady k1,k2,p1,p2,k3. All zero keeps undistortPoints out of the path; it only
         # ever touches the four marker centroids, so it costs microseconds, not a frame.
         DeclareLaunchArgument('camera_distortion', default_value='[0.0, 0.0, 0.0, 0.0, 0.0]'),
-        # The image moment at the desired depth: aD = 0.5625 * target_scale^2 * (f/zD)^2, with
-        # f = 0.00304. The default is the flown constant, which that formula reproduces at
-        # 2.605 m - so aD, not zD, is what sets where the aircraft actually settles.
+        # Image moment at the desired depth, aD = 0.5625 * target_scale^2 * (f/zD)^2.
         DeclareLaunchArgument('aD', default_value='0.00000076589'),
         DeclareLaunchArgument('marker_dict', default_value='7x7',
                               description='must match the textures gz_sim.launch.py selected'),

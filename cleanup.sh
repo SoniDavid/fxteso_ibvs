@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
 # Kill a previous run and wait for the machine to be ready for the next one.
-#
-# The wait is not optional. An orphaned gz server starves PX4's magnetometer, and the DDS graph
-# and the simulator's UDP ports need time to be released - a run started seconds after a kill
-# sits waiting on EKF2 for its whole timeout.
-#
-# ros2 launch signals only the `ruby .../gz sim` wrapper, and its `gz sim server` / `gz sim gui`
-# children are forked, so they survive and reparent to systemd --user. They do match the patterns
-# below (ruby's setproctitle rewrites argv, which is what pgrep -f reads) - but the old version
-# never checked, so a kill that missed looked identical to one that worked.
-#
+# The wait matters: orphaned gz servers and unreleased DDS ports break the next run's start-up.
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Derived, not hand-listed. The hand-written list silently omitted sim_pilot, tf_broadcaster,
-# gz_pose_broadcaster, td_linear, td_attitude*, px4_offboard_bridge and px4_state_adapter, so every
-# run that did not exit gracefully leaked 7 spinning nodes. Thirty runs reached load 303, the
-# simulator fell to RTF 0.06, and runs then failed for reasons that looked like anything but this.
-# find -L: colcon --symlink-install makes each of these a symlink into build/, not a regular file.
+# Every installed executable, derived rather than hand-listed (find -L: symlink install).
 mapfile -t PATTERNS < <(find -L "$REPO"/install/*/lib -mindepth 2 -maxdepth 2 \
                              -type f -executable -printf '%f\n' 2>/dev/null | sort -u)
 
@@ -27,10 +14,7 @@ if [ "${#PATTERNS[@]}" -eq 0 ]; then
     exit 1
 fi
 
-# ros2cli.daemon outlives every run and accumulates one Fast-DDS segment per participant it ever
-# discovered - 28 after an afternoon, which is what every run's "Failed init_port fastrtps_port7006:
-# open_and_lock_file failed" reports. It respawns on demand, and it is killed rather than stopped
-# because once wedged `ros2 daemon stop` hangs and the daemon survives.
+# ros2cli.daemon accumulates stale Fast-DDS segments; killed, since a wedged one ignores `stop`.
 PATTERNS+=("gz sim" "px4_sitl" "MicroXRCEAgent" "parameter_bridge" "ros2cli.daemon")
 
 # pgrep -f matches any command line CONTAINING the pattern, including our own and that of whatever

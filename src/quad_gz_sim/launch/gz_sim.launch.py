@@ -5,17 +5,8 @@
                                            [marker_dict:=7x7] [camera_rate:=0.0]
                                            [quad_mass:=2.0] [start_altitude:=4.0]
 
-plant starts no node here; it selects how the world is derived. See _world_for().
-
-camera, target_scale and marker_dict do the same for the models: _models_for() writes derived
-copies of F450_base and aruco_target into a scratch tree that is prepended to
-GZ_SIM_RESOURCE_PATH, so model:// still resolves and the originals are never touched. The
-camera presets live in quad_description/config/cameras.yaml, which the offline footprint calculator reads too -
-one table, so the rendered geometry and the calculator cannot disagree.
-
-The matching intrinsics have to reach image_features as well, or the feature model is computed
-against a camera that was not rendered. That is the caller's job: quad_px4/sitl.launch.py and
-quad_utils/sim.launch.py resolve the preset once and pass the numbers to both.
+plant, camera, target_scale and marker_dict select derived copies of the world and models, in a
+scratch tree on GZ_SIM_RESOURCE_PATH. Callers must pass the same preset's intrinsics to image_features.
 """
 import importlib.util
 import math
@@ -73,9 +64,7 @@ def generate_launch_description():
         # analytic = the paper's ROS-side integrator; gazebo = DART; px4 = DART with PX4
         # SITL owning allocation and the inner loop.
         DeclareLaunchArgument('plant', default_value='analytic'),
-        # Camera module AND sensor mode; see quad_description/config/cameras.yaml. Not every module reaches the
-        # 50 Hz image_features loop at full field of view, which is why modes are separate
-        # presets rather than a resolution argument.
+        # Camera module AND sensor mode, from quad_description/config/cameras.yaml.
         DeclareLaunchArgument('camera', default_value=presets.DEFAULT_CAMERA),
         # Scales the ArUco target. Smaller markers buy field-of-view slack and cost decode
         # pixels; footprint.py prints both sides of that trade.
@@ -116,12 +105,8 @@ def generate_launch_description():
     ]
 
     def _reap_orphans(context, *a, **k):
-        """Kill gz sim processes orphaned by a previous run (they hold a GPU context).
-
-        Requires all three of: 'gz sim' in the cmdline, this package's name in it, and
-        parent pid 1 - so a live simulation, or a Gazebo running for anything else, is
-        never touched. PKG reaches the cmdline via the derived world path.
-        """
+        """Kill gz sim processes orphaned by a previous run: 'gz sim' and PKG in the cmdline,
+        parent pid 1, so a live simulation is never touched."""
         killed = []
         for entry in os.listdir('/proc'):
             if not entry.isdigit():
@@ -176,12 +161,7 @@ def generate_launch_description():
         return out
 
     def _derive_model(name, rewrite, meshes_from=None):
-        """Write a rewritten copy of models/<name>/ into the derived tree.
-
-        model.sdf is rewritten, model.config copied, and meshes/ symlinked rather than copied -
-        F450_base's are 4 MB and none of them change. The mesh URIs are model://<name>/meshes/...
-        so they resolve through the derived directory and land on the symlink.
-        """
+        """Write a rewritten copy of models/<name>/ into the derived tree; meshes/ is symlinked."""
         src = os.path.join(models, name)
         dst = os.path.join(derived_models, name)
         shutil.rmtree(dst, ignore_errors=True)
@@ -229,9 +209,7 @@ def generate_launch_description():
             blk = _sub_once(blk, r'<height>\d+</height>', '<height>%d</height>' % height,
                             'height')
             if any(c != 0.0 for c in cam['distortion']):
-                # gz-rendering applies this as a post-render pass, so detectMarkers sees the
-                # bowed image - which is the point: point undistortion downstream cannot
-                # rescue a marker the detector never found.
+                # A post-render pass, so the detector sees the bowed image, as on hardware.
                 blk = _sub_once(
                     blk, r'(\s*)</camera>',
                     r'\1  <distortion>\1    <k1>%g</k1><k2>%g</k2><k3>%g</k3>'
@@ -252,10 +230,8 @@ def generate_launch_description():
                              '<size>%g %g 0.001</size>'
                              % (0.90 * target_scale, 0.75 * target_scale), 'collision <size>')
 
-        # gazebo is SITL's body driven by an ideal wrench: the rotors keep their mass and inertia
-        # but are welded, since a DART joint velocity command is a real torque on the airframe;
-        # their meshes move to visual-only models (_world_for). Derived for every plant, so a
-        # gazebo copy never shadows the original afterwards.
+        # gazebo: SITL's body under an ideal wrench, rotors welded (a DART joint command is a real
+        # torque on the airframe). Derived for every plant, so no copy shadows the original.
         gazebo = plant == 'gazebo'
         weld = (lambda x: airframe.strip_rotor_visuals(airframe.weld_rotors(x))) if gazebo \
             else (lambda x: x)
@@ -342,9 +318,7 @@ def generate_launch_description():
             )]
 
     def _bridge(context, *a, **k):
-        # plant:=px4 uses a config without the /quad_thrust and /quad_torques ROS_TO_GZ
-        # entries: PX4 drives the rotors, and anything BodyWrench applied to base_link would
-        # be added on top of that rather than instead of it.
+        # plant:=px4: no /quad_thrust or /quad_torques bridge, since PX4 drives the rotors.
         plant = LaunchConfiguration('plant').perform(context).lower()
         cfg = 'bridge_px4.yaml' if plant == 'px4' else 'bridge.yaml'
         return [Node(
@@ -354,14 +328,8 @@ def generate_launch_description():
         )]
 
     def _distort(context, *a, **k):
-        """Apply the preset's lens distortion, which gz-sim's ogre2 renderer will not.
-
-        The SDF <distortion> element parses and does nothing: DistortionPass exists only in the
-        ogre (v1) engine. Verified rather than assumed - k1 = -0.30 on the F450 camera gives a
-        byte-identical frame. So the warp happens here, and image_features is remapped onto the
-        distorted topic by the caller. A zero coefficient vector makes the node a pass-through,
-        which keeps the topic plumbing identical whether distortion is on or off.
-        """
+        """Apply the preset's lens distortion, which ogre2 ignores (SDF <distortion> is ogre1 only).
+        Zero coefficients make it a pass-through."""
         camera = LaunchConfiguration('camera').perform(context)
         cam = presets.resolve(camera)
         if not any(cam['distortion']):

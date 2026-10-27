@@ -1,13 +1,5 @@
-"""The two control loops: adaptive-gain SMC on the IBVS error (50 Hz), then on
-attitude (100 Hz).
-
-No gating logic on purpose. Starting these before the plant, the target and a marker
-lock are up commands the aircraft off garbage estimates, so the caller holds them back -
-quad_utils/launch/sim.launch.py waits on ibvs_gate's exit code.
-
-  attitude_controller:=false  drops att_ctrl and leaves only the IBVS loop. That is what
-  plant:=px4 wants: PX4's mc_att_control and mc_rate_control take the inner loop, and
-  quad_px4's offboard bridge consumes pos_ctrl's desired_attitude directly.
+"""The two control loops: adaptive-gain SMC on the IBVS error (50 Hz), then on attitude (100 Hz).
+No gating here; the caller starts it after ibvs_gate. attitude_controller:=false for plant:=px4.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -21,22 +13,16 @@ PKG = 'quad_control'
 def generate_launch_description():
     args = [
         DeclareLaunchArgument('attitude_controller', default_value='true'),
-        # Servoing depth. 2.5 is the value pos_ctrl carried hardcoded and every recorded bag
-        # was flown at; a smaller one is what a low lab ceiling needs. It has to move together
-        # with image_features' aD and with the plant's takeoff altitude - the caller owns that.
+        # Servoing depth; must move with image_features' aD and the takeoff altitude (the caller's job).
         DeclareLaunchArgument('zD', default_value='2.5'),
         # False on hardware: SimRate blocks on node->now(), so with no /clock this hangs.
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         # The same number estimation.launch.py gives fixed_eso; see there.
         DeclareLaunchArgument('quad_mass', default_value='2.0'),
-        # Which velocity feeds pos_ctrl's Coriolis term: td (default, what every recorded bag
-        # was flown with) | ekf2 | vision | off. See aibvs_pos_ctrl.cpp and e83.md - indoors
-        # the td path carries EKF2's dead-reckoned position, differentiated.
+        # Velocity in pos_ctrl's Coriolis term: td | ekf2 | vision | off (see aibvs_pos_ctrl.cpp).
         DeclareLaunchArgument('velocity_source', default_value='td',
                               choices=['td', 'ekf2', 'vision', 'off']),
-        # pos_ctrl's per-cycle error print. Off by default: at 50 Hz it buried every WARN in the
-        # launch console, including the lock losses and PX4 failing safe. The same numbers are on
-        # /error_visual_servoing.
+        # pos_ctrl's per-cycle error print; /error_visual_servoing has the same numbers.
         DeclareLaunchArgument('print_error', default_value='false'),
     ]
 

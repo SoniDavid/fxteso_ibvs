@@ -26,10 +26,7 @@ int main(int argc, char **argv)
 	// Wall clock, deliberately: a sim-time timeout would never fire if Gazebo failed to
 	// start and /clock never advanced - exactly the case this needs to report.
 	const double timeout_s = node->declare_parameter<double>("timeout", 180.0);
-	// Aiding that never starts never will, so abandon rather than wait out the timeout. Zero
-	// disables. Measured from EKF2's FIRST message, not this node's start, which precedes boot.
-	// Sim time, unlike the two deadlines above: EKF2 converges in simulated seconds, so a wall
-	// clock shortens this to RTF x aiding_deadline and abandons runs for being on a slow machine.
+	// Abandon if aiding never starts (0 disables). Sim time, from EKF2's first message.
 	const double aiding_deadline =
 		node->declare_parameter<double>("aiding_deadline", 25.0);
 	// Indoors cs_gnss_pos never comes true; yaw alignment is still required, horizontal aiding

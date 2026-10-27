@@ -1,14 +1,5 @@
-"""Live benchmark sampler for the IBVS stack on the Pi.
-
-Run it alongside `ros2 launch quad_cam bench.launch.py`. Every report_period_s it
-prints, and on exit it summarises:
-
-  * achieved loop rate for each control/estimation node (from its always-on output topic)
-  * per-process CPU%, system per-core CPU%, load average, free RAM
-  * Pi SoC temperature, throttle/undervoltage flags, current CPU clock
-
-The per-loop pass criterion is `achieved >= 0.98 * target` with few overruns; cross-check
-against each node's own `loop:` line (SimRate self-report) in the launch output.
+"""Live benchmark sampler for the IBVS stack on the Pi, alongside bench.launch.py: loop rates,
+CPU, RAM, SoC temperature and throttling. A loop passes at achieved >= 0.98 * target.
 
   ros2 run quad_cam probe_bench
   ros2 run quad_cam probe_bench --ros-args -p duration_s:=120
@@ -39,11 +30,7 @@ try:
 except ImportError:  # pragma: no cover
     psutil = None
 
-# node label -> (topic, msg type, target Hz). The image_features topic is a parameter
-# (`imfeat_topic`): bench.launch.py load:=synthetic remaps its real output to
-# /ImFeat_valid_probe (the default here) while bench_feeder owns /ImFeat_valid; for
-# load:=plate|none pass -p imfeat_topic:=/ImFeat_valid. fixed_eso/pos_ctrl publish
-# nothing until ImFeat_valid is true.
+# node label -> (topic, msg type, target Hz). load:=plate|none: pass -p imfeat_topic:=/ImFeat_valid.
 _LOOPS = [
     ('td_attitude',         '/attitude_td_error',       Vector3,   100.0),
     ('td_linear',           '/position_td_error',       Vector3,   100.0),
@@ -64,9 +51,7 @@ _THROTTLE_EVER = {16: 'under-voltage', 17: 'arm-freq-cap', 18: 'throttling',
 
 
 def _count_qos():
-    # RELIABLE + a deep queue: the fxteso nodes all publish default (RELIABLE) QoS, and an
-    # accurate count needs every message - a BEST_EFFORT depth-1 sub silently drops ~5% at
-    # 100 Hz. The callback only increments an int, so there is no back-pressure.
+    # RELIABLE + a deep queue: a BEST_EFFORT depth-1 sub drops ~5% at 100 Hz.
     return QoSProfile(reliability=QoSReliabilityPolicy.RELIABLE,
                       history=QoSHistoryPolicy.KEEP_LAST, depth=200,
                       durability=QoSDurabilityPolicy.VOLATILE)

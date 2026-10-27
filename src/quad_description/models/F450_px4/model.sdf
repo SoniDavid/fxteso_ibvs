@@ -1,19 +1,8 @@
 <?xml version='1.0'?>
-<!-- F450 for plant:=px4: F450_base geometry plus the motor model PX4's allocator drives.
-     Nothing in this workspace computes thrust or mixing here.
-
-     Motor numbering is PX4 quad_x and F450_base already has the matching propeller
-     handedness, so the mapping is a pass-through:
-
-       0 rotor_front_right ccw | 1 rotor_rear_left  ccw
-       2 rotor_front_left  cw  | 3 rotor_rear_right cw
-
-     The link poses must agree with CA_ROTOR*_P{X,Y} in the 22100_gz_F450_px4 airframe.
-     motorConstant is C_T fitted to T-Motor's bench table for the Navigator MN2212 V2.0 KV920
-     on a 9545B - 0.2% off the x500 value this was forked from. momentConstant is still x500's:
-     no C_D has been measured for this motor.
-     maxRotVelocity is only a ceiling. The operating limit is SIM_GZ_EC_MAX, which sitl.launch.py
-     derives from battery_cells; this must stay above it or the motor model clamps. -->
+<!-- F450 for plant:=px4: F450_base plus the motor model PX4 drives, motors in quad_x order
+     (0 FR ccw, 1 RL ccw, 2 FL cw, 3 RR cw); poses must match the airframe's CA_ROTOR*.
+     motorConstant fitted to the MN2212 KV920 + 9545B; momentConstant is x500's (unmeasured).
+     maxRotVelocity must stay above the launch-derived SIM_GZ_EC_MAX. -->
 <sdf version='1.9'>
   <model name='F450_px4'>
 

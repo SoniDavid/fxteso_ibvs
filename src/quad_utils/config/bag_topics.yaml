@@ -20,31 +20,24 @@ plant_and_target:
   - /quad_state
   # plant:=gazebo: every force on the airframe except commanded thrust (BodyWrench echo).
   - /external_force
-  # plant:=px4 only: whether the loop or PX4's failsafe was flying, which lock% cannot show.
-  # The _v4 suffix is NOT optional - the unversioned name subscribes silently to nothing.
-  # Bump it when px4_msgs bumps VehicleStatus.
+  # plant:=px4 only: who was flying. The _v4 suffix must follow px4_msgs' VehicleStatus version.
   - /fmu/out/vehicle_status_v4
   # plant:=analytic and gazebo: the same question, answered by sim_hold's PX4 Hold emulation.
   - /sim_hold/active
   # plant:=px4 only. An EKF2 reset steps quad_position; the td_linear spike is not motion.
   - /quad_estimator_reset
-  # venue:=vicon only. Independent 6-DoF ground truth, and - via aiding_active - exactly when
-  # Vicon was feeding EKF2. Without the second, the resume transients cannot be excluded and a
-  # scored window cannot be shown to have been unaided.
+  # venue:=vicon only: 6-DoF ground truth, and when Vicon was feeding EKF2.
   - /vicon/quad/quad
   - /vicon_px4_bridge/aiding_active
   # plant:=px4 only. cs_ev_pos is how a run proves the EV stream was actually fused rather than
   # merely published; cs_fake_pos is EKF2 admitting it has no horizontal aiding.
   - /fmu/out/estimator_status_flags
-  # plant:=px4 only. WHY a mode became unavailable: local_position_invalid,
-  # offboard_control_signal_lost, and the mode_req_* masks that say what each mode needs.
-  # nav_state alone shows the fallback, never its cause.
+  # plant:=px4 only: why a mode became unavailable, which nav_state cannot show.
   - /fmu/out/failsafe_flags
   # plant:=px4 only. The stick trace. A stick override ends a run permanently by reassigning the
   # mode intent, and without this the only record of it is PX4's own ulog.
   - /fmu/out/manual_control_setpoint
-  # attitude_oracle:=... only (E94 diagnostic). Which attitude the loop was fed, whether the
-  # oracle passed its frame check, and whether the bridge was correcting setpoints.
+  # attitude_oracle:=... only: the attitude the loop was fed and whether setpoints were corrected.
   - /attitude_reference
   - /quad_attitude_reference
   - /attitude_estimates_reference
@@ -56,13 +49,9 @@ plant_and_target:
 # thesis Figs 5.10d, 5.11a, 5.12
 vision_and_observer:
   - /ImFeat_vector
-  # How many of the four markers were actually MEASURED this frame. Separates a geometry failure
-  # (target leaving the frame) from a decode failure, which lock% cannot do - and marks any frame
-  # whose centroids were reconstructed rather than seen, so a scored lock% can exclude them.
+  # Markers measured per frame: separates the target leaving the frame from a failed decode.
   - /ImFeat_sources
-  # false while fewer than four markers decode. ImFeat_vector's no-lock sentinel is
-  # numerically identical to the servo setpoint, so this is the only way to tell a genuine
-  # divergence from an open-loop coast.
+  # false while fewer than four markers decode; the no-lock sentinel equals the setpoint.
   - /ImFeat_valid
   - /ImFeat_estimates_fxt
   - /ImFeat_dot_estimates_fxt

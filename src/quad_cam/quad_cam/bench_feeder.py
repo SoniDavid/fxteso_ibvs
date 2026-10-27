@@ -1,21 +1,5 @@
-"""Synthetic inputs for the hardware benchmark - stand-in for PX4 and the plant.
-
-Publishes small bounded non-zero sinusoids on the topics no in-graph node produces, so
-the estimation/control loops run their full arithmetic without a simulator or a Pixhawk:
-
-  100 Hz  /quad_position /quad_attitude /quad_attitude_velocity   (geometry_msgs/Vector3)
-   50 Hz  /tgt_velocity /tgt_acceleration                         (geometry_msgs/Vector3)
-   50 Hz  /tgt_yaw_rate                                           (std_msgs/Float64)
-
-With feed_vision:=true it also fakes a marker lock so fixed_eso / pos_ctrl (gated on
-ImFeat_valid) run:
-
-   50 Hz  /ImFeat_vector   (geometry_msgs/Quaternion, small wobble around 0,0,1,0)
-   50 Hz  /ImFeat_valid    (std_msgs/Bool = true)
-   50 Hz  /a_value         (std_msgs/Float64)
-
-Not a plant model - the values are meaningless, only their shape and rate matter. Run
-with use_sim_time:=false.
+"""Synthetic plant and target inputs for the hardware benchmark: bounded sinusoids at the real
+rates, plus a faked marker lock with feed_vision:=true. Only shape and rate matter. No sim time.
 """
 
 import math

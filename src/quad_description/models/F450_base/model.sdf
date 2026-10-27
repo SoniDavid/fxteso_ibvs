@@ -1,10 +1,6 @@
 <?xml version='1.0'?>
-<!-- DJI F450 quadrotor, geometry only. The model frame is the airframe frame: FLU, +x
-     forward, +y left, +z up, camera at the origin looking down. Meshes are in mm.
-
-     Never included directly. Two variants merge-include this and add the actuation:
-       F450      - cosmetic JointController spin, for plant:=analytic and plant:=gazebo.
-       F450_px4  - MulticopterMotorModel, for plant:=px4, where PX4 owns allocation. -->
+<!-- DJI F450 geometry only, FLU, camera at the origin looking down; meshes in mm. Included by
+     F450 (analytic/gazebo) and F450_px4 (px4), which add the actuation. -->
 <sdf version='1.9'>
   <model name='F450_base'>
 
@@ -12,9 +8,7 @@
     <link name='base_link'>
       <self_collide>0</self_collide>
 
-      <!-- Smaller than the thesis numbers on purpose: DART integrates the composite, and
-           the rotors add parallel-axis terms. Composite is 2 kg, diag(0.0411,0.0478,0.0599)
-           about the origin. Check with: gz model -m F450. -->
+      <!-- Below the thesis numbers: the rotors add parallel-axis terms to the composite. -->
       <inertial>
         <pose>0 0 -0.0063582 0 0 0</pose>
         <mass>1.852144</mass>
@@ -197,12 +191,7 @@
         <camera name="head">
           <horizontal_fov>1.085595</horizontal_fov>
           <image>
-            <!-- 820x616 is Camera Module 2's 1640x1232 binned mode at half linear resolution,
-                 so a marker is exactly half as many pixels here as on the hardware. This whole
-                 <camera> block is rewritten by gz_sim.launch.py's camera:= argument, from
-                 quad_description/config/cameras.yaml; these values are the default preset and what
-                 a bare `gz sim` on this model gets. image_features derives its fx from the
-                 same table, never from these literals. -->
+            <!-- Defaults only: gz_sim.launch.py rewrites this block from cameras.yaml's camera:= preset. -->
             <width>820</width>
             <height>616</height>
             <format>R8G8B8</format>
@@ -213,22 +202,14 @@
           </clip>
         </camera>
         <always_on>1</always_on>
-        <!-- Sim-time rate, matching image_features' own 50 Hz loop. Do not lower it to slow
-             the simulation - change real_time_factor in worlds/ibvs.sdf instead. Lower it via
-             camera_rate:= only to fly a real sensor mode's frame rate, which is a hardware
-             constraint this free 50 fps otherwise hides: Module 2's one full-FOV mode runs at
-             41.85 fps, so the loop would repeat about 17% of its frames. -->
+        <!-- Matches image_features' 50 Hz loop; camera_rate:= flies a real sensor mode's rate. -->
         <update_rate>50</update_rate>
         <visualize>1</visualize>
       </sensor>
 
       <!-- ============== PX4 flight sensors ==================================== -->
-      <!-- Only plant:=px4 reads these. PX4's gz_bridge derives its subscriptions from the
-           sensor NAMES below, so none of them may be renamed (GZBridge.cpp:228,240,304,317),
-           and they must stay on a link called base_link. Under plant:=analytic and
-           plant:=gazebo the matching gz-sim systems are not loaded and these go unused.
-           White noise is PX4's x500_base (IIM-42653). The IMU has no turn-on bias (calibration removes
-           it, and gz decays any turn-on bias once dynamic_bias is set) and a slow in-run bias walk. -->
+      <!-- plant:=px4 only. gz_bridge subscribes by these sensor NAMES on base_link: do not rename.
+           Noise is x500_base's, with no turn-on bias and a slow in-run bias walk. -->
       <sensor name="air_pressure_sensor" type="air_pressure">
         <always_on>1</always_on>
         <update_rate>50</update_rate>
@@ -242,10 +223,7 @@
         </air_pressure>
       </sensor>
 
-      <!-- 100 Hz and stddev both as in x500_base. <stddev> is load-bearing: with no random
-           noise the field is byte-identical while the aircraft is still, PX4's DataValidator
-           counts 1000 equal values and stops publishing vehicle_magnetometer altogether
-           (VehicleMagnetometer.cpp:56,573) - EKF2 then never aligns yaw and it never arms. -->
+      <!-- As x500_base. <stddev> is required: PX4 flags a noiseless field stale and never arms. -->
       <sensor name="magnetometer_sensor" type="magnetometer">
         <always_on>1</always_on>
         <update_rate>100</update_rate>
@@ -280,10 +258,7 @@
     </link>
 
     <!-- ================= rotors ================================================ -->
-    <!-- One link per propeller. Visual offset is minus the hub position (the STL is in
-         assembly coordinates); yaw is the k*90 deg off the front left blade.
-         Handedness (front_left/rear_right CW, front_right/rear_left CCW) matches PX4's
-         quad_x convention, so F450_px4 wires the motors straight through. -->
+    <!-- One link per propeller; handedness matches PX4's quad_x, so F450_px4 maps motors straight through. -->
 
     <link name='rotor_front_left'>
       <pose>0.158911 0.158901 0.079647 0 0 0</pose>
