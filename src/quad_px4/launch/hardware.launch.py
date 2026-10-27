@@ -238,9 +238,12 @@ def generate_launch_description():
         if LaunchConfiguration('vicon').perform(context).lower() != 'true':
             return []
         return [
-            LogInfo(msg='vicon: EKF2 external-vision aiding ON, policy %s. Load the EKF2_EV_* '
-                        'block from params/hardware.params and REBOOT the FC first.'
-                        % LaunchConfiguration('aiding_policy').perform(context)),
+            LogInfo(msg='vicon: EKF2 external-vision aiding ON, policy %s. Load params/hardware.params%s '
+                        'and REBOOT the FC first.'
+                        % (LaunchConfiguration('aiding_policy').perform(context),
+                           ' then params/hardware_vicon.params'
+                           if LaunchConfiguration('aiding_policy').perform(context) == 'always'
+                           else '')),
             Node(package=PKG, executable='vicon_px4_bridge', name='vicon_px4_bridge',
                  output='screen',
                  parameters=[{'use_sim_time': False,

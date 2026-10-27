@@ -41,7 +41,11 @@ These add to the shared reference in [RUNNING.md](RUNNING.md#launch-arguments-re
 - `quad_mass:=<float>` — Weighed as flown, battery in (default: `2.0`, the thesis vehicle's; the 3S build is ~1.3 kg by parts list).
 - `hover_thrust:=<float>` — `MPC_THR_HOVER` read off a real hover (default: `0.60`; SITL predicts ~0.69 for 3S at 1.30 kg).
 - `velocity_source:=<td|ekf2|vision|off>` — Velocity in `pos_ctrl`'s Coriolis term. `off` keeps EKF2's position, Vicon-aided or drifting, out of the control law; `vision` needs simulator target truth and cannot fly (default: `off`).
-- `camera_driver:=<bool>` — Start `quad_cam`'s picamera2 driver; `false` expects an external one on `camera_topic` (default: `true`).
+- `camera_source:=<inprocess|topic>` — `inprocess`: `image_features` opens the camera itself through libcamera and no frame crosses DDS (2.2 MB frames over DDS fell to ~3 fps under the full stack). `topic`: a driver publishes on `camera_topic` (default: `inprocess`).
+- `debug_image_hz:=<float>` — `inprocess` only: a grey frame on `camera_topic` at this rate, for looking; `0` = none (default: `1.0`).
+- `image_timeout:=<float>` — Seconds without a new frame before the lock is reported lost, rather than held on the last frame (default: `0.2`).
+- `detector_backend:=<str>` — As in RUNNING.md; `nano_roi` searches around the last detection, ~2 ms locked on the Pi vs ~22 ms full frame (hardware default: `nano_roi`).
+- `camera_driver:=<bool>` — `topic` only: start `quad_cam`'s picamera2 driver; `false` expects an external one on `camera_topic` (default: `true`).
 - `camera_width:=<int>`, `camera_height:=<int>` — What the driver publishes; empty is the preset's render size, 1152 × 648 for `module3wide_2304` (default: empty).
 - `camera_topic:=<str>`, `camera_info_topic:=<str>` — (defaults: `/quad/camera/image_raw`, `/quad/camera/camera_info`).
 - `sensor_qos:=<bool>` — BEST_EFFORT on the driver and on `image_features` together (default: `true`).
@@ -52,6 +56,9 @@ These add to the shared reference in [RUNNING.md](RUNNING.md#launch-arguments-re
 - `agent:=<bool>`, `agent_device:=<path>`, `agent_baud:=<int>` — MicroXRCEAgent on the flight controller's UART (defaults: `true`, `/dev/ttyAMA0`, `921600`).
 - `consent_rc_aux:=<0..6>` — RC aux channel that grants the handover; needs `RC_MAP_AUXn`, `0` = `~/handover` service only (default: `0`).
 - `handover_tolerance:=<float>` — Altitude band the bridge waits for (default: `0.15`).
+- `min_lock_before_handover:=<float>` — Seconds of continuous marker lock before consent hands over; a handover 0.6 s after the first lock put a 4° roll step on the table test. `0` = consent alone (default: `3.0`).
+- `ibvs_gate:=<advisory|block>` — `advisory`: `pos_ctrl` starts with the estimators and `ibvs_gate` only reports. `block`: SITL's ordering, `pos_ctrl` waits for the gate. Either way `pos_ctrl` sends nothing without a marker lock (default: `advisory`).
+- `advisory_feature_error:=<float>` — The advisory report's alignment limit; `max_feature_error` (0.15) is the `block` one (default: `0.5`).
 - `frame_yaw_offset:=<float>` — Workspace datum; zero, unlike SITL's −π/2 (default: `0.0`).
 - `bag_prefix:=<str>` — Bag name prefix under `bags/` (default: `hw`).
 
@@ -84,6 +91,25 @@ MicroXRCEAgent link to the flight controller, the PX4 adapters and gates, and th
 ros2 launch quad_px4 hardware.launch.py \
     quad_mass:=<weighed, battery in> hover_thrust:=<measured MPC_THR_HOVER \ consent_rc_aux:=1
 ```
+
+### Presets
+
+Two wrappers fill in `hardware.launch.py`'s arguments; only the on-site measurements are typed, and
+any argument can still be overridden.
+
+```sh
+# Props-off table test: no Vicon, altitude checks opened up, FC on USB, bags table_*.
+# frame_yaw_offset = minus `heading` from /fmu/out/vehicle_local_position_v1, re-read after any rotation.
+ros2 launch quad_px4 table_test.launch.py frame_yaw_offset:=<rad>
+
+# Flight: Vicon aids EKF2 all flight (aiding_policy:=always, full pose), bags flight_*.
+# Needs params/hardware.params, then params/hardware_vicon.params, then a reboot.
+ros2 launch quad_px4 flight.launch.py vicon_yaw_offset:=<rad> hover_thrust:=<measured>
+```
+
+`flight.launch.py` sets `quad_mass:=1.30`, the 3S F450 as flown. Both use `target_layout:=single_marker` and consent on `consent_rc_aux:=1`, and leave `velocity_source`
+at `off`. Under `velocity_source:=off` the Coriolis velocity term of thesis Eq. 5.102 is zero; its true
+value was ~0.004 N, about 0.007° of tilt (E84, E88).
 
 The sequence is the SITL one with a person in it: the pilot arms and flies to `takeoff_alt` → `px4_takeoff_gate` starts the estimators → `ibvs_gate` holds for a marker lock → the pilot grants consent → `pos_ctrl` starts and the bridge switches to OFFBOARD. A bag is recorded by default.
 
@@ -148,6 +174,12 @@ publishing the moment `px4_offboard_bridge` asks for OFFBOARD, and EKF2 drops ex
 400 ms later (`2 x EV_MAX_INTERVAL`). The scored window is unaided, so no ground truth is inside
 the loop under test.
 
+**The flight configuration is `aiding_policy:=always`** (`flight.launch.py`): Vicon aids EKF2 for the
+whole flight, full pose, with `params/hardware_vicon.params` loaded over `hardware.params`
+(`EKF2_EV_CTRL 11`, `EKF2_HGT_REF 3`, `COM_OBL_RC_ACT 5` Hold). It reaches EKF2 only, never
+`pos_ctrl` (`velocity_source:=off`); its one route into the loop is EKF2's attitude. The gated
+description above and the EV block below are the base file's, for `gated`.
+
 Two machines, because the Vicon SDK is **x86-64 only** and cannot run on the Pi:
 
 ```
@@ -165,7 +197,7 @@ FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA   ros2 run vicon_receiver vicon_client --r
 On the Pi:
 
 ```sh
-ros2 launch quad_px4 hardware.launch.py vicon:=true consent_rc_aux:=1     quad_mass:=<weighed> hover_thrust:=<measured>
+ros2 launch quad_px4 flight.launch.py vicon_yaw_offset:=<rad> hover_thrust:=<measured>
 ```
 
 Before the first Vicon flight:
@@ -184,8 +216,9 @@ Before the first Vicon flight:
   The bridge now checks this itself: it **refuses to publish** until the converted Vicon attitude
   agrees with EKF2's to within 30°, and the FATAL names the likely wrong knob. Trust the check to
   catch a gross rotation; still do the hand check, because it is what sets `vicon_yaw_offset`.
-- Check `/fmu/out/estimator_status_flags`: `cs_ev_pos` must be true (`cs_ev_yaw` stays false by
-  design) and `xy_valid` must become true. A published stream that is not fused looks identical to
+- Check `/fmu/out/estimator_status_flags`: `cs_ev_pos` must be true and `xy_valid` must become true;
+  with `hardware_vicon.params` also `cs_ev_hgt` and `cs_ev_yaw` (base file: `cs_ev_yaw` stays false
+  by design). `EKF2_SENS_EN` bit 3 must be set, or none of it is fused, silently. A published stream that is not fused looks identical to
   a working one from the ROS side — and a stream in the *wrong frame* looks identical to a correct
   one from inside EKF2, which is what the frame check exists for.
 
