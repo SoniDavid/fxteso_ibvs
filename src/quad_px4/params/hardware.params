@@ -70,7 +70,7 @@
 # Gated aiding makes 5 (Hold) tempting, because Vicon returns the moment OFFBOARD is lost - but
 # EKF2 needs at least 400 ms to re-acquire, and Hold on a momentarily-bad position is worse than
 # Altitude. Revisit only once the resume latency has been measured in the lab.
-# hardware_vicon.params sets 5 (Hold): with Vicon never cut, the position is always there.
+# hardware_vicon.params sets 0 (Position): with Vicon never cut, the local position is always there.
 1	1	COM_OBL_RC_ACT	1	6
 # With the bridge's 0.3 s setpoint timeout this is the 1.3 s authority gap.
 1	1	COM_OF_LOSS_T	1.0	9

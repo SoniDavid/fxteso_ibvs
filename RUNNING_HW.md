@@ -178,7 +178,7 @@ the loop under test.
 
 **The flight configuration is `aiding_policy:=always`** (`flight.launch.py`): Vicon aids EKF2 for the
 whole flight, full pose, with `params/hardware_vicon.params` loaded over `hardware.params`
-(`EKF2_EV_CTRL 11`, `EKF2_HGT_REF 3`, `COM_OBL_RC_ACT 5` Hold). It reaches EKF2 only, never
+(`EKF2_EV_CTRL 11`, `EKF2_HGT_REF 3`, `COM_OBL_RC_ACT 0` Position; Hold needs a global position). It reaches EKF2 only, never
 `pos_ctrl` (`velocity_source:=off`); its one route into the loop is EKF2's attitude. The gated
 description above and the EV block below are the base file's, for `gated`.
 
