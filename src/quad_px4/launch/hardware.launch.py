@@ -177,6 +177,9 @@ def generate_launch_description():
         DeclareLaunchArgument('body_frame', default_value='flu', choices=['flu', 'frd']),
         # Rotates the Vicon world onto the workspace datum. Measured on site, like frame_yaw_offset.
         DeclareLaunchArgument('vicon_yaw_offset', default_value='0.0'),
+        # The bridge's Vicon-vs-EKF2 attitude limit before the first sample, deg. A gross frame error is
+        # 90 deg or more; the indoor compass alone scatters ~35 deg between launches.
+        DeclareLaunchArgument('frame_check_tolerance', default_value='30.0'),
         # header needs chrony between the laptop and the Pi; receipt carries the latency in
         # EKF2_EV_DELAY instead.
         DeclareLaunchArgument('stamp_source', default_value='header',
@@ -253,6 +256,8 @@ def generate_launch_description():
                               'body_frame': LaunchConfiguration('body_frame'),
                               'yaw_offset': ParameterValue(
                                   LaunchConfiguration('vicon_yaw_offset'), value_type=float),
+                              'max_attitude_error': ParameterValue(
+                                  LaunchConfiguration('frame_check_tolerance'), value_type=float),
                               'stamp_source': LaunchConfiguration('stamp_source')}]),
         ]
 

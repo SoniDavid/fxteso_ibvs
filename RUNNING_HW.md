@@ -73,6 +73,8 @@ These add to the shared reference in [RUNNING.md](RUNNING.md#launch-arguments-re
   (defaults: `enu`, `flu`).
 - `vicon_yaw_offset:=<float>` — Rotates the Vicon world onto the workspace datum, radians about
   down. This is where the datum lives under `vicon:=true`, not `frame_yaw_offset` (default: `0.0`).
+- `frame_check_tolerance:=<deg>` — The bridge's Vicon-vs-EKF2 attitude limit before it publishes. A gross
+  frame error is 90° or more; the lab compass alone scatters ~35° (default: `30.0`, `flight.launch.py`: `60.0`).
 - `stamp_source:=<header|receipt>` — `header` needs chrony between the laptop and the Pi;
   `receipt` carries the transport latency in `EKF2_EV_DELAY` instead (default: `header`).
 

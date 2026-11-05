@@ -30,6 +30,8 @@ PRESETS = {
     # over. takeoff_tolerance:=0.20 handover_tolerance:=0.15 restore hardware.launch's checks.
     'takeoff_tolerance': '100.0',
     'handover_tolerance': '100.0',
+    # The lab compass read 107-143 deg from Vicon over three launches; 60 still fails a 90 deg frame error.
+    'frame_check_tolerance': '60.0',
 }
 # No default: measurements, never inherited. hardware.launch's 0.60 is a placeholder.
 REQUIRED = {
