@@ -1,5 +1,5 @@
 """Flight: hardware.launch.py with Vicon aiding EKF2 for the whole flight (full pose, never the
-controller; velocity_source stays off). Real takeoff and handover altitude checks.
+controller; velocity_source stays off). No altitude checks: RC consent is the handover gate.
 
   ros2 launch quad_px4 flight.launch.py vicon_yaw_offset:=<rad> hover_thrust:=<MPC_THR_HOVER>
 
@@ -16,6 +16,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
 PRESETS = {
+    'agent_device': '/dev/ttyUSB0',
     'vicon': 'true',
     'aiding_policy': 'always',
     'target_layout': 'single_marker',
@@ -25,6 +26,10 @@ PRESETS = {
     'frame_yaw_offset': '0.0',
     # The 3S F450 as flown, battery in; hardware.launch's 2.0 is the thesis vehicle's.
     'quad_mass': '1.30',
+    # The pilot cannot see takeoff_alt indoors: estimators start at once and any altitude may hand
+    # over. takeoff_tolerance:=0.20 handover_tolerance:=0.15 restore hardware.launch's checks.
+    'takeoff_tolerance': '100.0',
+    'handover_tolerance': '100.0',
 }
 # No default: measurements, never inherited. hardware.launch's 0.60 is a placeholder.
 REQUIRED = {

@@ -102,7 +102,9 @@ any argument can still be overridden.
 # frame_yaw_offset = minus `heading` from /fmu/out/vehicle_local_position_v1, re-read after any rotation.
 ros2 launch quad_px4 table_test.launch.py frame_yaw_offset:=<rad>
 
-# Flight: Vicon aids EKF2 all flight (aiding_policy:=always, full pose), bags flight_*.
+# Flight: Vicon aids EKF2 all flight (aiding_policy:=always, full pose), FC on USB, bags flight_*.
+# No altitude checks: the estimators start at once and consent is the only handover gate
+# (takeoff_tolerance:=0.20 handover_tolerance:=0.15 bring them back).
 # Needs params/hardware.params, then params/hardware_vicon.params, then a reboot.
 ros2 launch quad_px4 flight.launch.py vicon_yaw_offset:=<rad> hover_thrust:=<measured>
 ```
