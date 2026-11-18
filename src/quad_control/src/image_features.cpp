@@ -146,6 +146,27 @@ void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr info)
     have_caminfo = true;
 }
 float pixel_size = 0.00000438462;
+// Body direction the image top points to, clockwise from the nose seen from above; -1 = legacy frame.
+int camera_image_top_deg = -1;
+
+Eigen::Matrix3f Rtp(float roll, float pitch);
+
+// Camera-frame point (u right, n up, f) to the level virtual frame (u_vs, n_vs, f).
+Eigen::Vector3f toVirtual(const Eigen::Vector3f &p_cf, float roll, float pitch, float focal)
+{
+	if (camera_image_top_deg < 0)
+	{
+		const Eigen::Vector3f r = Rtp(roll, pitch) * p_cf;
+		return (focal / r(2)) * r;
+	}
+	// Rotate the image into body FRD, de-tilt there, and return (right, forward) as (u_vs, n_vs).
+	const float a = camera_image_top_deg * static_cast<float>(M_PI) / 180.0f;
+	const float u = p_cf(0), n = p_cf(1);
+	const Eigen::Vector3f b(n * cosf(a) - u * sinf(a), n * sinf(a) + u * cosf(a), focal);
+	const Eigen::Vector3f l = Rtp(roll, pitch) * b;
+	const float beta = focal / l(2);
+	return Eigen::Vector3f(beta * l(1), beta * l(0), focal);
+}
 
 Eigen::Matrix3f Rtp(float roll, float pitch)
 {
@@ -306,6 +327,18 @@ int main(int argc, char *argv[])
 	const int p_sensor_height = node->declare_parameter<int>("camera_sensor_height", 1296);
 	const double p_fps = node->declare_parameter<double>("camera_fps", 56.0);
 	const bool p_rotate180 = node->declare_parameter<bool>("camera_rotate180", true);
+	camera_image_top_deg = static_cast<int>(node->declare_parameter<int>("camera_image_top_deg", -1));
+	if (camera_image_top_deg != -1 && camera_image_top_deg != 0 && camera_image_top_deg != 90 &&
+	    camera_image_top_deg != 180 && camera_image_top_deg != 270)
+	{
+		RCLCPP_FATAL(node->get_logger(), "camera_image_top_deg must be -1, 0, 90, 180 or 270, not %d",
+		             camera_image_top_deg);
+		return 1;
+	}
+	RCLCPP_INFO(node->get_logger(), "camera mount: %s", camera_image_top_deg < 0
+	            ? "legacy frame (u = body x)"
+	            : ("image top -> " + std::to_string(camera_image_top_deg) +
+	               " deg clockwise from the nose, de-tilted in body FRD").c_str());
 	const std::string p_af_mode = node->declare_parameter<std::string>("af_mode", "manual");
 	const double p_lens_position = node->declare_parameter<double>("lens_position", 0.83);
 	if (image_source == "libcamera")
@@ -809,15 +842,10 @@ int main(int argc, char *argv[])
 
 
             //Camera frame to Virtual frame conversion
-			beta_p1 = focal_length/(e3.transpose()*Rtp(uav_att(0),uav_att(1))*p1_vs_cf);
-			beta_p2 = focal_length/(e3.transpose()*Rtp(uav_att(0),uav_att(1))*p2_vs_cf);
-			beta_p3 = focal_length/(e3.transpose()*Rtp(uav_att(0),uav_att(1))*p3_vs_cf);
-			beta_p4 = focal_length/(e3.transpose()*Rtp(uav_att(0),uav_att(1))*p4_vs_cf);
-
-            p1_vs_vf = beta_p1*Rtp(uav_att(0),uav_att(1))*p1_vs_cf;
-			p2_vs_vf = beta_p2*Rtp(uav_att(0),uav_att(1))*p2_vs_cf;
-			p3_vs_vf = beta_p3*Rtp(uav_att(0),uav_att(1))*p3_vs_cf;
-			p4_vs_vf = beta_p4*Rtp(uav_att(0),uav_att(1))*p4_vs_cf;
+			p1_vs_vf = toVirtual(p1_vs_cf, uav_att(0), uav_att(1), focal_length);
+			p2_vs_vf = toVirtual(p2_vs_cf, uav_att(0), uav_att(1), focal_length);
+			p3_vs_vf = toVirtual(p3_vs_cf, uav_att(0), uav_att(1), focal_length);
+			p4_vs_vf = toVirtual(p4_vs_cf, uav_att(0), uav_att(1), focal_length);
 
 			/*
 			p1_vs_vf = Ryaw(uav_att(2)).transpose()*Ryaw(uav_att(2)).transpose()*p1_vs_vf;

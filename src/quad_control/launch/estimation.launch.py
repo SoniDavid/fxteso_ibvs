@@ -108,6 +108,8 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_sensor_height', default_value='1296'),
         DeclareLaunchArgument('camera_fps', default_value='56.0'),
         DeclareLaunchArgument('camera_rotate180', default_value='true'),
+        # Body direction of the image top, deg clockwise from the nose; -1 = legacy frame (SITL).
+        DeclareLaunchArgument('camera_image_top_deg', default_value='-1'),
         DeclareLaunchArgument('af_mode', default_value='manual'),
         DeclareLaunchArgument('lens_position', default_value='0.83'),
         DeclareLaunchArgument('debug_image_hz', default_value='0.0'),
@@ -152,7 +154,8 @@ def generate_launch_description():
                                ('camera_sensor_height', int), ('camera_fps', float),
                                ('camera_rotate180', bool), ('af_mode', str),
                                ('lens_position', float), ('debug_image_hz', float),
-                               ('target_marker_id', int), ('corner_refinement', str)):
+                               ('target_marker_id', int), ('corner_refinement', str),
+                               ('camera_image_top_deg', int)):
                 p[name] = ParameterValue(LaunchConfiguration(name), value_type=kind)
         if exe == 'fixed_eso':
             p['gamma1_xy'] = ParameterValue(LaunchConfiguration('gamma1_xy'), value_type=float)

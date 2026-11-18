@@ -110,6 +110,8 @@ def generate_launch_description():
         # Manual focus for flight; 0.83 dioptres is ~1.2 m.
         DeclareLaunchArgument('af_mode', default_value='manual'),
         DeclareLaunchArgument('lens_position', default_value='0.83'),
+        # The F450's camera: image top points to the right arm (E111 flight fit, 2026-10-27 bench).
+        DeclareLaunchArgument('camera_image_top_deg', default_value='90'),
 
         # --- vision compute -----------------------------------------------------
         # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last
@@ -361,6 +363,7 @@ def generate_launch_description():
                 'af_mode': LaunchConfiguration('af_mode'),
                 'lens_position': LaunchConfiguration('lens_position'),
                 'debug_image_hz': LaunchConfiguration('debug_image_hz'),
+                'camera_image_top_deg': LaunchConfiguration('camera_image_top_deg'),
                 'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
                 'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
                     cam, scale, zD, _float('aruco3_margin', context), layout, mdict),
