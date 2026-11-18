@@ -148,6 +148,9 @@ void imFeatValidCallback(const std_msgs::msg::Bool::ConstSharedPtr v)
 	imgFeat_valid = v->data;
 }
 
+// True while PX4 executes our setpoints (px4_offboard_bridge's in_control); hardware handover gate.
+bool in_control = false;
+
 // Wall-clock arrival of each input, published as pos_ctrl_input_age to catch handover stalls.
 std::chrono::steady_clock::time_point feat_rx, est_rx, est_dot_rx;
 
@@ -268,6 +271,16 @@ int main(int argc, char *argv[])
 	}
 	// Prints the error every cycle; /error_visual_servoing has the same numbers.
 	const bool print_error = node->declare_parameter<bool>("print_error", false);
+	// Hardware: hold the integrating states and send a level hover at the current yaw until PX4
+	// executes our setpoints, so a shadow flight cannot wind them up before the handover.
+	const bool hold_until_in_control = node->declare_parameter<bool>("hold_until_in_control", false);
+	const std::string in_control_topic =
+		node->declare_parameter<std::string>("in_control_topic", "/px4_offboard_bridge/in_control");
+	rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr in_control_sub;
+	if (hold_until_in_control)
+		in_control_sub = node->create_subscription<std_msgs::msg::Bool>(
+			in_control_topic, rclcpp::QoS(1).transient_local(),
+			[](const std_msgs::msg::Bool::ConstSharedPtr m) { in_control = m->data; });
 RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg, velocity_source = %s",
             zD, quad_mass, velocity_source.c_str());
     
@@ -413,6 +426,7 @@ imgFeat_des << 0,0,1,0;
     loop_rate.sleepFor(1.0);
     
     bool was_valid = true;
+    bool holding = false;
 
     while(rclcpp::ok())
     {
@@ -434,6 +448,45 @@ imgFeat_des << 0,0,1,0;
         {
             RCLCPP_INFO(node->get_logger(), "marker lock re-acquired - resuming control");
             was_valid = true;
+        }
+
+        if (hold_until_in_control && !in_control)
+        {
+            if (!holding)
+            {
+                RCLCPP_INFO(node->get_logger(), "not in control - holding the controller at its "
+                            "initial state and sending a level hover at the current yaw");
+                holding = true;
+            }
+            k.setZero();
+            k_dot.setZero();
+            asmc.setZero();
+            ss.setZero();
+            ibvs_ctrl_input.setZero();
+            quad_vel_VF.setZero();
+            yawRate_desired = 0;
+            attitude_desired << 0, 0, attitudeEstimates(2);
+            thrust = quad_mass * gravity;
+
+            ctrl_input_var.x = ctrl_input_var.y = ctrl_input_var.z = ctrl_input_var.w = 0;
+            adaptive_gain_var.x = adaptive_gain_var.y = adaptive_gain_var.z = adaptive_gain_var.w = 0;
+            thrust_var.data = thrust;
+            desired_attitude_var.x = 0;
+            desired_attitude_var.y = 0;
+            desired_attitude_var.z = attitude_desired(2);
+            desired_attitude_var.w = 0;
+            ctrl_pub->publish(ctrl_input_var);
+            adaptive_gain_pub->publish(adaptive_gain_var);
+            thrust_pub->publish(thrust_var);
+            desired_att_pub->publish(desired_attitude_var);
+            loop_rate.sleep();
+            continue;
+        }
+        if (holding)
+        {
+            RCLCPP_WARN(node->get_logger(), "in control - releasing the controller from yaw %.1f deg",
+                        attitude_desired(2) * 180.0 / M_PI);
+            holding = false;
         }
 
 ////////////////////// FOR COMPARISON ONLY//////////////////////////////////////////////////

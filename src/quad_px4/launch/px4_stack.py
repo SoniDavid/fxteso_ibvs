@@ -137,6 +137,8 @@ def build(mode='sitl'):
         DeclareLaunchArgument('quad_mass', default_value='1.30'),
         # pos_ctrl's per-cycle error print; off by default so the WARNs stay readable.
         DeclareLaunchArgument('print_error', default_value='false'),
+        # As on hardware: pos_ctrl sends level m*g, integrators at zero, until PX4 is in OFFBOARD.
+        DeclareLaunchArgument('hold_until_in_control', default_value='true'),
         # Velocity in pos_ctrl's Coriolis term; off keeps the Vicon-aided estimate out of the loop.
         DeclareLaunchArgument('velocity_source', default_value='off',
                               choices=['td', 'ekf2', 'vision', 'off']),
@@ -734,7 +736,8 @@ def build(mode='sitl'):
                       {'attitude_controller': 'false', 'zD': LaunchConfiguration('zD'),
                        'quad_mass': LaunchConfiguration('quad_mass'),
                        'velocity_source': LaunchConfiguration('velocity_source'),
-                       'print_error': LaunchConfiguration('print_error')})]
+                       'print_error': LaunchConfiguration('print_error'),
+                       'hold_until_in_control': LaunchConfiguration('hold_until_in_control')})]
              if LaunchConfiguration('controllers').perform(context).lower() == 'true'
              else [LogInfo(msg='controllers:=false - the aircraft will loiter after takeoff.')])
             + ([OpaqueFunction(function=_bag)]
@@ -763,6 +766,7 @@ def build(mode='sitl'):
             include(CTRL_PKG, 'estimation.launch.py',
                     {'initial_estimate_offset': LaunchConfiguration('initial_estimate_offset'),
                      'quad_mass': LaunchConfiguration('quad_mass'),
+                     'hold_until_in_control': LaunchConfiguration('hold_until_in_control'),
                      'z_des': '%.6f' % eso_z_des_of(context),
                      'gamma1_xy': LaunchConfiguration('gamma1_xy'),
                      'gamma2_xy': LaunchConfiguration('gamma2_xy'),

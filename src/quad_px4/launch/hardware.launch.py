@@ -84,6 +84,9 @@ def generate_launch_description():
         DeclareLaunchArgument('hover_thrust', default_value='0.60'),
         # Velocity in pos_ctrl's Coriolis term. off, as in SITL: td differentiates EKF2's position,
         # Vicon-aided in flight and runaway unaided, into the control law.
+        # Hold pos_ctrl and fixed_eso until PX4 executes our setpoints: E111's shadow flights wound the
+        # thrust to 1.8x weight and the desired yaw to +6500 deg before any consent.
+        DeclareLaunchArgument('hold_until_in_control', default_value='true'),
         DeclareLaunchArgument('velocity_source', default_value='off',
                               choices=['td', 'ekf2', 'vision', 'off']),
 
@@ -368,6 +371,7 @@ def generate_launch_description():
                 'lens_position': LaunchConfiguration('lens_position'),
                 'debug_image_hz': LaunchConfiguration('debug_image_hz'),
                 'camera_image_top_deg': LaunchConfiguration('camera_image_top_deg'),
+                'hold_until_in_control': LaunchConfiguration('hold_until_in_control'),
                 'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
                 'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
                     cam, scale, zD, _float('aruco3_margin', context), layout, mdict),
@@ -386,6 +390,7 @@ def generate_launch_description():
         'zD': LaunchConfiguration('zD'),
         'quad_mass': LaunchConfiguration('quad_mass'),
         'velocity_source': LaunchConfiguration('velocity_source'),
+        'hold_until_in_control': LaunchConfiguration('hold_until_in_control'),
     })
 
     def _gated_control(context):

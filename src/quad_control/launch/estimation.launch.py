@@ -110,6 +110,8 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_rotate180', default_value='true'),
         # Body direction of the image top, deg clockwise from the nose; -1 = legacy frame (SITL).
         DeclareLaunchArgument('camera_image_top_deg', default_value='-1'),
+        # Hardware: hold fixed_eso's disturbance estimate at zero until px4_offboard_bridge's in_control.
+        DeclareLaunchArgument('hold_until_in_control', default_value='false'),
         DeclareLaunchArgument('af_mode', default_value='manual'),
         DeclareLaunchArgument('lens_position', default_value='0.83'),
         DeclareLaunchArgument('debug_image_hz', default_value='0.0'),
@@ -166,6 +168,8 @@ def generate_launch_description():
                 p[g] = ParameterValue(LaunchConfiguration(g), value_type=float)
             p['z_des'] = ParameterValue(LaunchConfiguration('z_des'), value_type=float)
             p['quad_mass'] = ParameterValue(LaunchConfiguration('quad_mass'), value_type=float)
+            p['hold_until_in_control'] = ParameterValue(
+                LaunchConfiguration('hold_until_in_control'), value_type=bool)
             p['initial_estimate_offset'] = ParameterValue(
                 LaunchConfiguration('initial_estimate_offset'), value_type=List[float])
         return [p]
