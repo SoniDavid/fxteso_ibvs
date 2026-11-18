@@ -182,6 +182,8 @@ def generate_launch_description():
         # The bridge's Vicon-vs-EKF2 attitude limit before the first sample, deg. A gross frame error is
         # 90 deg or more; the indoor compass alone scatters ~35 deg between launches.
         DeclareLaunchArgument('frame_check_tolerance', default_value='30.0'),
+        # Per-sample Vicon-vs-EKF2 attitude limit after the frame check, deg; 0 disables.
+        DeclareLaunchArgument('vicon_yaw_guard', default_value='60.0'),
         # header needs chrony between the laptop and the Pi; receipt carries the latency in
         # EKF2_EV_DELAY instead.
         DeclareLaunchArgument('stamp_source', default_value='header',
@@ -260,6 +262,8 @@ def generate_launch_description():
                                   LaunchConfiguration('vicon_yaw_offset'), value_type=float),
                               'max_attitude_error': ParameterValue(
                                   LaunchConfiguration('frame_check_tolerance'), value_type=float),
+                              'yaw_guard_tolerance': ParameterValue(
+                                  LaunchConfiguration('vicon_yaw_guard'), value_type=float),
                               'stamp_source': LaunchConfiguration('stamp_source')}]),
         ]
 

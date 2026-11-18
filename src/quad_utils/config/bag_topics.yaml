@@ -29,6 +29,7 @@ plant_and_target:
   # venue:=vicon only: 6-DoF ground truth, and when Vicon was feeding EKF2.
   - /vicon/fxteso_f450quad/fxteso_f450quad
   - /vicon_px4_bridge/aiding_active
+  - /vicon_px4_bridge/yaw_guard_rejecting
   # plant:=px4 only. cs_ev_pos is how a run proves the EV stream was actually fused rather than
   # merely published; cs_fake_pos is EKF2 admitting it has no horizontal aiding.
   - /fmu/out/estimator_status_flags
