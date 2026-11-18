@@ -26,6 +26,8 @@ def generate_launch_description():
         DeclareLaunchArgument('print_error', default_value='false'),
         # Hardware: hold pos_ctrl's integrating states until px4_offboard_bridge reports in_control.
         DeclareLaunchArgument('hold_until_in_control', default_value='false'),
+        # x/y adaptive-gain growth rate; 6e-6 is thesis Table 5.3.
+        DeclareLaunchArgument('alpha_xy', default_value='0.000006'),
     ]
 
     def _nodes(context, *a, **k):
@@ -48,6 +50,7 @@ def generate_launch_description():
                     LaunchConfiguration('print_error'), value_type=bool)
                 p['hold_until_in_control'] = ParameterValue(
                     LaunchConfiguration('hold_until_in_control'), value_type=bool)
+                p['alpha_xy'] = ParameterValue(LaunchConfiguration('alpha_xy'), value_type=float)
             return [p]
 
         return [

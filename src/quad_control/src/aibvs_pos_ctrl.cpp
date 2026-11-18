@@ -274,6 +274,13 @@ int main(int argc, char *argv[])
 	// Hardware: hold the integrating states and send a level hover at the current yaw until PX4
 	// executes our setpoints, so a shadow flight cannot wind them up before the handover.
 	const bool hold_until_in_control = node->declare_parameter<bool>("hold_until_in_control", false);
+	// x/y adaptive-gain growth rate (thesis Gamma5, Table 5.3: 6e-6); steady k scales as alpha^(1/4).
+	const double alpha_xy = node->declare_parameter<double>("alpha_xy", 0.000006);
+	if (!(alpha_xy > 0.0))
+	{
+		RCLCPP_FATAL(node->get_logger(), "alpha_xy:=%g must be positive.", alpha_xy);
+		return 1;
+	}
 	const std::string in_control_topic =
 		node->declare_parameter<std::string>("in_control_topic", "/px4_offboard_bridge/in_control");
 	rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr in_control_sub;
@@ -283,6 +290,7 @@ int main(int argc, char *argv[])
 			[](const std_msgs::msg::Bool::ConstSharedPtr m) { in_control = m->data; });
 RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg, velocity_source = %s",
             zD, quad_mass, velocity_source.c_str());
+RCLCPP_INFO(node->get_logger(), "ANFTSMC alpha_xy %g", alpha_xy);
     
 	auto error_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_visual_servoing",100);
     auto error_dot_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_dot_visual_servoing",100);
@@ -361,7 +369,7 @@ imgFeat_des << 0,0,1,0;
     vartheta << 3, 3, 3, 3;
     k << 0,0,0,0;
     k_dot << 0,0,0,0;
-    alpha << 0.000006, 0.000006, 0.001, 0.0001;
+    alpha << alpha_xy, alpha_xy, 0.001, 0.0001;
     ::beta << 85, 85, 5, 5;
 
     quad_vel_VF << 0,0,0;

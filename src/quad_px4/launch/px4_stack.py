@@ -137,6 +137,8 @@ def build(mode='sitl'):
         DeclareLaunchArgument('quad_mass', default_value='1.30'),
         # pos_ctrl's per-cycle error print; off by default so the WARNs stay readable.
         DeclareLaunchArgument('print_error', default_value='false'),
+        # x/y adaptive-gain growth rate; 6e-6 is thesis Table 5.3.
+        DeclareLaunchArgument('alpha_xy', default_value='0.000006'),
         # As on hardware: pos_ctrl sends level m*g, integrators at zero, until PX4 is in OFFBOARD.
         DeclareLaunchArgument('hold_until_in_control', default_value='true'),
         # Velocity in pos_ctrl's Coriolis term; off keeps the Vicon-aided estimate out of the loop.
@@ -737,6 +739,7 @@ def build(mode='sitl'):
                        'quad_mass': LaunchConfiguration('quad_mass'),
                        'velocity_source': LaunchConfiguration('velocity_source'),
                        'print_error': LaunchConfiguration('print_error'),
+                       'alpha_xy': LaunchConfiguration('alpha_xy'),
                        'hold_until_in_control': LaunchConfiguration('hold_until_in_control')})]
              if LaunchConfiguration('controllers').perform(context).lower() == 'true'
              else [LogInfo(msg='controllers:=false - the aircraft will loiter after takeoff.')])

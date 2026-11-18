@@ -87,6 +87,8 @@ def generate_launch_description():
         # Hold pos_ctrl and fixed_eso until PX4 executes our setpoints: E111's shadow flights wound the
         # thrust to 1.8x weight and the desired yaw to +6500 deg before any consent.
         DeclareLaunchArgument('hold_until_in_control', default_value='true'),
+        # x/y adaptive-gain growth rate; 6e-6 is thesis Table 5.3.
+        DeclareLaunchArgument('alpha_xy', default_value='0.000006'),
         DeclareLaunchArgument('velocity_source', default_value='off',
                               choices=['td', 'ekf2', 'vision', 'off']),
 
@@ -391,6 +393,7 @@ def generate_launch_description():
         'quad_mass': LaunchConfiguration('quad_mass'),
         'velocity_source': LaunchConfiguration('velocity_source'),
         'hold_until_in_control': LaunchConfiguration('hold_until_in_control'),
+        'alpha_xy': LaunchConfiguration('alpha_xy'),
     })
 
     def _gated_control(context):
