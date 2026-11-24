@@ -63,6 +63,9 @@ vision_and_observer:
   - /scaled_ibvs_dist
   - /a_value
   - /z_des
+  # Runtime depth steps: what was asked (zd_set.py / zd_schedule) and what pos_ctrl applied.
+  - /zD_setpoint
+  - /zD_active
   - /u_coordinates
   - /n_coordinates
 

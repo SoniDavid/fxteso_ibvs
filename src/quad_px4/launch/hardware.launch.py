@@ -89,6 +89,9 @@ def generate_launch_description():
         DeclareLaunchArgument('hold_until_in_control', default_value='true'),
         # x/y adaptive-gain growth rate; 6e-6 is thesis Table 5.3.
         DeclareLaunchArgument('alpha_xy', default_value='0.000006'),
+        # Bounds on depth targets published by hand to /zD_setpoint (zd_set.py), metres.
+        DeclareLaunchArgument('zD_min', default_value='0.7'),
+        DeclareLaunchArgument('zD_max', default_value='1.6'),
         DeclareLaunchArgument('velocity_source', default_value='off',
                               choices=['td', 'ekf2', 'vision', 'off']),
 
@@ -394,6 +397,8 @@ def generate_launch_description():
         'velocity_source': LaunchConfiguration('velocity_source'),
         'hold_until_in_control': LaunchConfiguration('hold_until_in_control'),
         'alpha_xy': LaunchConfiguration('alpha_xy'),
+        'zD_min': LaunchConfiguration('zD_min'),
+        'zD_max': LaunchConfiguration('zD_max'),
     })
 
     def _gated_control(context):
