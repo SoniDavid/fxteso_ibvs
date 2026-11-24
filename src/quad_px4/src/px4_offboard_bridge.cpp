@@ -132,6 +132,9 @@ int main(int argc, char **argv)
 	// Raised when this node intends to take the aircraft, ahead of OFFBOARD; latched, on change.
 	auto offboardReqPub = node->create_publisher<std_msgs::msg::Bool>(
 		"~/offboard_requested", rclcpp::QoS(1).transient_local());
+	// True only while PX4 is in OFFBOARD executing fresh setpoints; pos_ctrl and fixed_eso hold on it.
+	auto inControlPub = node->create_publisher<std_msgs::msg::Bool>(
+		"~/in_control", rclcpp::QoS(1).transient_local());
 
 	// --- inputs ---------------------------------------------------------------
 	double roll_d = 0.0, pitch_d = 0.0, yaw_d = 0.0;
@@ -380,6 +383,8 @@ int main(int argc, char **argv)
 	int recoveries = 0;   // offboard re-commands spent; see Phase::Offboard
 	bool seen_takeoff = false;
 	bool offboard_requested = false;
+	bool in_control = false;
+	bool in_control_published = false;
 	// PX4 left OFFBOARD with the setpoints still fresh: drop the claim so EV aiding resumes.
 	bool px4_reverted = false;
 	rclcpp::Time non_offboard_since(0, 0, RCL_ROS_TIME);
@@ -477,6 +482,18 @@ int main(int argc, char **argv)
 			std_msgs::msg::Bool req;
 			req.data = offboard_requested;
 			offboardReqPub->publish(req);
+		}
+
+		const bool controlling = phase == Phase::Offboard && setpoint_fresh && !px4_reverted &&
+		                         nav_state == VehicleStatus::NAVIGATION_STATE_OFFBOARD;
+		if (controlling != in_control || !in_control_published)
+		{
+			in_control = controlling;
+			in_control_published = true;
+			std_msgs::msg::Bool m;
+			m.data = in_control;
+			inControlPub->publish(m);
+			RCLCPP_INFO(node->get_logger(), "in_control %s", in_control ? "TRUE" : "false");
 		}
 
 		// Withdrawing consent aborts the same way a lock loss does: stop the stream.

@@ -87,6 +87,12 @@ int main(int argc, char **argv)
 	// EKF2's heading still jumps just after cs_yaw_align (108.9 deg, then 2.3 deg 20 ms later), so
 	// the check waits until alignment has held this long.
 	const double frame_check_settle = node->declare_parameter<double>("frame_check_settle", 1.0);
+	// Per-sample guard after the frame check: a sample this far from EKF2's attitude goes out as
+	// position only. Vicon flips seen at 156-167 deg; 60 leaves room for mag pull. <= 0 disables.
+	const double yaw_guard_tolerance =
+		node->declare_parameter<double>("yaw_guard_tolerance", 60.0);
+	// Agreement must hold this long before orientation is sent again.
+	const double yaw_guard_resume = node->declare_parameter<double>("yaw_guard_resume", 0.2);
 
 	// Reported in the message, but EKF2_EV_NOISE_MD:=1 makes PX4 use EKF2_EVP/EVA_NOISE instead.
 	const double position_sd = node->declare_parameter<double>("position_sd", 0.02);
@@ -144,6 +150,9 @@ int main(int argc, char **argv)
 	// Latched: the bag needs to know exactly when aiding was on, to exclude the resume transients.
 	auto aidingPub = node->create_publisher<std_msgs::msg::Bool>(
 		"~/aiding_active", rclcpp::QoS(1).transient_local());
+	// Latched: true while orientation is withheld from EKF2.
+	auto guardPub = node->create_publisher<std_msgs::msg::Bool>(
+		"~/yaw_guard_rejecting", rclcpp::QoS(1).transient_local());
 
 	geometry_msgs::msg::PoseStamped pose;
 	bool have_pose = false;
@@ -175,6 +184,7 @@ int main(int argc, char **argv)
 	// EKF2's own attitude, the independent witness the frame guard checks against.
 	tf2::Quaternion qEkf(0, 0, 0, 1);
 	bool have_ekf_att = false;
+	int64_t ekf_att_us = 0;
 	// Until EKF2 has aligned its heading the witness is worthless - comparing against it fires a
 	// FATAL that is not fatal, which is the fastest way to teach someone to ignore FATALs.
 	bool yaw_aligned = false;
@@ -222,6 +232,7 @@ int main(int argc, char **argv)
 			// px4_msgs orders (w,x,y,z); tf2 takes (x,y,z,w).
 			qEkf = tf2::Quaternion(o->q[1], o->q[2], o->q[3], o->q[0]);
 			have_ekf_att = true;
+			ekf_att_us = sysNowUs();
 		});
 
 	bool handover_requested = false;
@@ -248,6 +259,14 @@ int main(int argc, char **argv)
 	int64_t wanted_us = 0;
 	// Age statistics, reported every 5 s so EKF2_EV_DELAY is set from data rather than guessed.
 	int64_t age_sum = 0, age_max = 0, age_n = 0, report_us = 0, stale_drops = 0;
+	bool guard_rejecting = false;
+	int64_t guard_since_us = 0, guard_agree_since_us = 0, guard_rejected = 0, guard_episodes = 0;
+	double guard_worst = 0.0;
+	{
+		std_msgs::msg::Bool msg;
+		msg.data = false;
+		guardPub->publish(msg);
+	}
 
 	auto setAiding = [&](bool next)
 	{
@@ -416,6 +435,75 @@ int main(int argc, char **argv)
 				}
 			}
 
+			// --- yaw guard: a flipped Vicon heading must never reach EKF2, which resets to it after
+			// ~1 s of rejected innovations. Position is unaffected by a flip about the centre. ---
+			bool send_attitude = true;
+			if (yaw_guard_tolerance > 0.0)
+			{
+				const double deg = 180.0 / M_PI;
+				const bool ekf_fresh = have_ekf_att && now_us - ekf_att_us < 500000;
+				double angle = 0.0, eyaw = 0.0;
+				if (ekf_fresh)
+				{
+					const tf2::Quaternion qErr = qEkf.inverse() * q;
+					double er, ep;
+					tf2::Matrix3x3(qErr).getRPY(er, ep, eyaw);
+					angle = std::fabs(qErr.getAngle() > M_PI ? qErr.getAngle() - 2 * M_PI
+					                                         : qErr.getAngle()) * deg;
+				}
+				const bool disagree = !ekf_fresh || angle > yaw_guard_tolerance;
+
+				if (disagree)
+				{
+					guard_agree_since_us = 0;
+					guard_worst = std::max(guard_worst, angle);
+					if (!guard_rejecting)
+					{
+						guard_rejecting = true;
+						guard_since_us = now_us;
+						guard_worst = angle;
+						++guard_episodes;
+						std_msgs::msg::Bool msg;
+						msg.data = true;
+						guardPub->publish(msg);
+						if (ekf_fresh)
+							RCLCPP_WARN(node->get_logger(),
+							            "YAW GUARD: Vicon attitude %.1f deg from EKF2's (yaw %.1f) - "
+							            "sending position only until they agree.",
+							            angle, eyaw * deg);
+						else
+							RCLCPP_WARN(node->get_logger(),
+							            "YAW GUARD: no fresh EKF2 attitude - sending position only.");
+					}
+				}
+				else if (guard_rejecting)
+				{
+					if (guard_agree_since_us == 0)
+						guard_agree_since_us = now_us;
+					if (now_us - guard_agree_since_us >= static_cast<int64_t>(yaw_guard_resume * 1e6))
+					{
+						guard_rejecting = false;
+						std_msgs::msg::Bool msg;
+						msg.data = false;
+						guardPub->publish(msg);
+						RCLCPP_WARN(node->get_logger(),
+						            "YAW GUARD: cleared after %.2f s (worst %.1f deg) - orientation "
+						            "resumed.",
+						            (now_us - guard_since_us) * 1e-6, guard_worst);
+					}
+				}
+
+				if (guard_rejecting)
+				{
+					send_attitude = false;
+					++guard_rejected;
+					RCLCPP_ERROR_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
+					                      "YAW GUARD: orientation withheld for %.1f s. If this persists "
+					                      "the Vicon object is broken or EKF2's heading is lost.",
+					                      (now_us - guard_since_us) * 1e-6);
+				}
+			}
+
 			VehicleOdometry odom;
 			odom.timestamp = static_cast<uint64_t>(now_us);
 			// EKF2 places the sample in its delay buffer by this field, not by timestamp.
@@ -465,6 +553,14 @@ int main(int argc, char **argv)
 					vel_arm ? nan : static_cast<float>(position_sd * position_sd);
 				odom.orientation_variance[i] = static_cast<float>(orientation_sd * orientation_sd);
 			}
+			// NaN orientation: EKF2 stops EV yaw fusion without a reset and keeps fusing position.
+			if (!send_attitude)
+				for (int i = 0; i < 4; ++i)
+				{
+					odom.q[i] = nan;
+					if (i < 3)
+						odom.orientation_variance[i] = nan;
+				}
 			odom.reset_counter = reset_counter;
 			odom.quality = 100;
 
@@ -479,22 +575,24 @@ int main(int argc, char **argv)
 			else if (now_us - report_us >= 5000000)
 			{
 				RCLCPP_INFO(node->get_logger(),
-				            "EV stream: %ld samples, age mean %.1f ms max %.1f ms, %ld stale drops. "
+				            "EV stream: %ld samples, age mean %.1f ms max %.1f ms, %ld stale drops, "
+				            "%ld position-only (yaw guard, %ld episodes total). "
 				            "Set EKF2_EV_DELAY from the mean.",
 				            static_cast<long>(age_n), age_sum * 1e-3 / std::max<int64_t>(age_n, 1),
-				            age_max * 1e-3, static_cast<long>(stale_drops));
-				age_sum = age_max = age_n = stale_drops = 0;
+				            age_max * 1e-3, static_cast<long>(stale_drops),
+				            static_cast<long>(guard_rejected), static_cast<long>(guard_episodes));
+				age_sum = age_max = age_n = stale_drops = guard_rejected = 0;
 				report_us = now_us;
 			}
 		});
 
 	RCLCPP_INFO(node->get_logger(),
 	            "Vicon bridge: %s -> %s at %.0f Hz. policy %s, frames %s/%s, yaw_offset %.4f rad, "
-	            "stamp %s.",
+	            "stamp %s, yaw guard %.0f deg.",
 	            vicon_topic.c_str(),
 	            px4Topic<VehicleOdometry>("/fmu/in/vehicle_visual_odometry").c_str(), rate,
 	            aiding_policy.c_str(), vicon_frame.c_str(), body_frame.c_str(), yaw_offset,
-	            stamp_source.c_str());
+	            stamp_source.c_str(), yaw_guard_tolerance);
 
 	rclcpp::spin(node);
 	rclcpp::shutdown();

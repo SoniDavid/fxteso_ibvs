@@ -84,6 +84,14 @@ def generate_launch_description():
         DeclareLaunchArgument('hover_thrust', default_value='0.60'),
         # Velocity in pos_ctrl's Coriolis term. off, as in SITL: td differentiates EKF2's position,
         # Vicon-aided in flight and runaway unaided, into the control law.
+        # Hold pos_ctrl and fixed_eso until PX4 executes our setpoints: E111's shadow flights wound the
+        # thrust to 1.8x weight and the desired yaw to +6500 deg before any consent.
+        DeclareLaunchArgument('hold_until_in_control', default_value='true'),
+        # x/y adaptive-gain growth rate; 6e-6 is thesis Table 5.3.
+        DeclareLaunchArgument('alpha_xy', default_value='0.000006'),
+        # Bounds on depth targets published by hand to /zD_setpoint (zd_set.py), metres.
+        DeclareLaunchArgument('zD_min', default_value='0.7'),
+        DeclareLaunchArgument('zD_max', default_value='1.6'),
         DeclareLaunchArgument('velocity_source', default_value='off',
                               choices=['td', 'ekf2', 'vision', 'off']),
 
@@ -110,6 +118,8 @@ def generate_launch_description():
         # Manual focus for flight; 0.83 dioptres is ~1.2 m.
         DeclareLaunchArgument('af_mode', default_value='manual'),
         DeclareLaunchArgument('lens_position', default_value='0.83'),
+        # The F450's camera: image top points to the right arm (E111 flight fit, 2026-10-27 bench).
+        DeclareLaunchArgument('camera_image_top_deg', default_value='90'),
 
         # --- vision compute -----------------------------------------------------
         # nano | opencv | hybrid (nano while locked, opencv otherwise) | roi (opencv around the last
@@ -177,6 +187,11 @@ def generate_launch_description():
         DeclareLaunchArgument('body_frame', default_value='flu', choices=['flu', 'frd']),
         # Rotates the Vicon world onto the workspace datum. Measured on site, like frame_yaw_offset.
         DeclareLaunchArgument('vicon_yaw_offset', default_value='0.0'),
+        # The bridge's Vicon-vs-EKF2 attitude limit before the first sample, deg. A gross frame error is
+        # 90 deg or more; the indoor compass alone scatters ~35 deg between launches.
+        DeclareLaunchArgument('frame_check_tolerance', default_value='30.0'),
+        # Per-sample Vicon-vs-EKF2 attitude limit after the frame check, deg; 0 disables.
+        DeclareLaunchArgument('vicon_yaw_guard', default_value='60.0'),
         # header needs chrony between the laptop and the Pi; receipt carries the latency in
         # EKF2_EV_DELAY instead.
         DeclareLaunchArgument('stamp_source', default_value='header',
@@ -253,6 +268,10 @@ def generate_launch_description():
                               'body_frame': LaunchConfiguration('body_frame'),
                               'yaw_offset': ParameterValue(
                                   LaunchConfiguration('vicon_yaw_offset'), value_type=float),
+                              'max_attitude_error': ParameterValue(
+                                  LaunchConfiguration('frame_check_tolerance'), value_type=float),
+                              'yaw_guard_tolerance': ParameterValue(
+                                  LaunchConfiguration('vicon_yaw_guard'), value_type=float),
                               'stamp_source': LaunchConfiguration('stamp_source')}]),
         ]
 
@@ -356,6 +375,8 @@ def generate_launch_description():
                 'af_mode': LaunchConfiguration('af_mode'),
                 'lens_position': LaunchConfiguration('lens_position'),
                 'debug_image_hz': LaunchConfiguration('debug_image_hz'),
+                'camera_image_top_deg': LaunchConfiguration('camera_image_top_deg'),
+                'hold_until_in_control': LaunchConfiguration('hold_until_in_control'),
                 'use_aruco3_detection': LaunchConfiguration('use_aruco3_detection'),
                 'min_marker_length_ratio': '%.6f' % presets.min_marker_ratio(
                     cam, scale, zD, _float('aruco3_margin', context), layout, mdict),
@@ -374,6 +395,10 @@ def generate_launch_description():
         'zD': LaunchConfiguration('zD'),
         'quad_mass': LaunchConfiguration('quad_mass'),
         'velocity_source': LaunchConfiguration('velocity_source'),
+        'hold_until_in_control': LaunchConfiguration('hold_until_in_control'),
+        'alpha_xy': LaunchConfiguration('alpha_xy'),
+        'zD_min': LaunchConfiguration('zD_min'),
+        'zD_max': LaunchConfiguration('zD_max'),
     })
 
     def _gated_control(context):

@@ -24,6 +24,13 @@ def generate_launch_description():
                               choices=['td', 'ekf2', 'vision', 'off']),
         # pos_ctrl's per-cycle error print; /error_visual_servoing has the same numbers.
         DeclareLaunchArgument('print_error', default_value='false'),
+        # Hardware: hold pos_ctrl's integrating states until px4_offboard_bridge reports in_control.
+        DeclareLaunchArgument('hold_until_in_control', default_value='false'),
+        # x/y adaptive-gain growth rate; 6e-6 is thesis Table 5.3.
+        DeclareLaunchArgument('alpha_xy', default_value='0.000006'),
+        # Bounds on runtime depth targets published to /zD_setpoint, metres.
+        DeclareLaunchArgument('zD_min', default_value='0.7'),
+        DeclareLaunchArgument('zD_max', default_value='1.6'),
     ]
 
     def _nodes(context, *a, **k):
@@ -44,6 +51,11 @@ def generate_launch_description():
                     LaunchConfiguration('velocity_source'), value_type=str)
                 p['print_error'] = ParameterValue(
                     LaunchConfiguration('print_error'), value_type=bool)
+                p['hold_until_in_control'] = ParameterValue(
+                    LaunchConfiguration('hold_until_in_control'), value_type=bool)
+                p['alpha_xy'] = ParameterValue(LaunchConfiguration('alpha_xy'), value_type=float)
+                for b in ('zD_min', 'zD_max'):
+                    p[b] = ParameterValue(LaunchConfiguration(b), value_type=float)
             return [p]
 
         return [

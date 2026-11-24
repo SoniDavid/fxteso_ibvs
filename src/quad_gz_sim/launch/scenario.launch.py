@@ -60,6 +60,8 @@ def generate_launch_description():
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # Seconds for the mean wind to ramp on; 0 steps it on in full.
         DeclareLaunchArgument('wind_ramp', default_value='0.0'),
+        # Seconds from the controller's first command to the disturbance onset.
+        DeclareLaunchArgument('disturbance_settle', default_value='8.0'),
         # Hide the target for a window to exercise the lock-loss path; needs > 1.3 s before
         # PX4 fails safe. The target returns where it left. 0 disables.
         DeclareLaunchArgument('blackout_at', default_value='0.0'),
@@ -85,6 +87,7 @@ def generate_launch_description():
          'wind_velocity': ParameterValue(
              LaunchConfiguration('wind_velocity'), value_type=List[float]),
          'wind_ramp': ParameterValue(LaunchConfiguration('wind_ramp'), value_type=float),
+         'settle': ParameterValue(LaunchConfiguration('disturbance_settle'), value_type=float),
          'gust_tau': ParameterValue(LaunchConfiguration('gust_tau'), value_type=float),
          'turbulence_scale': ParameterValue(
              LaunchConfiguration('turbulence_scale'), value_type=float),

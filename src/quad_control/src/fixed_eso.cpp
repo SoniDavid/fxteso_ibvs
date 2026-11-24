@@ -111,6 +111,10 @@ void imFeatValidCallback(const std_msgs::msg::Bool::ConstSharedPtr v)
 	imgFeat_valid = v->data;
 }
 
+// True while PX4 executes pos_ctrl's setpoints; before that its input is not applied, so the
+// disturbance estimate would absorb the whole command.
+bool in_control = false;
+
 void imFeatCallback(const geometry_msgs::msg::Quaternion::ConstSharedPtr img_features)
 {
 	imFeat(0) = img_features->x;
@@ -162,6 +166,16 @@ const float gamma1_xy = node->declare_parameter<double>("gamma1_xy", 18.0);
     // Thesis value, 8% above the F450 SDF's 1.852 kg. Exposed for the real airframe; the default
     // changes nothing.
     quad_mass = node->declare_parameter<double>("quad_mass", quad_mass);
+
+    // Hardware: hold the disturbance estimate at zero until in control; the features are still tracked.
+    const bool hold_until_in_control = node->declare_parameter<bool>("hold_until_in_control", false);
+    const std::string in_control_topic =
+        node->declare_parameter<std::string>("in_control_topic", "/px4_offboard_bridge/in_control");
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr in_control_sub;
+    if (hold_until_in_control)
+        in_control_sub = node->create_subscription<std_msgs::msg::Bool>(
+            in_control_topic, rclcpp::QoS(1).transient_local(),
+            [](const std_msgs::msg::Bool::ConstSharedPtr m) { in_control = m->data; });
 
     auto im_feat_sub = node->create_subscription<geometry_msgs::msg::Quaternion>("ImFeat_vector", 1, imFeatCallback);
     auto im_feat_valid_sub = node->create_subscription<std_msgs::msg::Bool>("ImFeat_valid", 1, imFeatValidCallback);
@@ -323,7 +337,8 @@ gamma1 << gamma1_xy, gamma1_xy, 16, gamma1_yaw;
             }
 
             x3_hat_dot(i) = gamma3(i) * sig(estimation_error(i),alpha) + mu3(i) * sig(estimation_error(i),beta) + gamma4(i) * sign(estimation_error(i));
-            ibvs_dist(i) = ibvs_dist(i) + x3_hat_dot(i) * step;
+            ibvs_dist(i) = (hold_until_in_control && !in_control) ? 0.0f
+                                                                  : ibvs_dist(i) + x3_hat_dot(i) * step;
 
             x2_hat_dot(i) = ibvs_dist(i) + fx + gx_u + gamma2(i)*sig(estimation_error(i), alpha2) + mu2(i)*sig(estimation_error(i), beta2);
             imFeat_estimate_dot(i) = imFeat_estimate_dot(i) + x2_hat_dot(i)*step;

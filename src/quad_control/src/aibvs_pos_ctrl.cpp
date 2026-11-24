@@ -11,6 +11,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <iostream>
 #include <math.h>
+#include <cmath>
 #include <vector>
 #include <eigen3/Eigen/Dense>
 
@@ -148,6 +149,9 @@ void imFeatValidCallback(const std_msgs::msg::Bool::ConstSharedPtr v)
 	imgFeat_valid = v->data;
 }
 
+// True while PX4 executes our setpoints (px4_offboard_bridge's in_control); hardware handover gate.
+bool in_control = false;
+
 // Wall-clock arrival of each input, published as pos_ctrl_input_age to catch handover stalls.
 std::chrono::steady_clock::time_point feat_rx, est_rx, est_dot_rx;
 
@@ -268,8 +272,35 @@ int main(int argc, char *argv[])
 	}
 	// Prints the error every cycle; /error_visual_servoing has the same numbers.
 	const bool print_error = node->declare_parameter<bool>("print_error", false);
+	// Hardware: hold the integrating states and send a level hover at the current yaw until PX4
+	// executes our setpoints, so a shadow flight cannot wind them up before the handover.
+	const bool hold_until_in_control = node->declare_parameter<bool>("hold_until_in_control", false);
+	// x/y adaptive-gain growth rate (thesis Gamma5, Table 5.3: 6e-6); steady k scales as alpha^(1/4).
+	const double alpha_xy = node->declare_parameter<double>("alpha_xy", 0.000006);
+	if (!(alpha_xy > 0.0))
+	{
+		RCLCPP_FATAL(node->get_logger(), "alpha_xy:=%g must be positive.", alpha_xy);
+		return 1;
+	}
+	const std::string in_control_topic =
+		node->declare_parameter<std::string>("in_control_topic", "/px4_offboard_bridge/in_control");
+	rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr in_control_sub;
+	if (hold_until_in_control)
+		in_control_sub = node->create_subscription<std_msgs::msg::Bool>(
+			in_control_topic, rclcpp::QoS(1).transient_local(),
+			[](const std_msgs::msg::Bool::ConstSharedPtr m) { in_control = m->data; });
+	// Runtime depth target bounds for /zD_setpoint (metres); the step moves the reference qz, not zD.
+	const double zD_min = node->declare_parameter<double>("zD_min", 0.7);
+	const double zD_max = node->declare_parameter<double>("zD_max", 1.6);
+	if (!(zD_min > 0.0) || !(zD_min <= zD) || !(zD <= zD_max))
+	{
+		RCLCPP_FATAL(node->get_logger(), "need 0 < zD_min:=%g <= zD:=%g <= zD_max:=%g.",
+		             zD_min, zD, zD_max);
+		return 1;
+	}
 RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg, velocity_source = %s",
             zD, quad_mass, velocity_source.c_str());
+RCLCPP_INFO(node->get_logger(), "ANFTSMC alpha_xy %g", alpha_xy);
     
 	auto error_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_visual_servoing",100);
     auto error_dot_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("error_dot_visual_servoing",100);
@@ -280,6 +311,8 @@ RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg, vel
 
     auto thrust_pub = node->create_publisher<std_msgs::msg::Float64>("quad_thrust",100);
     auto z_des_pub = node->create_publisher<std_msgs::msg::Float64>("z_des",100);
+    // Depth the reference qz currently asks for, metres (zD until a /zD_setpoint is accepted).
+    auto zD_active_pub = node->create_publisher<std_msgs::msg::Float64>("zD_active",100);
 
     auto desired_att_pub = node->create_publisher<geometry_msgs::msg::Quaternion>("desired_attitude",100);
     auto psiddot_des_pub = node->create_publisher<std_msgs::msg::Float64>("yaw_ddot_desired",100);
@@ -334,12 +367,32 @@ RCLCPP_INFO(node->get_logger(), "servoing depth zD = %.3f m, mass = %.3f kg, vel
     std_msgs::msg::Float64 thrust_var;
     std_msgs::msg::Float64 yaw_ddot_des_var;
     std_msgs::msg::Float64 z_des_var;
+    std_msgs::msg::Float64 zD_active_var;
     geometry_msgs::msg::Quaternion desired_attitude_var;
     geometry_msgs::msg::Quaternion real_err_dot_var;
     geometry_msgs::msg::Vector3 quad_vel_VF_var;
 geometry_msgs::msg::Vector3 quad_vel_VF_real_var;
 
 imgFeat_des << 0,0,1,0;
+
+    // Features are normalised at zD (qz = Z/zD), so a depth target is the reference qz = target/zD.
+    // Refused while holding, so a stored target never fires as a step at consent.
+    auto zD_setpoint_sub = node->create_subscription<std_msgs::msg::Float64>(
+        "zD_setpoint", rclcpp::QoS(1).reliable(),
+        [&](const std_msgs::msg::Float64::ConstSharedPtr m)
+        {
+            const double z = m->data;
+            if (!std::isfinite(z) || z < zD_min || z > zD_max)
+                RCLCPP_WARN(node->get_logger(), "zD setpoint %g refused: outside [%g, %g] m",
+                            z, zD_min, zD_max);
+            else if (hold_until_in_control && !in_control)
+                RCLCPP_WARN(node->get_logger(), "zD setpoint %g refused: not in control", z);
+            else
+            {
+                imgFeat_des(2) = z / zD;
+                RCLCPP_WARN(node->get_logger(), "zD target %.3f m (qz_des %.4f)", z, imgFeat_des(2));
+            }
+        });
     
     xi_1 << 7, 7, 1, 4;
     xi_2 << 8, 8, 6, 6;
@@ -348,7 +401,7 @@ imgFeat_des << 0,0,1,0;
     vartheta << 3, 3, 3, 3;
     k << 0,0,0,0;
     k_dot << 0,0,0,0;
-    alpha << 0.000006, 0.000006, 0.001, 0.0001;
+    alpha << alpha_xy, alpha_xy, 0.001, 0.0001;
     ::beta << 85, 85, 5, 5;
 
     quad_vel_VF << 0,0,0;
@@ -413,6 +466,7 @@ imgFeat_des << 0,0,1,0;
     loop_rate.sleepFor(1.0);
     
     bool was_valid = true;
+    bool holding = false;
 
     while(rclcpp::ok())
     {
@@ -434,6 +488,50 @@ imgFeat_des << 0,0,1,0;
         {
             RCLCPP_INFO(node->get_logger(), "marker lock re-acquired - resuming control");
             was_valid = true;
+        }
+
+        if (hold_until_in_control && !in_control)
+        {
+            if (!holding)
+            {
+                RCLCPP_INFO(node->get_logger(), "not in control - holding the controller at its "
+                            "initial state and sending a level hover at the current yaw");
+                holding = true;
+                if (imgFeat_des(2) != 1.0f)
+                    RCLCPP_WARN(node->get_logger(), "zD target reset to %.3f m", zD);
+                imgFeat_des(2) = 1.0f;
+            }
+            k.setZero();
+            k_dot.setZero();
+            asmc.setZero();
+            ss.setZero();
+            ibvs_ctrl_input.setZero();
+            quad_vel_VF.setZero();
+            yawRate_desired = 0;
+            attitude_desired << 0, 0, attitudeEstimates(2);
+            thrust = quad_mass * gravity;
+
+            ctrl_input_var.x = ctrl_input_var.y = ctrl_input_var.z = ctrl_input_var.w = 0;
+            adaptive_gain_var.x = adaptive_gain_var.y = adaptive_gain_var.z = adaptive_gain_var.w = 0;
+            thrust_var.data = thrust;
+            desired_attitude_var.x = 0;
+            desired_attitude_var.y = 0;
+            desired_attitude_var.z = attitude_desired(2);
+            desired_attitude_var.w = 0;
+            ctrl_pub->publish(ctrl_input_var);
+            adaptive_gain_pub->publish(adaptive_gain_var);
+            thrust_pub->publish(thrust_var);
+            desired_att_pub->publish(desired_attitude_var);
+            zD_active_var.data = zD;
+            zD_active_pub->publish(zD_active_var);
+            loop_rate.sleep();
+            continue;
+        }
+        if (holding)
+        {
+            RCLCPP_WARN(node->get_logger(), "in control - releasing the controller from yaw %.1f deg",
+                        attitude_desired(2) * 180.0 / M_PI);
+            holding = false;
         }
 
 ////////////////////// FOR COMPARISON ONLY//////////////////////////////////////////////////
@@ -598,6 +696,8 @@ err_dot = Omega*v_imgFeat + kappa;
         error_dot_pub->publish(error_dot_var);
         ss_pub->publish(ss_var);
         z_des_pub->publish(z_des_var);
+        zD_active_var.data = zD * imgFeat_des(2);
+        zD_active_pub->publish(zD_active_var);
 
         real_err_dot_var.x = err_dot(0);
         real_err_dot_var.y = err_dot(1);

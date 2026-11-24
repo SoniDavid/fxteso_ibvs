@@ -55,6 +55,10 @@ install(DIRECTORY launch params
 install(PROGRAMS scripts/hitl_wait.py
   DESTINATION lib/${PROJECT_NAME})
 
+# Runtime depth steps: zd_schedule drives SITL after handover, zd_set is the operator's one-shot.
+install(PROGRAMS scripts/zd_schedule.py scripts/zd_set.py
+  DESTINATION lib/${PROJECT_NAME})
+
 # The SITL airframe lives in the PX4 fork's ROMFS, not here. params/ is its hardware
 # counterpart: a real FC cannot load an init.d-posix autostart.
 

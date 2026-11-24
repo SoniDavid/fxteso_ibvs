@@ -137,6 +137,17 @@ def build(mode='sitl'):
         DeclareLaunchArgument('quad_mass', default_value='1.30'),
         # pos_ctrl's per-cycle error print; off by default so the WARNs stay readable.
         DeclareLaunchArgument('print_error', default_value='false'),
+        # x/y adaptive-gain growth rate; 6e-6 is thesis Table 5.3.
+        DeclareLaunchArgument('alpha_xy', default_value='0.000006'),
+        # Bounds on runtime depth targets published to /zD_setpoint, metres.
+        DeclareLaunchArgument('zD_min', default_value='0.7'),
+        DeclareLaunchArgument('zD_max', default_value='1.6'),
+        # Scripted depth steps after handover, e.g. '[0.8,1.5]'; empty = off (publish by hand).
+        DeclareLaunchArgument('zd_schedule', default_value=''),
+        DeclareLaunchArgument('zd_settle', default_value='20.0'),
+        DeclareLaunchArgument('zd_dwell', default_value='25.0'),
+        # As on hardware: pos_ctrl sends level m*g, integrators at zero, until PX4 is in OFFBOARD.
+        DeclareLaunchArgument('hold_until_in_control', default_value='true'),
         # Velocity in pos_ctrl's Coriolis term; off keeps the Vicon-aided estimate out of the loop.
         DeclareLaunchArgument('velocity_source', default_value='off',
                               choices=['td', 'ekf2', 'vision', 'off']),
@@ -236,6 +247,11 @@ def build(mode='sitl'):
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # Seconds for the mean wind to ramp on; 0 steps it on in full.
         DeclareLaunchArgument('wind_ramp', default_value='0.0'),
+        # Seconds from the controller's first command to the disturbance onset.
+        DeclareLaunchArgument('disturbance_settle', default_value='8.0'),
+        # SITL only: PX4 board-level offset (deg), so PX4's "level" is tilted like the real FC's.
+        DeclareLaunchArgument('board_roll_off', default_value='0.0'),
+        DeclareLaunchArgument('board_pitch_off', default_value='0.0'),
         # Hides target to exercise lock-loss path. 0 disables.
         DeclareLaunchArgument('blackout_at', default_value='0.0'),
         DeclareLaunchArgument('blackout_for', default_value='3.0'),
@@ -367,6 +383,7 @@ def build(mode='sitl'):
                  'target_heading': LaunchConfiguration('target_heading'),
                  'wind_velocity': LaunchConfiguration('wind_velocity'),
                  'wind_ramp': LaunchConfiguration('wind_ramp'),
+                 'disturbance_settle': LaunchConfiguration('disturbance_settle'),
                  'blackout_at': LaunchConfiguration('blackout_at'),
                  'blackout_for': LaunchConfiguration('blackout_for'),
                  'zD': LaunchConfiguration('zD')}),
@@ -431,6 +448,11 @@ def build(mode='sitl'):
 
         p['EKF2_MAG_ACCLIM'] = '%.3f' % float(
             LaunchConfiguration('mag_acclim').perform(context))
+
+        if not hitl:
+            # Set every run (persisted in parameters.bson); never pushed to a real FC's level trim.
+            p['SENS_BOARD_X_OFF'] = '%.3f' % float(LaunchConfiguration('board_roll_off').perform(context))
+            p['SENS_BOARD_Y_OFF'] = '%.3f' % float(LaunchConfiguration('board_pitch_off').perform(context))
 
         if hitl:
             # SITL's airframe disables both loss failsafes (no RC, no GCS); the FC keeps whatever
@@ -674,6 +696,16 @@ def build(mode='sitl'):
     viz = include(UTILS_PKG, 'viz.launch.py', {'foxglove': LaunchConfiguration('foxglove'),
                                                'camera': LaunchConfiguration('camera')})
 
+    def _zd_schedule(context):
+        """zd_schedule:='[0.8,1.5]' steps the depth target after handover; empty launches nothing."""
+        raw = LaunchConfiguration('zd_schedule').perform(context).strip()
+        if not raw:
+            return []
+        return [Node(package=PKG, executable='zd_schedule.py', name='zd_schedule', output='screen',
+                     parameters=[{'use_sim_time': True, 'targets': json.dumps(json.loads(raw)),
+                                  'settle': float(LaunchConfiguration('zd_settle').perform(context)),
+                                  'dwell': float(LaunchConfiguration('zd_dwell').perform(context))}])]
+
     def _bag_at_launch(context, *a, **k):
         """record_from:=launch: record from the start, for the observer runs."""
         if LaunchConfiguration('record_from').perform(context).lower() != 'launch':
@@ -734,7 +766,12 @@ def build(mode='sitl'):
                       {'attitude_controller': 'false', 'zD': LaunchConfiguration('zD'),
                        'quad_mass': LaunchConfiguration('quad_mass'),
                        'velocity_source': LaunchConfiguration('velocity_source'),
-                       'print_error': LaunchConfiguration('print_error')})]
+                       'print_error': LaunchConfiguration('print_error'),
+                       'alpha_xy': LaunchConfiguration('alpha_xy'),
+                       'zD_min': LaunchConfiguration('zD_min'),
+                       'zD_max': LaunchConfiguration('zD_max'),
+                       'hold_until_in_control': LaunchConfiguration('hold_until_in_control')})]
+             + _zd_schedule(context)
              if LaunchConfiguration('controllers').perform(context).lower() == 'true'
              else [LogInfo(msg='controllers:=false - the aircraft will loiter after takeoff.')])
             + ([OpaqueFunction(function=_bag)]
@@ -763,6 +800,7 @@ def build(mode='sitl'):
             include(CTRL_PKG, 'estimation.launch.py',
                     {'initial_estimate_offset': LaunchConfiguration('initial_estimate_offset'),
                      'quad_mass': LaunchConfiguration('quad_mass'),
+                     'hold_until_in_control': LaunchConfiguration('hold_until_in_control'),
                      'z_des': '%.6f' % eso_z_des_of(context),
                      'gamma1_xy': LaunchConfiguration('gamma1_xy'),
                      'gamma2_xy': LaunchConfiguration('gamma2_xy'),

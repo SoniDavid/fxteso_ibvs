@@ -29,6 +29,9 @@ plant_and_target:
   # venue:=vicon only: 6-DoF ground truth, and when Vicon was feeding EKF2.
   - /vicon/fxteso_f450quad/fxteso_f450quad
   - /vicon_px4_bridge/aiding_active
+  - /vicon_px4_bridge/yaw_guard_rejecting
+  # Hardware handover: when PX4 was executing pos_ctrl's setpoints (and pos_ctrl/fixed_eso were released).
+  - /px4_offboard_bridge/in_control
   # plant:=px4 only. cs_ev_pos is how a run proves the EV stream was actually fused rather than
   # merely published; cs_fake_pos is EKF2 admitting it has no horizontal aiding.
   - /fmu/out/estimator_status_flags
@@ -60,6 +63,9 @@ vision_and_observer:
   - /scaled_ibvs_dist
   - /a_value
   - /z_des
+  # Runtime depth steps: what was asked (zd_set.py / zd_schedule) and what pos_ctrl applied.
+  - /zD_setpoint
+  - /zD_active
   - /u_coordinates
   - /n_coordinates
 

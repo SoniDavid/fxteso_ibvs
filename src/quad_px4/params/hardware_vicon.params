@@ -9,5 +9,6 @@
 1	1	EKF2_EV_CTRL	11	6
 # Vision height. Never cut under aiding_policy:=always; the baro read 1.9 m on the table after a reboot.
 1	1	EKF2_HGT_REF	3	6
-# Offboard loss -> Hold: a marker lock loss holds the Vicon position instead of drifting in Altitude.
-1	1	COM_OBL_RC_ACT	5	6
+# Offboard loss -> Position: holds on the Vicon local position, sticks still fly it. Not 5 (Hold):
+# Hold needs a global position, which indoors never exists, so PX4 fell back to Land.
+1	1	COM_OBL_RC_ACT	0	6
