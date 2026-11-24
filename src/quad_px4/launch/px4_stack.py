@@ -247,6 +247,11 @@ def build(mode='sitl'):
         DeclareLaunchArgument('wind_velocity', default_value='[0.8, 0.4, 0.0]'),
         # Seconds for the mean wind to ramp on; 0 steps it on in full.
         DeclareLaunchArgument('wind_ramp', default_value='0.0'),
+        # Seconds from the controller's first command to the disturbance onset.
+        DeclareLaunchArgument('disturbance_settle', default_value='8.0'),
+        # SITL only: PX4 board-level offset (deg), so PX4's "level" is tilted like the real FC's.
+        DeclareLaunchArgument('board_roll_off', default_value='0.0'),
+        DeclareLaunchArgument('board_pitch_off', default_value='0.0'),
         # Hides target to exercise lock-loss path. 0 disables.
         DeclareLaunchArgument('blackout_at', default_value='0.0'),
         DeclareLaunchArgument('blackout_for', default_value='3.0'),
@@ -378,6 +383,7 @@ def build(mode='sitl'):
                  'target_heading': LaunchConfiguration('target_heading'),
                  'wind_velocity': LaunchConfiguration('wind_velocity'),
                  'wind_ramp': LaunchConfiguration('wind_ramp'),
+                 'disturbance_settle': LaunchConfiguration('disturbance_settle'),
                  'blackout_at': LaunchConfiguration('blackout_at'),
                  'blackout_for': LaunchConfiguration('blackout_for'),
                  'zD': LaunchConfiguration('zD')}),
@@ -442,6 +448,11 @@ def build(mode='sitl'):
 
         p['EKF2_MAG_ACCLIM'] = '%.3f' % float(
             LaunchConfiguration('mag_acclim').perform(context))
+
+        if not hitl:
+            # Set every run (persisted in parameters.bson); never pushed to a real FC's level trim.
+            p['SENS_BOARD_X_OFF'] = '%.3f' % float(LaunchConfiguration('board_roll_off').perform(context))
+            p['SENS_BOARD_Y_OFF'] = '%.3f' % float(LaunchConfiguration('board_pitch_off').perform(context))
 
         if hitl:
             # SITL's airframe disables both loss failsafes (no RC, no GCS); the FC keeps whatever
