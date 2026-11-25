@@ -1,0 +1,9 @@
+# fxteso_ibvs dev container: ROS Jazzy + the workspace overlay (no set -u: the ROS scripts trip it).
+set +u
+source /opt/ros/jazzy/setup.bash
+if [ -n "${FXTESO_WS:-}" ] && [ -f "${FXTESO_WS}/install/setup.bash" ]; then
+  source "${FXTESO_WS}/install/setup.bash"
+fi
+if [ -n "${PS1:-}" ]; then
+  PS1='(fxteso-dev) \u@\h:\w\$ '
+fi

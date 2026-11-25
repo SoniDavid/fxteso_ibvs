@@ -19,6 +19,53 @@ The desktop additionally needs Gazebo Sim 8.11 - Harmonic and the PX4 Autopilot 
 [RUNNING_SIM.md](RUNNING_SIM.md#dev-desktop-sitl). 
 The Pi additionally needs the camera stack and MicroXRCEAgent; see [RUNNING_HW.md](RUNNING_HW.md#companion-computer-raspberry-pi-5-ubuntu-2404).
 
+### Containers
+
+| Image | Arch | Runs | Build |
+|---|---|---|---|
+| `fxteso-ibvs-dev` | amd64 | sims (px4, analytic, gazebo), HITL, PX4 firmware, Vicon receiver, analysis | `docker/dev.sh build` |
+| `fxteso-ibvs-pi` | arm64 | the Pi's flight stack: camera (libcamera, picamera2), MicroXRCEAgent, `hardware.launch` | `docker/dev.sh pi-build`, on the desktop |
+
+Both pin Ubuntu 24.04 (snapshot 2026-10-16), ROS 2 Jazzy (snapshot 2026-06-18), OpenCV 4.14.0 and Python (`uv.lock`). They run as your user, with the repo at its real path and the host's network, IPC and PID.
+
+**Desktop**
+
+```sh
+git submodule update --init --recursive
+docker/dev.sh build                       # once; OpenCV takes most of the time
+docker/dev.sh up
+docker/dev.sh shell                       # ROS and install/ already sourced
+colcon build --symlink-install --allow-overriding cv_bridge image_geometry
+tools/build_xrce_agent.sh                 # pins the agent's Fast-DDS
+make -C external/PX4-Autopilot px4_sitl_default
+```
+
+**Raspberry Pi**
+
+```sh
+# desktop, once: arm64 emulation, then the image (hours) and a copy for the Pi
+docker run --privileged --rm tonistiigi/binfmt --install arm64
+docker/dev.sh pi-build && docker/dev.sh pi-save        # .docker/fxteso-ibvs-pi_latest.tar.zst
+# Pi
+zstd -dc fxteso-ibvs-pi_latest.tar.zst | docker load
+docker/dev.sh pi-up && docker/dev.sh pi-shell
+colcon build --symlink-install --packages-ignore quad_gz_sim \
+    --allow-overriding cv_bridge image_geometry --cmake-args -DBUILD_SIM_PILOT=OFF
+```
+
+The Pi host still owns the kernel, the camera overlay in `config.txt`, the UART and Docker itself. The image's libcamera is `v0.7.2+rpt20260817`, the last release the C++17 workspace compiles against.
+
+| Checked (2026-11-24) | dev | pi |
+|---|---|---|
+| Image builds from scratch | yes (same manifest twice) | yes (emulated) |
+| Workspace builds | yes | yes (emulated; `image_features` links libcamera, OpenCV 4.14 only) |
+| px4 / analytic / gazebo sims | yes | - |
+| fmu-v6c firmware | yes | - |
+| Vicon receiver starts | yes (connect: lab only) | - (x86 SDK) |
+| Camera, FC link, flight | - | not yet run on the Pi |
+
+> Builds go to `.docker/` and `.docker-pi/`, mounted over `build/`, `install/`, `log/`, so they never mix with the host's. `docker/dev.sh manifest` vs `docker/manifest.sh` on the host compares versions; `save` / `pi-save` archive an image. The ROS snapshot key in `docker/keys/` expires 2027-06-01.
+
 ### OpenCV ≥ 4.7 and cv_bridge from source (both machines)
 
 `image_features` detects markers with `aruco_nano` (a header in `quad_control`) or OpenCV's
@@ -60,12 +107,12 @@ ldconfig -p | grep libopencv_core
 
 `cv_bridge` must then be rebuilt from source against it. apt's prebuilt `cv_bridge` links the old
 SONAME, and a process using both loads **two** OpenCV versions at once. 4.1.0 matches the installed
-`ros-jazzy-cv-bridge`, so it is a pure recompile. `src/vision_opencv` is gitignored.
+`ros-jazzy-cv-bridge`, so it is a pure recompile. `src/vision_opencv` is a submodule pinned at 4.1.0.
 
 ```sh
-cd ~/[path_to_project]/fxteso_ibvs/src
-git clone --branch 4.1.0 --depth 1 https://github.com/ros-perception/vision_opencv.git
-cd .. && colcon build --packages-select cv_bridge image_geometry --allow-overriding cv_bridge image_geometry
+cd ~/[path_to_project]/fxteso_ibvs
+git submodule update --init src/vision_opencv
+colcon build --packages-select cv_bridge image_geometry --allow-overriding cv_bridge image_geometry
 ```
 
 After any OpenCV version bump, `ldd` every OpenCV-linking binary in the workspace, not just the

@@ -1,0 +1,22 @@
+# Pi image Python deps apt does not ship; uv.lock pins them. Everything else comes from apt via --system-site-packages.
+[project]
+name = "fxteso-ibvs-pi-env"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = [
+  "picamera2==0.3.38",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux' and platform_machine == 'aarch64'"]
+# Never-true markers drop these from the lock so apt's builds stay in use (numpy ABI, av, prctl need system libs).
+override-dependencies = [
+  "numpy; sys_platform == 'never'",
+  "pillow; sys_platform == 'never'",
+  "av; sys_platform == 'never'",
+  "python-prctl; sys_platform == 'never'",
+  "simplejson; sys_platform == 'never'",
+  "piexif; sys_platform == 'never'",
+  "jsonschema; sys_platform == 'never'",
+]

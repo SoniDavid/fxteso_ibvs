@@ -1,0 +1,27 @@
+# fxteso_ibvs on the Raspberry Pi 5. Use docker/dev.sh pi-up | pi-shell | pi-run | pi-down on the Pi.
+# Host network, IPC and PID, so the agent, DDS and cleanup.sh behave as in a host shell.
+name: fxteso-ibvs-pi
+
+services:
+  pi:
+    image: fxteso-ibvs-pi:${FXTESO_IMAGE_TAG:-latest}
+    container_name: fxteso-pi
+    user: "${FXTESO_UID:?run via docker/dev.sh}:${FXTESO_GID:?run via docker/dev.sh}"
+    working_dir: ${FXTESO_WS}
+    network_mode: host
+    ipc: host
+    pid: host
+    # Camera (media, video, v4l-subdev, dma_heap: dynamic majors) and the FC serial ports.
+    privileged: true
+    environment:
+      FXTESO_WS: ${FXTESO_WS}
+      TZ: ${FXTESO_TZ}
+    volumes:
+      - ${FXTESO_WS}:${FXTESO_WS}
+      # Container build artefacts shadow the Pi's native ones at the same paths.
+      - ${FXTESO_WS}/.docker-pi/build:${FXTESO_WS}/build
+      - ${FXTESO_WS}/.docker-pi/install:${FXTESO_WS}/install
+      - ${FXTESO_WS}/.docker-pi/log:${FXTESO_WS}/log
+      - /etc/localtime:/etc/localtime:ro
+      - /dev:/dev
+      - /run/udev:/run/udev:ro

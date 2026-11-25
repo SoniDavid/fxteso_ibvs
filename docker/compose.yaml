@@ -1,0 +1,56 @@
+# fxteso_ibvs dev container. Use docker/dev.sh: it exports the FXTESO_* variables below.
+# Same user and same absolute paths as the host; host network, IPC and PID so it acts like another host shell.
+name: fxteso-ibvs
+
+services:
+  dev:
+    image: fxteso-ibvs-dev:${FXTESO_IMAGE_TAG:-latest}
+    build:
+      context: .
+      args:
+        USERNAME: ${FXTESO_USER:?run via docker/dev.sh}
+        USER_UID: ${FXTESO_UID:?run via docker/dev.sh}
+        USER_GID: ${FXTESO_GID:?run via docker/dev.sh}
+        USER_HOME: ${FXTESO_HOME:?run via docker/dev.sh}
+    container_name: fxteso-dev
+    user: "${FXTESO_UID}:${FXTESO_GID}"
+    working_dir: ${FXTESO_WS}
+    network_mode: host
+    ipc: host
+    pid: host
+    gpus: all
+    group_add: [dialout, plugdev, video]
+    environment:
+      FXTESO_WS: ${FXTESO_WS}
+      DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: /tmp/fxteso.xauth
+      QT_QPA_PLATFORM: xcb
+      TZ: ${FXTESO_TZ}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - ${FXTESO_WS}:${FXTESO_WS}
+      - ${FXTESO_EXP}:${FXTESO_EXP}
+      # Container build artefacts shadow the host's at the same paths; the host tree is never touched.
+      - ${FXTESO_WS}/.docker/build:${FXTESO_WS}/build
+      - ${FXTESO_WS}/.docker/install:${FXTESO_WS}/install
+      - ${FXTESO_WS}/.docker/log:${FXTESO_WS}/log
+      - ${FXTESO_WS}/.docker/px4-build:${FXTESO_WS}/external/PX4-Autopilot/build
+      - ${FXTESO_WS}/.docker/xrce-build:${FXTESO_WS}/external/Micro-XRCE-DDS-Agent/build
+      - home:${FXTESO_HOME}
+      # Host time zone: bag names and logs carry local time, as on the host.
+      - /etc/localtime:/etc/localtime:ro
+      - ${FXTESO_HOME}/.gitconfig:${FXTESO_HOME}/.gitconfig:ro
+      # gz_sim.launch.py pins this EGL vendor file; the NVIDIA hook injects the libraries but not the file.
+      - /usr/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/10_nvidia.json:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${FXTESO_XAUTH}:/tmp/fxteso.xauth:ro
+      # HITL: the by-id links reappear after an FC reboot only with the live /dev.
+      - /dev:/dev
+    device_cgroup_rules:
+      - "c 166:* rmw"  # ttyACM (Pixhawk USB)
+      - "c 188:* rmw"  # ttyUSB (FTDI TELEM2)
+      - "c 189:* rmw"  # USB bus (firmware upload)
+
+volumes:
+  home:
