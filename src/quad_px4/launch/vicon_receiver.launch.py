@@ -1,7 +1,6 @@
 """Vicon receiver for flight.launch.py, run on the laptop wired to the Vicon PC (the SDK is x86-64).
 Publishes /vicon/<subject>/<segment> (fxteso_f450quad/fxteso_f450quad) to the Pi's vicon_px4_bridge.
 
-  source ~/Robotics/ros2-vicon-jazzy/install/setup.bash
   ros2 launch quad_px4 vicon_receiver.launch.py
 
 The Pi must be on the same subnet. LARGE_DATA matches hardware.launch: either side without it sees nothing.

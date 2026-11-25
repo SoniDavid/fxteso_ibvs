@@ -63,7 +63,6 @@ Desktop:
 
 ```sh
 source /opt/ros/jazzy/setup.bash
-source ~/[path_to]/ros2-vicon-jazzy/install/setup.bash
 source ~/[path_to_project]/fxteso_ibvs/install/setup.bash
 ros2 launch quad_px4 vicon_receiver.launch.py           # Vicon PC 192.168.1.23:801
 ```
