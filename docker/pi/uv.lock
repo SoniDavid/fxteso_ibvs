@@ -1,0 +1,100 @@
+version = 1
+revision = 3
+requires-python = "==3.12.*"
+resolution-markers = [
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+]
+supported-markers = [
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+]
+
+[manifest]
+overrides = [
+    { name = "av", marker = "sys_platform == 'never'" },
+    { name = "jsonschema", marker = "sys_platform == 'never'" },
+    { name = "numpy", marker = "sys_platform == 'never'" },
+    { name = "piexif", marker = "sys_platform == 'never'" },
+    { name = "pillow", marker = "sys_platform == 'never'" },
+    { name = "python-prctl", marker = "sys_platform == 'never'" },
+    { name = "simplejson", marker = "sys_platform == 'never'" },
+]
+
+[[package]]
+name = "fxteso-ibvs-pi-env"
+version = "0"
+source = { virtual = "." }
+dependencies = [
+    { name = "picamera2", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "picamera2", specifier = "==0.3.38" }]
+
+[[package]]
+name = "libarchive-c"
+version = "5.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/23/e72434d5457c24113e0c22605cbf7dd806a2561294a335047f5aa8ddc1ca/libarchive_c-5.3.tar.gz", hash = "sha256:5ddb42f1a245c927e7686545da77159859d5d4c6d00163c59daff4df314dae82", size = 54349, upload-time = "2025-05-22T08:08:04.604Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/3f/ff00c588ebd7eae46a9d6223389f5ae28a3af4b6d975c0f2a6d86b1342b9/libarchive_c-5.3-py3-none-any.whl", hash = "sha256:651550a6ec39266b78f81414140a1e04776c935e72dfc70f1d7c8e0a3672ffba", size = 17035, upload-time = "2025-05-22T08:08:03.045Z" },
+]
+
+[[package]]
+name = "openexr"
+version = "3.5.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/45/cdb862fc0ef17b4157bf7875bd3da254e0917afed5cd23a1590954b60039/openexr-3.5.5.tar.gz", hash = "sha256:af45cfbd6aedfbceedcbcb1bd5f1dd238750abbed7b648dfeab87328e8792105", size = 26316487, upload-time = "2026-11-23T01:16:03.429Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/72/951455a0325e9b0902a7798c7a2cb8d3078beedf26ebae179cf9d8a8c6f2/openexr-3.5.5-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:9a7b5a8ca07f1616a0a6c0ba8497422f565e155b02aea713cd76f38848221634", size = 1593403, upload-time = "2026-11-23T01:15:17.52Z" },
+    { url = "https://files.pythonhosted.org/packages/26/d0/8fd8af5eed96723d0567dd2093260d9538f15ed307e1ac9a4da41dbbae7f/openexr-3.5.5-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:cbe6f9b26996432852353c345ef217f479ad96906d9ff257be153012bc6028a7", size = 2608094, upload-time = "2026-11-23T01:15:19.936Z" },
+]
+
+[[package]]
+name = "picamera2"
+version = "0.3.38"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "libarchive-c", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "openexr", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "pidng", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "simplejpeg", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "tqdm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "videodev2", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/e4/87340556ec4fea46d98ba87fff2f755b7eb5071931d51b698a804e6d8418/picamera2-0.3.38.tar.gz", hash = "sha256:f4122b1d3d45e3068fe2d589b1d54ded94377d26b9444e1a0c67025b717b6108", size = 116144, upload-time = "2026-10-12T08:46:46.809Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/70/29b2d76cc63e7b4236fa85b92d97acf74e4c4b948a876d1493de04b68867/picamera2-0.3.38-py3-none-any.whl", hash = "sha256:ecf34dfb6c987d2c0948debeb3762a27755d5befc674fe210c3fd2ad8e3cd6cc", size = 140508, upload-time = "2026-10-12T08:46:45.208Z" },
+]
+
+[[package]]
+name = "pidng"
+version = "4.0.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/65/2670c465c8a63a23eb3a5e5547262e247e1aa2d3889a0a6781da9109d5f7/pidng-4.0.9.tar.gz", hash = "sha256:560eb008086f8a715fd9e1ab998817a7d4c8500a7f161b9ce6af5ab27501f82c", size = 21907, upload-time = "2022-05-06T19:09:32.093Z" }
+
+[[package]]
+name = "simplejpeg"
+version = "1.10.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e2/a8/0eb3b52f208f3ba8274d53bf90c655125d0c863551834144c95ecc8f6a32/simplejpeg-1.10.1.tar.gz", hash = "sha256:c8086ea3350263dff48d0494e6cb007ea2aedfb9249494d25d100c210c447ade", size = 7640100, upload-time = "2026-11-20T23:14:40.234Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/9f/5b2105da4e32f5ab6d2e13950b12ea29758746896fc63535457fddb1998c/simplejpeg-1.10.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:720b84e102d7112f5dfe284a07f8801e1825784098f597db75f481fd34c099e7", size = 422026, upload-time = "2026-11-20T23:13:58.76Z" },
+]
+
+[[package]]
+name = "tqdm"
+version = "4.70.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/ea/b2a5bd54b28a324dae8211928b2d730b6547500342c7e6c6dea08bd0a485/tqdm-4.70.1.tar.gz", hash = "sha256:cefd0eca11b2a37a3aee776544d4f4ae913f02688135b5556b8788dfa474afc4", size = 171846, upload-time = "2026-09-11T07:25:16.601Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl", hash = "sha256:c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73", size = 80199, upload-time = "2026-09-11T07:25:14.599Z" },
+]
+
+[[package]]
+name = "videodev2"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/82/ffdba8838b1f24b83268863a8f66fe9334d7f28a5b9c368f9c48f7516e69/videodev2-0.0.4.tar.gz", hash = "sha256:c34ba70491d148c23a08cbacd8efabeb413cff5baa943a7548ac4abd1eb19e2a", size = 50108, upload-time = "2025-07-23T10:18:51.631Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/30/4982441a03860ab8f656702d8a2c13d0cf6f56d65bfb78fe288028dcb473/videodev2-0.0.4-py3-none-any.whl", hash = "sha256:d35f7ab39ddb06d50fec96a99bfc8d5b8b525bc7ea03788259d386393f1a64ba", size = 49923, upload-time = "2025-07-23T10:18:50.378Z" },
+]

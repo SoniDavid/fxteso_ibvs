@@ -1,0 +1,29 @@
+# Python deps apt does not ship; uv.lock pins them. Everything else comes from apt via --system-site-packages.
+[project]
+name = "fxteso-ibvs-env"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = [
+  "cerberus==1.3.8",
+  "fastcrc==0.3.6",
+  "future==1.0.0",
+  "kconfiglib==14.1.0",
+  "nunavut==2.3.1",
+  "pkgconfig==1.6.0",
+  "pycryptodome==3.23.0",
+  "pydsdl==1.25.0",
+  "pymavlink==2.4.49",
+  "pyros-genmsg==0.5.8",
+  "pyulog==1.2.4",
+  "toml==0.10.2",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# Never-true markers drop these from the lock so apt's builds (numpy 1.26.4, lxml 5.2.1, yaml 6.0.1) stay in use.
+override-dependencies = [
+  "numpy; sys_platform == 'never'",
+  "lxml; sys_platform == 'never'",
+  "pyyaml; sys_platform == 'never'",
+]

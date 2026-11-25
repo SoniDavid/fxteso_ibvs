@@ -6,8 +6,10 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Every installed executable, derived rather than hand-listed (find -L: symlink install).
+# opencv_tests ships `source` and `broadcast`, which would match any `bash -c "source ..."`.
 mapfile -t PATTERNS < <(find -L "$REPO"/install/*/lib -mindepth 2 -maxdepth 2 \
-                             -type f -executable -printf '%f\n' 2>/dev/null | sort -u)
+                             -type f -executable -not -path '*/opencv_tests/*' \
+                             -printf '%f\n' 2>/dev/null | sort -u)
 
 if [ "${#PATTERNS[@]}" -eq 0 ]; then
     echo "cleanup.sh: no node executables under $REPO/install - build the workspace first" >&2
