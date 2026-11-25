@@ -78,7 +78,7 @@ ros2 launch quad_px4 flight.launch.py vicon_yaw_offset:=-2.156 hover_thrust:=0.6
 
 | Startup line | Must show |
 |---|---|
-| `ANFTSMC alpha_xy` | the gain you passed |
+| `ANFTSMC alpha_xy` | the gain of position control |
 | `Frame check PASSED` | roll and pitch within 1° of Vicon (yaw up to ~35° off is the compass) |
 | `Vicon aiding ON` | present |
 | `camera mount: image top -> 90` | 90 on the F450 |
